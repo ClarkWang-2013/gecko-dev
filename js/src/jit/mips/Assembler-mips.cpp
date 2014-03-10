@@ -873,6 +873,18 @@ Assembler::as_ld(Register rd, Register rs, int16_t off)
 }
 
 BufferOffset
+Assembler::as_ldl(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_ldl, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_ldr(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_ldr, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
 Assembler::as_sb(Register rd, Register rs, int16_t off)
 {
     return writeInst(InstImm(op_sb, rs, rd, Imm16(off)).encode());
@@ -906,6 +918,18 @@ BufferOffset
 Assembler::as_sd(Register rd, Register rs, int16_t off)
 {
     return writeInst(InstImm(op_sd, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_sdl(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_sdl, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_sdr(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_sdr, rs, rd, Imm16(off)).encode());
 }
 
 // Move from HI/LO register.

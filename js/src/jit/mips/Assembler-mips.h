@@ -302,6 +302,9 @@ enum Opcode {
     op_bgtzl    = 23 << OpcodeShift,
     op_daddiu   = 25 << OpcodeShift,
 
+    op_ldl      = 26 << OpcodeShift,
+    op_ldr      = 27 << OpcodeShift,
+
     op_special2 = 28 << OpcodeShift,
     op_special3 = 31 << OpcodeShift,
 
@@ -317,6 +320,8 @@ enum Opcode {
     op_sh       = 41 << OpcodeShift,
     op_swl      = 42 << OpcodeShift,
     op_sw       = 43 << OpcodeShift,
+    op_sdl      = 44 << OpcodeShift,
+    op_sdr      = 45 << OpcodeShift,
     op_swr      = 46 << OpcodeShift,
 
     op_lwc1     = 49 << OpcodeShift,
@@ -911,12 +916,16 @@ class Assembler
     BufferOffset as_lwl(Register rd, Register rs, int16_t off);
     BufferOffset as_lwr(Register rd, Register rs, int16_t off);
     BufferOffset as_ld(Register rd, Register rs, int16_t off);
+    BufferOffset as_ldl(Register rd, Register rs, int16_t off);
+    BufferOffset as_ldr(Register rd, Register rs, int16_t off);
     BufferOffset as_sb(Register rd, Register rs, int16_t off);
     BufferOffset as_sh(Register rd, Register rs, int16_t off);
     BufferOffset as_sw(Register rd, Register rs, int16_t off);
     BufferOffset as_swl(Register rd, Register rs, int16_t off);
     BufferOffset as_swr(Register rd, Register rs, int16_t off);
     BufferOffset as_sd(Register rd, Register rs, int16_t off);
+    BufferOffset as_sdl(Register rd, Register rs, int16_t off);
+    BufferOffset as_sdr(Register rd, Register rs, int16_t off);
 
     // Move from HI/LO register.
     BufferOffset as_mfhi(Register rd);

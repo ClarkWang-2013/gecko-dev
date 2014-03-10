@@ -1444,6 +1444,7 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
         as_ls_Odd(ft, ScratchRegister, TAG_OFFSET);
     }
 #else // _ABIN32 || _ABI64
+#if defined(__mips_loongson_vector_rev)
     int32_t off2 = address.offset + 7;
     if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
         as_ldl(ft, address.base, Imm8(off2).encode());
@@ -1454,6 +1455,19 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
         as_ldl(ft, ScratchRegister, 7);
         as_ldr(ft, ScratchRegister, 0);
     }
+#else // generic
+    int32_t off2 = address.offset + 7;
+    if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
+        as_ldl(SecondScratchReg, address.base, Imm16(off2).encode());
+        as_ldr(SecondScratchReg, address.base, Imm16(address.offset).encode());
+    } else {
+        ma_li(ScratchRegister, Imm32(address.offset));
+        as_addu(ScratchRegister, address.base, ScratchRegister);
+        as_ldl(SecondScratchReg, ScratchRegister, 7);
+        as_ldr(SecondScratchReg, ScratchRegister, 0);
+    }
+    as_dmtc1(SecondScratchReg, ft);
+#endif
 #endif
 }
 
@@ -1472,6 +1486,7 @@ MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
         as_ss_Odd(ft, ScratchRegister, TAG_OFFSET);
     }
 #else // _ABIN32 || _ABI64
+#if defined(__mips_loongson_vector_rev)
     int32_t off2 = address.offset + 7;
     if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
         as_sdl(ft, address.base, Imm8(off2).encode());
@@ -1482,6 +1497,19 @@ MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
         as_sdl(ft, ScratchRegister, 7);
         as_sdr(ft, ScratchRegister, 0);
     }
+#else // generic
+    int32_t off2 = address.offset + 7;
+    as_dmfc1(SecondScratchReg, ft);
+    if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
+        as_sdl(SecondScratchReg, address.base, Imm16(off2).encode());
+        as_sdr(SecondScratchReg, address.base, Imm16(address.offset).encode());
+    } else {
+        ma_li(ScratchRegister, Imm32(address.offset));
+        as_addu(ScratchRegister, address.base, ScratchRegister);
+        as_sdl(SecondScratchReg, ScratchRegister, 7);
+        as_sdr(SecondScratchReg, ScratchRegister, 0);
+    }
+#endif
 #endif
 }
 
