@@ -89,6 +89,7 @@ typedef enum {
     a1 = r5,
     a2 = r6,
     a3 = r7,
+#if _MIPS_SIM == _ABIO32
     t0 = r8,
     t1 = r9,
     t2 = r10,
@@ -97,6 +98,24 @@ typedef enum {
     t5 = r13,
     t6 = r14,
     t7 = r15,
+    ta0 = t4,
+    ta1 = t5,
+    ta2 = t6,
+    ta3 = t7,
+#else // _ABIN32 || _ABI64
+    a4 = r8,
+    a5 = r9,
+    a6 = r10,
+    a7 = r11,
+    t0 = r12,
+    t1 = r13,
+    t2 = r14,
+    t3 = r15,
+    ta0 = a4,
+    ta1 = a5,
+    ta2 = a6,
+    ta3 = a7,
+#endif
     s0 = r16,
     s1 = r17,
     s2 = r18,
@@ -165,6 +184,9 @@ public:
         OP_SH_RD = 11,
         OP_SH_RT = 16,
         OP_SH_RS = 21,
+#if defined(__mips_loongson_vector_rev)
+        OP_SH_OF = 3,
+#endif
         OP_SH_SHAMT = 6,
         OP_SH_CODE = 16,
         OP_SH_FD = 6,
@@ -366,6 +388,14 @@ public:
                  | (rt << OP_SH_RT));
     }
 
+#if defined(__mips_loongson_vector_rev)
+    void xorInsn(FPRegisterID rd, FPRegisterID rs, FPRegisterID rt)
+    {
+        emitInst(0x4b800002 | (rd << OP_SH_FD) | (rs << OP_SH_FS)
+                 | (rt << OP_SH_FT));
+    }
+#endif
+
     void xori(RegisterID rt, RegisterID rs, int imm)
     {
         emitInst(0x38000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
@@ -426,12 +456,37 @@ public:
                  | (rs << OP_SH_RS));
     }
 
+    void dins(RegisterID rt, RegisterID rs, int pos, int size)
+    {
+        if ((0 <= pos) && (pos <= 31)) {
+            if ((1 <= size) && (size <= 32)) {
+                emitInst(0x7c000007 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                         | ((pos & 0x1f) << OP_SH_SHAMT) | (((size - 1) & 0x1f) << OP_SH_RD));
+            } else {
+                emitInst(0x7c000005 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                         | ((pos & 0x1f) << OP_SH_SHAMT) | (((size - 33) & 0x1f) << OP_SH_RD));
+            }
+        } else {
+            emitInst(0x7c000006 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                     | (((pos - 32) & 0x1f) << OP_SH_SHAMT) | (((size - 1) & 0x1f) << OP_SH_RD));
+        }
+    }
+
     void lb(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0x80000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
                  | (offset & 0xffff));
         loadDelayNop();
     }
+
+#if defined(__mips_loongson_vector_rev)
+    void lb(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xd8000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+        loadDelayNop();
+    }
+#endif
 
     void lbu(RegisterID rt, RegisterID rs, int offset)
     {
@@ -446,6 +501,15 @@ public:
                  | (offset & 0xffff));
         loadDelayNop();
     }
+
+#if defined(__mips_loongson_vector_rev)
+    void lw(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xd8000002 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+        loadDelayNop();
+    }
+#endif
 
     void lwl(RegisterID rt, RegisterID rs, int offset)
     {
@@ -468,6 +532,15 @@ public:
         loadDelayNop();
     }
 
+#if defined(__mips_loongson_vector_rev)
+    void lh(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xd8000001 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+        loadDelayNop();
+    }
+#endif
+
     void lhu(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0x94000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
@@ -481,17 +554,41 @@ public:
                  | (offset & 0xffff));
     }
 
+#if defined(__mips_loongson_vector_rev)
+    void sb(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xf8000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+    }
+#endif
+
     void sh(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0xa4000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
                  | (offset & 0xffff));
     }
 
+#if defined(__mips_loongson_vector_rev)
+    void sh(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xf8000001 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+    }
+#endif
+
     void sw(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0xac000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
                  | (offset & 0xffff));
     }
+
+#if defined(__mips_loongson_vector_rev)
+    void sw(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
+    {
+        emitInst(0xf8000002 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
+                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
+    }
+#endif
 
     void jr(RegisterID rs)
     {
@@ -633,6 +730,12 @@ public:
     void mfc1(RegisterID rt, FPRegisterID fs)
     {
         emitInst(0x44000000 | (fs << OP_SH_FS) | (rt << OP_SH_RT));
+        copDelayNop();
+    }
+
+    void mfhc1(RegisterID rt, FPRegisterID fs)
+    {
+        emitInst(0x44600000 | (fs << OP_SH_FS) | (rt << OP_SH_RT));
         copDelayNop();
     }
 

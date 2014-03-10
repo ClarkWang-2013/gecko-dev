@@ -58,8 +58,13 @@ class YarrGenerator : private MacroAssembler {
     static const RegisterID length = MIPSRegisters::a2;
     static const RegisterID output = MIPSRegisters::a3;
 
+#if _MIPS_SIM == _ABIO32
     static const RegisterID regT0 = MIPSRegisters::t4;
     static const RegisterID regT1 = MIPSRegisters::t5;
+#else // _ABIN32 || _ABI64
+    static const RegisterID regT0 = MIPSRegisters::a4;
+    static const RegisterID regT1 = MIPSRegisters::a5;
+#endif
 
     static const RegisterID returnRegister = MIPSRegisters::v0;
     static const RegisterID returnRegister2 = MIPSRegisters::v1;
@@ -1433,6 +1438,8 @@ class YarrGenerator : private MacroAssembler {
                 move32(returnRegister, returnRegister);
                 lshiftPtr(Imm32(32), index);
                 orPtr(index, returnRegister);
+#elif WTF_CPU_MIPS && (_MIPS_SIM == _ABIN32)
+                ins64(TrustedImm32(32), TrustedImm32(32), index, returnRegister);
 #else
                 move(index, returnRegister2);
 #endif
@@ -1756,6 +1763,9 @@ class YarrGenerator : private MacroAssembler {
 #endif
 #if WTF_CPU_X86_64
                 move(TrustedImm32(int(WTF::notFound)), returnRegister);
+#elif WTF_CPU_MIPS && (_MIPS_SIM == _ABIN32)
+                move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
+                ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
 #else
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
                 move(TrustedImm32(0), returnRegister2);
@@ -2002,6 +2012,9 @@ class YarrGenerator : private MacroAssembler {
 #endif
 #if WTF_CPU_X86_64
                 move(TrustedImm32(int(WTF::notFound)), returnRegister);
+#elif WTF_CPU_MIPS && (_MIPS_SIM == _ABIN32)
+                move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
+                ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
 #else
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
                 move(TrustedImm32(0), returnRegister2);
@@ -2657,6 +2670,9 @@ public:
         Jump hasInput = checkInput();
 #if WTF_CPU_X86_64
         move(TrustedImm32(int(WTF::notFound)), returnRegister);
+#elif WTF_CPU_MIPS && (_MIPS_SIM == _ABIN32)
+        move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
+        ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
 #else
         move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
         move(TrustedImm32(0), returnRegister2);

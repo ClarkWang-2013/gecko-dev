@@ -37,12 +37,13 @@ ABIArgGenerator::next(MIRType type)
         if (GetIntArgReg(usedArgSlots_, &destReg)) {
             current_ = ABIArg(destReg);
         } else {
-            current_ = ABIArg(usedArgSlots_ * sizeof(intptr_t));
+            current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
         }
         usedArgSlots_++;
         break;
       case MIRType_Float32:
       case MIRType_Double:
+#if _MIPS_SIM == _ABIO32
         if (!usedArgSlots_) {
             current_ = ABIArg(f12);
             usedArgSlots_ += 2;
@@ -58,6 +59,18 @@ ABIArgGenerator::next(MIRType type)
             current_ = ABIArg(usedArgSlots_ * sizeof(intptr_t));
             usedArgSlots_ += 2;
         }
+#else // _ABIN32 || _ABI64
+        FloatRegister destFReg;
+        if (0 == usedArgSlots_) {
+            firstArgFloat = true;
+        }
+        if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+            current_ = ABIArg(destFReg);
+        } else {
+            current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
+        }
+        usedArgSlots_++;
+#endif
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("Unexpected argument type");
@@ -88,7 +101,11 @@ uint32_t
 js::jit::RT(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
+#if _MIPS_SIM == _ABIO32
     return (2 * r.code()) << RTShift;
+#else // _ABIN32 || _ABI64
+    return r.code() << RTShift;
+#endif
 }
 
 // Use to code odd float registers.
@@ -111,7 +128,11 @@ uint32_t
 js::jit::RD(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
+#if _MIPS_SIM == _ABIO32
     return (2 * r.code()) << RDShift;
+#else // _ABIN32 || _ABI64
+    return r.code() << RDShift;
+#endif
 }
 
 // Use to code odd float registers.
@@ -134,7 +155,11 @@ uint32_t
 js::jit::SA(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
+#if _MIPS_SIM == _ABIO32
     return (2 * r.code()) << SAShift;
+#else // _ABIN32 || _ABI64
+    return r.code() << SAShift;
+#endif
 }
 
 Register
@@ -690,6 +715,13 @@ Assembler::as_addiu(Register rd, Register rs, int32_t j)
 }
 
 BufferOffset
+Assembler::as_daddiu(Register rd, Register rs, int32_t j)
+{
+    MOZ_ASSERT(Imm16::isInSignedRange(j));
+    return writeInst(InstImm(op_daddiu, rs, rd, Imm16(j)).encode());
+}
+
+BufferOffset
 Assembler::as_subu(Register rd, Register rs, Register rt)
 {
     return writeInst(InstReg(op_special, rs, rt, rd, ff_subu).encode());
@@ -817,6 +849,12 @@ Assembler::as_lw(Register rd, Register rs, int16_t off)
 }
 
 BufferOffset
+Assembler::as_lwu(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_lwu, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
 Assembler::as_lwl(Register rd, Register rs, int16_t off)
 {
     return writeInst(InstImm(op_lwl, rs, rd, Imm16(off)).encode());
@@ -826,6 +864,12 @@ BufferOffset
 Assembler::as_lwr(Register rd, Register rs, int16_t off)
 {
     return writeInst(InstImm(op_lwr, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_ld(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_ld, rs, rd, Imm16(off)).encode());
 }
 
 BufferOffset
@@ -856,6 +900,12 @@ BufferOffset
 Assembler::as_swr(Register rd, Register rs, int16_t off)
 {
     return writeInst(InstImm(op_swr, rs, rd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_sd(Register rd, Register rs, int16_t off)
+{
+    return writeInst(InstImm(op_sd, rs, rd, Imm16(off)).encode());
 }
 
 // Move from HI/LO register.
@@ -961,10 +1011,38 @@ Assembler::as_ld(FloatRegister fd, Register base, int32_t off)
 }
 
 BufferOffset
+Assembler::as_ldl(FloatRegister fd, Register base, int32_t off)
+{
+    MOZ_ASSERT(Imm8::isInSignedRange(off));
+    return writeInst(InstReg(op_lwc2, base, fd, Imm8(off).encode(), ff_gslsl).encode());
+}
+
+BufferOffset
+Assembler::as_ldr(FloatRegister fd, Register base, int32_t off)
+{
+    MOZ_ASSERT(Imm8::isInSignedRange(off));
+    return writeInst(InstReg(op_lwc2, base, fd, Imm8(off).encode(), ff_gslsr).encode());
+}
+
+BufferOffset
 Assembler::as_sd(FloatRegister fd, Register base, int32_t off)
 {
     MOZ_ASSERT(Imm16::isInSignedRange(off));
     return writeInst(InstImm(op_sdc1, base, fd, Imm16(off)).encode());
+}
+
+BufferOffset
+Assembler::as_sdl(FloatRegister fd, Register base, int32_t off)
+{
+    MOZ_ASSERT(Imm8::isInSignedRange(off));
+    return writeInst(InstReg(op_swc2, base, fd, Imm8(off).encode(), ff_gslsl).encode());
+}
+
+BufferOffset
+Assembler::as_sdr(FloatRegister fd, Register base, int32_t off)
+{
+    MOZ_ASSERT(Imm8::isInSignedRange(off));
+    return writeInst(InstReg(op_swc2, base, fd, Imm8(off).encode(), ff_gslsr).encode());
 }
 
 BufferOffset
@@ -1005,7 +1083,31 @@ Assembler::as_mfc1(Register rt, FloatRegister fs)
     return writeInst(InstReg(op_cop1, rs_mfc1, rt, fs).encode());
 }
 
+BufferOffset
+Assembler::as_mthc1(Register rt, FloatRegister fs)
+{
+    return writeInst(InstReg(op_cop1, rs_mthc1, rt, fs).encode());
+}
 
+BufferOffset
+Assembler::as_mfhc1(Register rt, FloatRegister fs)
+{
+    return writeInst(InstReg(op_cop1, rs_mfhc1, rt, fs).encode());
+}
+
+BufferOffset
+Assembler::as_dmtc1(Register rt, FloatRegister fs)
+{
+    return writeInst(InstReg(op_cop1, rs_dmtc1, rt, fs).encode());
+}
+
+BufferOffset
+Assembler::as_dmfc1(Register rt, FloatRegister fs)
+{
+    return writeInst(InstReg(op_cop1, rs_dmfc1, rt, fs).encode());
+}
+
+#if _MIPS_SIM == _ABIO32
 // :TODO: Bug 972836, Remove _Odd functions once we can use odd regs.
 BufferOffset
 Assembler::as_ls_Odd(FloatRegister fd, Register base, int32_t off)
@@ -1036,6 +1138,7 @@ Assembler::as_mfc1_Odd(Register rt, FloatRegister fs)
     // Hardcoded because it will be removed once we can use odd regs.
     return writeInst(op_cop1 | rs_mfc1 | RT(rt) | RD(fs.code() * 2 + 1));
 }
+#endif
 
 
 // FP convert instructions

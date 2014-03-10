@@ -36,7 +36,7 @@ namespace WTF {
 
 #if WTF_CPU_SPARC
 #define MINIMUM_BUMP_POOL_SIZE 0x2000
-#elif WTF_CPU_IA64
+#elif WTF_CPU_IA64 || defined(__mips_loongson_vector_rev)
 #define MINIMUM_BUMP_POOL_SIZE 0x4000
 #else
 #define MINIMUM_BUMP_POOL_SIZE 0x1000

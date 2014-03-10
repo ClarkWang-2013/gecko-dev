@@ -200,9 +200,11 @@ class MacroAssemblerMIPS : public Assembler
     // memory
     // shortcut for when we know we're transferring 32 bits of data
     void ma_lw(Register data, Address address);
+    void ma_ld(Register data, Address address);
 
     void ma_sw(Register data, Address address);
     void ma_sw(Imm32 imm, Address address);
+    void ma_sd(Register data, Address address);
 
     void ma_pop(Register r);
     void ma_push(Register r);
@@ -999,7 +1001,11 @@ public:
 
     void zeroDouble(FloatRegister reg) {
         as_mtc1(zero, reg);
+#if _MIPS_SIM == _ABIO32
         as_mtc1_Odd(zero, reg);
+#else // _ABIN32 || _ABI64
+        as_mthc1(zero, reg);
+#endif
     }
 
     void clampIntToUint8(Register reg) {

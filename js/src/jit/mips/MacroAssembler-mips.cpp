@@ -124,7 +124,11 @@ MacroAssemblerMIPS::convertDoubleToInt32(const FloatRegister &src, const Registe
         // Test and bail for -0.0, when integer result is 0
         // Move the top word of the double into the output reg, if it is
         // non-zero, then the original value was -0.0
+#if _MIPS_SIM == _ABIO32
         as_mfc1_Odd(dest, src);
+#else // _ABIN32 || _ABI64
+        as_mfhc1(dest, src);
+#endif
         ma_b(dest, Imm32(INT32_MIN), fail, Assembler::Equal);
         bind(&notZero);
     }
@@ -151,7 +155,11 @@ MacroAssemblerMIPS::convertFloat32ToInt32(const FloatRegister &src, const Regist
         // Test and bail for -0.0, when integer result is 0
         // Move the top word of the double into the output reg,
         // if it is non-zero, then the original value was -0.0
+#if _MIPS_SIM == _ABIO32
         as_mfc1_Odd(dest, src);
+#else // _ABIN32 || _ABI64
+        as_mfhc1(dest, src);
+#endif
         ma_b(dest, Imm32(INT32_MIN), fail, Assembler::Equal);
         bind(&notZero);
     }
@@ -222,6 +230,7 @@ MacroAssemblerMIPS::negateDouble(FloatRegister reg)
 void
 MacroAssemblerMIPS::inc64(AbsoluteAddress dest)
 {
+#if _MIPS_SIM == _ABIO32
     ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
     as_lw(SecondScratchReg, ScratchRegister, 0);
 
@@ -235,6 +244,12 @@ MacroAssemblerMIPS::inc64(AbsoluteAddress dest)
 
     ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
     as_sw(SecondScratchReg, ScratchRegister, 4);
+#else // _ABIN32 || _ABI64
+    ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
+    as_ld(SecondScratchReg, ScratchRegister, 0);
+    as_daddiu(SecondScratchReg, SecondScratchReg, 1);
+    as_sd(SecondScratchReg, ScratchRegister, 0);
+#endif
 }
 
 void
@@ -727,7 +742,13 @@ MacroAssemblerMIPS::ma_load(const Register &dest, Address address,
             as_lh(dest, base, encodedOffset);
         break;
       case SizeWord:
-        as_lw(dest, base, encodedOffset);
+        if (ZeroExtend == extension)
+            as_lwu(dest, base, encodedOffset);
+        else
+            as_lw(dest, base, encodedOffset);
+        break;
+      case SizeDouble:
+        as_ld(dest, base, encodedOffset);
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("Invalid argument for ma_load");
@@ -768,6 +789,9 @@ MacroAssemblerMIPS::ma_store(const Register &data, Address address, LoadStoreSiz
         break;
       case SizeWord:
         as_sw(data, base, encodedOffset);
+        break;
+      case SizeDouble:
+        as_sd(data, base, encodedOffset);
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("Invalid argument for ma_store");
@@ -819,6 +843,12 @@ MacroAssemblerMIPS::ma_lw(Register data, Address address)
 }
 
 void
+MacroAssemblerMIPS::ma_ld(Register data, Address address)
+{
+    ma_load(data, address, SizeDouble);
+}
+
+void
 MacroAssemblerMIPS::ma_sw(Register data, Address address)
 {
     ma_store(data, address, SizeWord);
@@ -839,6 +869,12 @@ MacroAssemblerMIPS::ma_sw(Imm32 imm, Address address)
         as_addu(SecondScratchReg, address.base, SecondScratchReg);
         as_sw(ScratchRegister, SecondScratchReg, 0);
     }
+}
+
+void
+MacroAssemblerMIPS::ma_sd(Register data, Address address)
+{
+    ma_store(data, address, SizeDouble);
 }
 
 void
@@ -1318,20 +1354,28 @@ MacroAssemblerMIPS::ma_lid(FloatRegister dest, double value)
     } ;
     DoubleStruct intStruct = mozilla::BitwiseCast<DoubleStruct>(value);
 
-    // put hi part of 64 bit value into the odd register
-    if (intStruct.hi == 0) {
-        as_mtc1_Odd(zero, dest);
-    } else {
-        ma_li(ScratchRegister, Imm32(intStruct.hi));
-        as_mtc1_Odd(ScratchRegister, dest);
-    }
-
     // put low part of 64 bit value into the even register
     if (intStruct.lo == 0) {
         as_mtc1(zero, dest);
     } else {
         ma_li(ScratchRegister, Imm32(intStruct.lo));
         as_mtc1(ScratchRegister, dest);
+    }
+
+    // put hi part of 64 bit value into the odd register
+    if (intStruct.hi == 0) {
+#if _MIPS_SIM == _ABIO32
+        as_mtc1_Odd(zero, dest);
+#else // _ABIN32 || _ABI64
+        as_mthc1(zero, dest);
+#endif
+    } else {
+        ma_li(ScratchRegister, Imm32(intStruct.hi));
+#if _MIPS_SIM == _ABIO32
+        as_mtc1_Odd(ScratchRegister, dest);
+#else // _ABIN32 || _ABI64
+        as_mthc1(ScratchRegister, dest);
+#endif
     }
 }
 
@@ -1340,21 +1384,33 @@ MacroAssemblerMIPS::ma_liNegZero(FloatRegister dest)
 {
     as_mtc1(zero, dest);
     ma_li(ScratchRegister, Imm32(INT_MIN));
+#if _MIPS_SIM == _ABIO32
     as_mtc1_Odd(ScratchRegister, dest);
+#else // _ABIN32 || _ABI64
+    as_mthc1(ScratchRegister, dest);
+#endif
 }
 
 void
 MacroAssemblerMIPS::ma_mv(FloatRegister src, ValueOperand dest)
 {
     as_mfc1(dest.payloadReg(), src);
+#if _MIPS_SIM == _ABIO32
     as_mfc1_Odd(dest.typeReg(), src);
+#else // _ABIN32 || _ABI64
+    as_mfhc1(dest.typeReg(), src);
+#endif
 }
 
 void
 MacroAssemblerMIPS::ma_mv(ValueOperand src, FloatRegister dest)
 {
     as_mtc1(src.payloadReg(), dest);
+#if _MIPS_SIM == _ABIO32
     as_mtc1_Odd(src.typeReg(), dest);
+#else // _ABIN32 || _ABI64
+    as_mthc1(src.typeReg(), dest);
+#endif
 }
 
 void
@@ -1376,6 +1432,7 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
     // Use single precision load instructions so we don't have to worry about
     // alignment.
 
+#if _MIPS_SIM == _ABIO32
     int32_t off2 = address.offset + TAG_OFFSET;
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
         as_ls(ft, address.base, Imm16(address.offset).encode());
@@ -1386,11 +1443,24 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
         as_ls(ft, ScratchRegister, PAYLOAD_OFFSET);
         as_ls_Odd(ft, ScratchRegister, TAG_OFFSET);
     }
+#else // _ABIN32 || _ABI64
+    int32_t off2 = address.offset + 7;
+    if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
+        as_ldl(ft, address.base, Imm8(off2).encode());
+        as_ldr(ft, address.base, Imm8(address.offset).encode());
+    } else {
+        ma_li(ScratchRegister, Imm32(address.offset));
+        as_addu(ScratchRegister, address.base, ScratchRegister);
+        as_ldl(ft, ScratchRegister, 7);
+        as_ldr(ft, ScratchRegister, 0);
+    }
+#endif
 }
 
 void
 MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
 {
+#if _MIPS_SIM == _ABIO32
     int32_t off2 = address.offset + TAG_OFFSET;
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
         as_ss(ft, address.base, Imm16(address.offset).encode());
@@ -1401,6 +1471,18 @@ MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
         as_ss(ft, ScratchRegister, PAYLOAD_OFFSET);
         as_ss_Odd(ft, ScratchRegister, TAG_OFFSET);
     }
+#else // _ABIN32 || _ABI64
+    int32_t off2 = address.offset + 7;
+    if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
+        as_sdl(ft, address.base, Imm8(off2).encode());
+        as_sdr(ft, address.base, Imm8(address.offset).encode());
+    } else {
+        ma_li(ScratchRegister, Imm32(address.offset));
+        as_addu(ScratchRegister, address.base, ScratchRegister);
+        as_sdl(ft, ScratchRegister, 7);
+        as_sdr(ft, ScratchRegister, 0);
+    }
+#endif
 }
 
 void
@@ -2337,16 +2419,24 @@ MacroAssemblerMIPSCompat::unboxDouble(const ValueOperand &operand, const FloatRe
 {
     MOZ_ASSERT(dest != ScratchFloatReg);
     as_mtc1(operand.payloadReg(), dest);
+#if _MIPS_SIM == _ABIO32
     as_mtc1_Odd(operand.typeReg(), dest);
+#else // _ABIN32 || _ABI64
+    as_mthc1(operand.typeReg(), dest);
+#endif
 }
 
 void
 MacroAssemblerMIPSCompat::unboxDouble(const Address &src, const FloatRegister &dest)
 {
+#if _MIPS_SIM == _ABIO32
     ma_lw(ScratchRegister, Address(src.base, src.offset + PAYLOAD_OFFSET));
     as_mtc1(ScratchRegister, dest);
     ma_lw(ScratchRegister, Address(src.base, src.offset + TAG_OFFSET));
     as_mtc1_Odd(ScratchRegister, dest);
+#else // _ABIN32 || _ABI64
+    ma_ld(dest, Address(src.base, src.offset));
+#endif
 }
 
 void
@@ -2393,7 +2483,11 @@ void
 MacroAssemblerMIPSCompat::boxDouble(const FloatRegister &src, const ValueOperand &dest)
 {
     as_mfc1(dest.payloadReg(), src);
+#if _MIPS_SIM == _ABIO32
     as_mfc1_Odd(dest.typeReg(), src);
+#else // _ABIN32 || _ABI64
+    as_mfhc1(dest.typeReg(), src);
+#endif
 }
 
 void
@@ -2893,6 +2987,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
     if (!enoughMemory_)
         return;
     switch (type) {
+#if _MIPS_SIM == _ABIO32
       case MoveOp::FLOAT32:
         if (!usedArgSlots_) {
             if (from.floatReg() != f12)
@@ -2944,6 +3039,26 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
             usedArgSlots_ += 2;
         }
         break;
+#else // _ABIN32 || _ABI64
+      case MoveOp::FLOAT32:
+      case MoveOp::DOUBLE:
+        FloatRegister destFReg;
+        if (0 == usedArgSlots_) {
+            firstArgType = type;
+        }
+        if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+            if (from.isFloatReg() && from.floatReg() == destFReg) {
+                // Nothing to do; the value is in the right register already
+            } else {
+                enoughMemory_ = moveResolver_.addMove(from, MoveOperand(destFReg), type);
+            }
+        } else {
+            uint32_t disp = GetArgStackDisp(usedArgSlots_);
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
+        }
+        usedArgSlots_++;
+        break;
+#endif
       case MoveOp::GENERAL:
         Register destReg;
         if (GetIntArgReg(usedArgSlots_, &destReg)) {
@@ -2994,9 +3109,14 @@ MacroAssemblerMIPSCompat::callWithABIPre(uint32_t *stackAdjust)
     // Reserve place for $ra.
     *stackAdjust = sizeof(intptr_t);
 
+#if _MIPS_SIM == _ABIO32
     *stackAdjust += usedArgSlots_ > NumIntArgRegs ?
                     usedArgSlots_ * sizeof(intptr_t) :
                     NumIntArgRegs * sizeof(intptr_t);
+#else // _ABIN32 || _ABI64
+    *stackAdjust += usedArgSlots_ > NumIntArgRegs ?
+                    (usedArgSlots_ - NumIntArgRegs) * sizeof(intptr_t) : 0;
+#endif
 
     if (dynamicAlignment_) {
         *stackAdjust += ComputeByteAlignment(*stackAdjust, StackAlignment);

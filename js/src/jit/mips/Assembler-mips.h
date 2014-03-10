@@ -29,6 +29,7 @@ static MOZ_CONSTEXPR_VAR Register a0 = { Registers::a0 };
 static MOZ_CONSTEXPR_VAR Register a1 = { Registers::a1 };
 static MOZ_CONSTEXPR_VAR Register a2 = { Registers::a2 };
 static MOZ_CONSTEXPR_VAR Register a3 = { Registers::a3 };
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR Register t0 = { Registers::t0 };
 static MOZ_CONSTEXPR_VAR Register t1 = { Registers::t1 };
 static MOZ_CONSTEXPR_VAR Register t2 = { Registers::t2 };
@@ -37,6 +38,16 @@ static MOZ_CONSTEXPR_VAR Register t4 = { Registers::t4 };
 static MOZ_CONSTEXPR_VAR Register t5 = { Registers::t5 };
 static MOZ_CONSTEXPR_VAR Register t6 = { Registers::t6 };
 static MOZ_CONSTEXPR_VAR Register t7 = { Registers::t7 };
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR Register a4 = { Registers::a4 };
+static MOZ_CONSTEXPR_VAR Register a5 = { Registers::a5 };
+static MOZ_CONSTEXPR_VAR Register a6 = { Registers::a6 };
+static MOZ_CONSTEXPR_VAR Register a7 = { Registers::a7 };
+static MOZ_CONSTEXPR_VAR Register t0 = { Registers::t0 };
+static MOZ_CONSTEXPR_VAR Register t1 = { Registers::t1 };
+static MOZ_CONSTEXPR_VAR Register t2 = { Registers::t2 };
+static MOZ_CONSTEXPR_VAR Register t3 = { Registers::t3 };
+#endif
 static MOZ_CONSTEXPR_VAR Register s0 = { Registers::s0 };
 static MOZ_CONSTEXPR_VAR Register s1 = { Registers::s1 };
 static MOZ_CONSTEXPR_VAR Register s2 = { Registers::s2 };
@@ -64,8 +75,13 @@ static MOZ_CONSTEXPR_VAR Register CallTempReg0 = t0;
 static MOZ_CONSTEXPR_VAR Register CallTempReg1 = t1;
 static MOZ_CONSTEXPR_VAR Register CallTempReg2 = t2;
 static MOZ_CONSTEXPR_VAR Register CallTempReg3 = t3;
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR Register CallTempReg4 = t4;
 static MOZ_CONSTEXPR_VAR Register CallTempReg5 = t5;
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR Register CallTempReg4 = a2;
+static MOZ_CONSTEXPR_VAR Register CallTempReg5 = a3;
+#endif
 
 static MOZ_CONSTEXPR_VAR Register IntArgReg0 = a0;
 static MOZ_CONSTEXPR_VAR Register IntArgReg1 = a1;
@@ -73,7 +89,11 @@ static MOZ_CONSTEXPR_VAR Register IntArgReg2 = a2;
 static MOZ_CONSTEXPR_VAR Register IntArgReg3 = a3;
 static MOZ_CONSTEXPR_VAR Register GlobalReg = s6; // used by Odin
 static MOZ_CONSTEXPR_VAR Register HeapReg = s7; // used by Odin
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { t0, t1, t2, t3, t4 };
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { t0, t1, t2, t3 };
+#endif
 static const uint32_t NumCallTempNonArgRegs = mozilla::ArrayLength(CallTempNonArgRegs);
 
 class ABIArgGenerator
@@ -88,10 +108,17 @@ class ABIArgGenerator
     ABIArg &current() { return current_; }
 
     uint32_t stackBytesConsumedSoFar() const {
+#if _MIPS_SIM == _ABIO32
         if (usedArgSlots_ <= 4)
             return 4 * sizeof(intptr_t);
 
         return usedArgSlots_ * sizeof(intptr_t);
+#else // _ABIN32 || _ABI64
+        if (usedArgSlots_ <= 8)
+            return 0;
+
+        return (usedArgSlots_ - 8) * sizeof(int64_t);
+#endif
     }
 
     static const Register NonArgReturnVolatileReg0;
@@ -109,8 +136,13 @@ static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = fp;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = { FloatRegisters::f0 };
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f18 };
 static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f16 };
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f23 };
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f21 };
+#endif
 
 static MOZ_CONSTEXPR_VAR FloatRegister NANReg = { FloatRegisters::f30 };
 
@@ -130,6 +162,24 @@ static MOZ_CONSTEXPR_VAR FloatRegister f24 = {FloatRegisters::f24};
 static MOZ_CONSTEXPR_VAR FloatRegister f26 = {FloatRegisters::f26};
 static MOZ_CONSTEXPR_VAR FloatRegister f28 = {FloatRegisters::f28};
 static MOZ_CONSTEXPR_VAR FloatRegister f30 = {FloatRegisters::f30};
+#if _MIPS_SIM != _ABIO32
+static MOZ_CONSTEXPR_VAR FloatRegister f1  = {FloatRegisters::f1};
+static MOZ_CONSTEXPR_VAR FloatRegister f3  = {FloatRegisters::f3};
+static MOZ_CONSTEXPR_VAR FloatRegister f5  = {FloatRegisters::f5};
+static MOZ_CONSTEXPR_VAR FloatRegister f7  = {FloatRegisters::f7};
+static MOZ_CONSTEXPR_VAR FloatRegister f9  = {FloatRegisters::f9};
+static MOZ_CONSTEXPR_VAR FloatRegister f11 = {FloatRegisters::f11};
+static MOZ_CONSTEXPR_VAR FloatRegister f13 = {FloatRegisters::f13};
+static MOZ_CONSTEXPR_VAR FloatRegister f15 = {FloatRegisters::f15};
+static MOZ_CONSTEXPR_VAR FloatRegister f17 = {FloatRegisters::f17};
+static MOZ_CONSTEXPR_VAR FloatRegister f19 = {FloatRegisters::f19};
+static MOZ_CONSTEXPR_VAR FloatRegister f21 = {FloatRegisters::f21};
+static MOZ_CONSTEXPR_VAR FloatRegister f23 = {FloatRegisters::f23};
+static MOZ_CONSTEXPR_VAR FloatRegister f25 = {FloatRegisters::f25};
+static MOZ_CONSTEXPR_VAR FloatRegister f27 = {FloatRegisters::f27};
+static MOZ_CONSTEXPR_VAR FloatRegister f29 = {FloatRegisters::f29};
+static MOZ_CONSTEXPR_VAR FloatRegister f31 = {FloatRegisters::f31};
+#endif
 
 // MIPS CPUs can only load multibyte data that is "naturally"
 // four-byte-aligned, sp register should be eight-byte-aligned.
@@ -172,6 +222,8 @@ static const uint32_t SAShift = 6;
 static const uint32_t SABits = 5;
 static const uint32_t FunctionShift = 0;
 static const uint32_t FunctionBits = 5;
+static const uint32_t Imm8Shift = 6;
+static const uint32_t Imm8Bits = 8;
 static const uint32_t Imm16Shift = 0;
 static const uint32_t Imm16Bits = 16;
 static const uint32_t Imm26Shift = 0;
@@ -185,6 +237,7 @@ static const uint32_t FccShift = 2;
 
 // MIPS instruction  field bit masks.
 static const uint32_t OpcodeMask = ((1 << OpcodeBits) - 1) << OpcodeShift;
+static const uint32_t Imm8Mask = ((1 << Imm8Bits) - 1) << Imm8Shift;
 static const uint32_t Imm16Mask = ((1 << Imm16Bits) - 1) << Imm16Shift;
 static const uint32_t Imm26Mask = ((1 << Imm26Bits) - 1) << Imm26Shift;
 static const uint32_t Imm28Mask = ((1 << Imm28Bits) - 1) << Imm28Shift;
@@ -247,6 +300,7 @@ enum Opcode {
     op_bnel     = 21 << OpcodeShift,
     op_blezl    = 22 << OpcodeShift,
     op_bgtzl    = 23 << OpcodeShift,
+    op_daddiu   = 25 << OpcodeShift,
 
     op_special2 = 28 << OpcodeShift,
     op_special3 = 31 << OpcodeShift,
@@ -258,6 +312,7 @@ enum Opcode {
     op_lbu      = 36 << OpcodeShift,
     op_lhu      = 37 << OpcodeShift,
     op_lwr      = 38 << OpcodeShift,
+    op_lwu      = 39 << OpcodeShift,
     op_sb       = 40 << OpcodeShift,
     op_sh       = 41 << OpcodeShift,
     op_swl      = 42 << OpcodeShift,
@@ -265,10 +320,14 @@ enum Opcode {
     op_swr      = 46 << OpcodeShift,
 
     op_lwc1     = 49 << OpcodeShift,
+    op_lwc2     = 50 << OpcodeShift,
     op_ldc1     = 53 << OpcodeShift,
+    op_ld       = 55 << OpcodeShift,
 
     op_swc1     = 57 << OpcodeShift,
-    op_sdc1     = 61 << OpcodeShift
+    op_swc2     = 58 << OpcodeShift,
+    op_sdc1     = 61 << OpcodeShift,
+    op_sd       = 63 << OpcodeShift,
 };
 
 enum RSField {
@@ -276,9 +335,11 @@ enum RSField {
     // cop1 encoding of RS field.
     rs_mfc1  = 0 << RSShift,
     rs_one   = 1 << RSShift,
+    rs_dmfc1 = 1 << RSShift,
     rs_cfc1  = 2 << RSShift,
     rs_mfhc1 = 3 << RSShift,
     rs_mtc1  = 4 << RSShift,
+    rs_dmtc1 = 5 << RSShift,
     rs_ctc1  = 6 << RSShift,
     rs_mthc1 = 7 << RSShift,
     rs_bc1   = 8 << RSShift,
@@ -369,6 +430,10 @@ enum FunctionField {
     ff_c_ult_fmt   = 53,
     ff_c_ole_fmt   = 54,
     ff_c_ule_fmt   = 55,
+
+    // lwc2, swc2 encoding of function field.
+    ff_gslsl       = 6,
+    ff_gslsr       = 7,
 };
 
 class MacroAssemblerMIPS;
@@ -484,6 +549,32 @@ class Imm16
     }
     static Imm16 upper (Imm32 imm) {
         return Imm16((imm.value >> 16) & 0xffff);
+    }
+};
+
+class Imm8
+{
+    uint8_t value;
+
+  public:
+    Imm8();
+    Imm8(uint32_t imm)
+      : value(imm)
+    { }
+    uint32_t encode() {
+        return value;
+    }
+    int32_t decodeSigned() {
+        return value;
+    }
+    uint32_t decodeUnsigned() {
+        return value;
+    }
+    static bool isInSignedRange(int32_t imm) {
+        return imm >= INT8_MIN  && imm <= INT8_MAX;
+    }
+    static bool isInUnsignedRange(uint32_t imm) {
+        return imm <= UINT8_MAX ;
     }
 };
 
@@ -780,6 +871,7 @@ class Assembler
     // Arithmetic instructions
     BufferOffset as_addu(Register rd, Register rs, Register rt);
     BufferOffset as_addiu(Register rd, Register rs, int32_t j);
+    BufferOffset as_daddiu(Register rd, Register rs, int32_t j);
     BufferOffset as_subu(Register rd, Register rs, Register rt);
     BufferOffset as_mult(Register rs, Register rt);
     BufferOffset as_multu(Register rs, Register rt);
@@ -815,13 +907,16 @@ class Assembler
     BufferOffset as_lh(Register rd, Register rs, int16_t off);
     BufferOffset as_lhu(Register rd, Register rs, int16_t off);
     BufferOffset as_lw(Register rd, Register rs, int16_t off);
+    BufferOffset as_lwu(Register rd, Register rs, int16_t off);
     BufferOffset as_lwl(Register rd, Register rs, int16_t off);
     BufferOffset as_lwr(Register rd, Register rs, int16_t off);
+    BufferOffset as_ld(Register rd, Register rs, int16_t off);
     BufferOffset as_sb(Register rd, Register rs, int16_t off);
     BufferOffset as_sh(Register rd, Register rs, int16_t off);
     BufferOffset as_sw(Register rd, Register rs, int16_t off);
     BufferOffset as_swl(Register rd, Register rs, int16_t off);
     BufferOffset as_swr(Register rd, Register rs, int16_t off);
+    BufferOffset as_sd(Register rd, Register rs, int16_t off);
 
     // Move from HI/LO register.
     BufferOffset as_mfhi(Register rd);
@@ -849,7 +944,11 @@ class Assembler
     // Use these two functions only when you are sure address is aligned.
     // Otherwise, use ma_ld and ma_sd.
     BufferOffset as_ld(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_ldl(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_ldr(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_sd(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_sdl(FloatRegister fd, Register base, int32_t off);
+    BufferOffset as_sdr(FloatRegister fd, Register base, int32_t off);
 
     BufferOffset as_ls(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_ss(FloatRegister fd, Register base, int32_t off);
@@ -859,17 +958,25 @@ class Assembler
 
     BufferOffset as_mtc1(Register rt, FloatRegister fs);
     BufferOffset as_mfc1(Register rt, FloatRegister fs);
+    BufferOffset as_mthc1(Register rt, FloatRegister fs);
+    BufferOffset as_mfhc1(Register rt, FloatRegister fs);
+    BufferOffset as_dmtc1(Register rt, FloatRegister fs);
+    BufferOffset as_dmfc1(Register rt, FloatRegister fs);
 
   protected:
+#if _MIPS_SIM == _ABIO32
     // These instructions should only be used to access the odd part of 
     // 64-bit register pair. Do not use odd registers as 32-bit registers.
     // :TODO: Bug 972836, Remove _Odd functions once we can use odd regs.
     BufferOffset as_ls_Odd(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_ss_Odd(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_mtc1_Odd(Register rt, FloatRegister fs);
+#endif
   public:
+#if _MIPS_SIM == _ABIO32
     // Made public because CodeGenerator uses it to check for -0
     BufferOffset as_mfc1_Odd(Register rt, FloatRegister fs);
+#endif
 
     // FP convert instructions
     BufferOffset as_ceilws(FloatRegister fd, FloatRegister fs);
@@ -1131,6 +1238,9 @@ class InstReg : public Instruction
     InstReg(Opcode op, RSField rs, FloatRegister ft, FloatRegister fd, uint32_t sa, FunctionField ff)
       : Instruction(op | rs | RT(ft) | RD(fd) | SA(sa) | ff)
     { }
+    InstReg(Opcode op, Register rs, FloatRegister ft, uint32_t off, FunctionField ff)
+      : Instruction(op | RS(rs) | RT(ft) | ((off << Imm8Shift) &Imm8Mask) | ff)
+    { }
 
     uint32_t extractRS () {
         return extractBitField(RSShift + RSBits - 1, RSShift);
@@ -1216,7 +1326,12 @@ class InstJump : public Instruction
     }
 };
 
+#if _MIPS_SIM == _ABIO32
 static const uint32_t NumIntArgRegs = 4;
+#else // _ABIN32 || _ABI64
+static const uint32_t NumIntArgRegs = 8;
+static const uint32_t NumFloatArgRegs = NumIntArgRegs;
+#endif
 
 static inline bool
 GetIntArgReg(uint32_t usedArgSlots, Register *out)
@@ -1227,6 +1342,18 @@ GetIntArgReg(uint32_t usedArgSlots, Register *out)
     }
     return false;
 }
+
+#if _MIPS_SIM != _ABIO32
+static inline bool
+GetFloatArgReg(uint32_t usedArgSlots, FloatRegister *out)
+{
+    if (usedArgSlots < NumFloatArgRegs) {
+        *out = FloatRegister::FromCode(f12.code() + usedArgSlots);
+        return true;
+    }
+    return false;
+}
+#endif
 
 // Get a register in which we plan to put a quantity that will be used as an
 // integer argument. This differs from GetIntArgReg in that if we have no more
@@ -1256,8 +1383,12 @@ static inline uint32_t
 GetArgStackDisp(uint32_t usedArgSlots)
 {
     MOZ_ASSERT(usedArgSlots >= NumIntArgRegs);
+#if _MIPS_SIM == _ABIO32
     // Even register arguments have place reserved on stack.
     return usedArgSlots * sizeof(intptr_t);
+#else // _ABIN32 || _ABI64
+    return (usedArgSlots - NumIntArgRegs) * sizeof(int64_t);
+#endif
 }
 
 } // namespace jit

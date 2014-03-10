@@ -19,12 +19,20 @@ static MOZ_CONSTEXPR_VAR Register BaselineStackReg = sp;
 
 static MOZ_CONSTEXPR_VAR ValueOperand R0(v1, v0);
 static MOZ_CONSTEXPR_VAR ValueOperand R1(s7, s6);
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR ValueOperand R2(t7, t6);
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR ValueOperand R2(a7, a6);
+#endif
 
 // BaselineTailCallReg and BaselineStubReg
 // These use registers that are not preserved across calls.
 static MOZ_CONSTEXPR_VAR Register BaselineTailCallReg = ra;
+#if _MIPS_SIM == _ABIO32
 static MOZ_CONSTEXPR_VAR Register BaselineStubReg = t5;
+#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR Register BaselineStubReg = a5;
+#endif
 
 static MOZ_CONSTEXPR_VAR Register ExtractTemp0 = InvalidReg;
 static MOZ_CONSTEXPR_VAR Register ExtractTemp1 = InvalidReg;

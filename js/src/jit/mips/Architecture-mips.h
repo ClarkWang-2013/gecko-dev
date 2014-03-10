@@ -77,6 +77,7 @@ class Registers
         a1 = r5,
         a2 = r6,
         a3 = r7,
+#if _MIPS_SIM == _ABIO32
         t0 = r8,
         t1 = r9,
         t2 = r10,
@@ -85,6 +86,24 @@ class Registers
         t5 = r13,
         t6 = r14,
         t7 = r15,
+        ta0 = t4,
+        ta1 = t5,
+        ta2 = t6,
+        ta3 = t7,
+#else // _ABIN32 || _ABI64
+        a4 = r8,
+        a5 = r9,
+        a6 = r10,
+        a7 = r11,
+        t0 = r12,
+        t1 = r13,
+        t2 = r14,
+        t3 = r15,
+        ta0 = a4,
+        ta1 = a5,
+        ta2 = a6,
+        ta3 = a7,
+#endif
         s0 = r16,
         s1 = r17,
         s2 = r18,
@@ -107,7 +126,11 @@ class Registers
 
     static const char *GetName(Code code) {
         static const char * const Names[] = { "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
+#if _MIPS_SIM == _ABIO32
                                               "t0",   "t1", "t2", "t3", "t4", "t5", "t6", "t7",
+#else // _ABIN32 || _ABI64
+                                              "a4",   "a5", "a6", "a7", "t0", "t1", "t2", "t3",
+#endif
                                               "s0",   "s1", "s2", "s3", "s4", "s5", "s6", "s7",
                                               "t8",   "t9", "k0", "k1", "gp", "sp", "fp", "ra"};
         return Names[code];
@@ -126,7 +149,12 @@ class Registers
     static const uint32_t Allocatable = 14;
 
     static const uint32_t AllMask = 0xffffffff;
+#if _MIPS_SIM == _ABIO32
     static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3);
+#else // _ABIN32 || _ABI64
+    static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3) |
+                                       (1 << a4) | (1 << a5) | (1 << a6) | (1 << a7);
+#endif
 
     static const uint32_t VolatileMask =
         (1 << Registers::v0) |
@@ -135,6 +163,7 @@ class Registers
         (1 << Registers::a1) |
         (1 << Registers::a2) |
         (1 << Registers::a3) |
+#if _MIPS_SIM == _ABIO32
         (1 << Registers::t0) |
         (1 << Registers::t1) |
         (1 << Registers::t2) |
@@ -143,6 +172,16 @@ class Registers
         (1 << Registers::t5) |
         (1 << Registers::t6) |
         (1 << Registers::t7);
+#else // _ABIN32 || _ABI64
+        (1 << Registers::a4) |
+        (1 << Registers::a5) |
+        (1 << Registers::a6) |
+        (1 << Registers::a7) |
+        (1 << Registers::t0) |
+        (1 << Registers::t1) |
+        (1 << Registers::t2) |
+        (1 << Registers::t3);
+#endif
 
     // We use this constant to save registers when entering functions. This
     // is why $ra is added here even though it is not "Non Volatile".
@@ -201,6 +240,7 @@ class FloatRegisters
 {
   public:
     enum FPRegisterID {
+#if _MIPS_SIM == _ABIO32
         f0 = 0, // f0, f2 - Return values
         f2,
         f4, // f4 - f10, f16, f18 - Temporaries
@@ -217,15 +257,56 @@ class FloatRegisters
         f26,
         f28,
         f30,
+#elif _MIPS_SIM == _ABIN32
+        f0 = 0, // f0, f2 - Return values
+        f1,
+        f2,
+        f3,
+        f4, // $f4 - $f10 - Temporaries
+        f5,
+        f6,
+        f7,
+        f8,
+        f9,
+        f10,
+        f11,
+        f12, // f12 - f19 - Arguments
+        f13,
+        f14,
+        f15,
+        f16, // $f16, $f18 - Arguments & Temporaries
+        f17,
+        f18,
+        f19,
+        f20, // $f20, $f22, $f24, $f26, $f28, $f30 - Saved registers
+        f21, // $f21, $f23, $f25, $f27, $f29, $f31 - Temporaries
+        f22,
+        f23,
+        f24,
+        f25,
+        f26,
+        f27,
+        f28,
+        f29,
+        f30,
+        f31,
+#endif
         invalid_freg
     };
     typedef FPRegisterID Code;
 
     static const char *GetName(Code code) {
+#if _MIPS_SIM == _ABIO32
         static const char * const Names[] = { "f0",  "f2",  "f4",  "f6",
                                               "f8",  "f10", "f12", "f14",
                                               "f16", "f18", "f20", "f22",
                                               "f24", "f26", "f28", "f30"};
+#elif _MIPS_SIM == _ABIN32
+        static const char * const Names[] = { "f0",  "f1",  "f2",  "f3", "f4", "f5", "f6", "f7",
+                                              "f8",  "f9", "f10", "f11", "f12", "f13", "f14", "f15",
+                                              "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23",
+                                              "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31" };
+#endif
         return Names[code];
     }
     static const char *GetName(uint32_t i) {
@@ -237,12 +318,18 @@ class FloatRegisters
 
     static const Code Invalid = invalid_freg;
 
+#if _MIPS_SIM == _ABIO32
     static const uint32_t Total = 16;
     static const uint32_t Allocatable = 14;
-
     static const uint32_t AllMask = 0xffff;
+#else // _ABIN32 || _ABI64
+    static const uint32_t Total = 32;
+    static const uint32_t Allocatable = 30;
+    static const uint32_t AllMask = 0xffffffff;
+#endif
 
     static const uint32_t VolatileMask =
+#if _MIPS_SIM == _ABIO32
         (1 << FloatRegisters::f0) |
         (1 << FloatRegisters::f2) |
         (1 << FloatRegisters::f4) |
@@ -253,6 +340,34 @@ class FloatRegisters
         (1 << FloatRegisters::f14) |
         (1 << FloatRegisters::f16) |
         (1 << FloatRegisters::f18);
+#elif _MIPS_SIM == _ABIN32
+        (1 << FloatRegisters::f0) |
+        (1 << FloatRegisters::f1) |
+        (1 << FloatRegisters::f2) |
+        (1 << FloatRegisters::f3) |
+        (1 << FloatRegisters::f4) |
+        (1 << FloatRegisters::f5) |
+        (1 << FloatRegisters::f6) |
+        (1 << FloatRegisters::f7) |
+        (1 << FloatRegisters::f8) |
+        (1 << FloatRegisters::f9) |
+        (1 << FloatRegisters::f10) |
+        (1 << FloatRegisters::f11) |
+        (1 << FloatRegisters::f12) |
+        (1 << FloatRegisters::f13) |
+        (1 << FloatRegisters::f14) |
+        (1 << FloatRegisters::f15) |
+        (1 << FloatRegisters::f16) |
+        (1 << FloatRegisters::f17) |
+        (1 << FloatRegisters::f18) |
+        (1 << FloatRegisters::f19) |
+        (1 << FloatRegisters::f21) |
+        (1 << FloatRegisters::f23) |
+        (1 << FloatRegisters::f25) |
+        (1 << FloatRegisters::f27) |
+        (1 << FloatRegisters::f29) |
+        (1 << FloatRegisters::f31);
+#endif
     static const uint32_t NonVolatileMask =
         (1 << FloatRegisters::f20) |
         (1 << FloatRegisters::f22) |
@@ -263,10 +378,17 @@ class FloatRegisters
 
     static const uint32_t WrapperMask = VolatileMask;
 
+#if _MIPS_SIM == _ABIO32
     // f18 and f16 are MIPS scratch float registers.
     static const uint32_t NonAllocatableMask =
         (1 << f16) |
         (1 << f18);
+#elif _MIPS_SIM == _ABIN32
+    // f21 and f23 are MIPS scratch float registers.
+    static const uint32_t NonAllocatableMask =
+        (1 << f21) |
+        (1 << f23);
+#endif
 
     // Registers that can be allocated without being saved, generally.
     static const uint32_t TempMask = VolatileMask & ~NonAllocatableMask;

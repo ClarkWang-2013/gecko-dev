@@ -75,7 +75,11 @@ class AsmJSActivation
 };
 
 // The assumed page size; dynamically checked in CompileAsmJS.
+#if defined(__mips_loongson_vector_rev)
+const size_t AsmJSPageSize = 16384;
+#else
 const size_t AsmJSPageSize = 4096;
+#endif
 
 // The asm.js spec requires that the ArrayBuffer's byteLength be a multiple of 4096.
 static const size_t AsmJSAllocationGranularity = 4096;

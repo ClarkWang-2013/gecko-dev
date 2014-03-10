@@ -138,9 +138,8 @@
 #endif
 
 /* WTF_CPU_MIPS - MIPS 32-bit */
-/* Note: Only O32 ABI is tested, so we enable it for O32 ABI for now.  */
 #if (defined(mips) || defined(__mips__) || defined(MIPS) || defined(_MIPS_)) \
-    && defined(_ABIO32)
+    && ((_MIPS_SIM == _ABIO32) || (_MIPS_SIM == _ABIN32))
 #define WTF_CPU_MIPS 1
 #if defined(__MIPSEB__)
 #define WTF_CPU_BIG_ENDIAN 1

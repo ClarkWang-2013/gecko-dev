@@ -81,27 +81,35 @@ EmitChangeICReturnAddress(MacroAssembler &masm, Register reg)
 inline void
 EmitTailCallVM(JitCode *target, MacroAssembler &masm, uint32_t argSize)
 {
+#if _MIPS_SIM == _ABIO32
+    Register R2a = t6;
+    Register R2b = t7;
+#else // _ABIN32 || _ABI64
+    Register R2a = a6;
+    Register R2b = a7;
+#endif
+
     // We assume during this that R0 and R1 have been pushed, and that R2 is
     // unused.
-    MOZ_ASSERT(R2 == ValueOperand(t7, t6));
+    MOZ_ASSERT(R2 == ValueOperand(R2b, R2a));
 
     // Compute frame size.
-    masm.movePtr(BaselineFrameReg, t6);
-    masm.addPtr(Imm32(BaselineFrame::FramePointerOffset), t6);
-    masm.subPtr(BaselineStackReg, t6);
+    masm.movePtr(BaselineFrameReg, R2a);
+    masm.addPtr(Imm32(BaselineFrame::FramePointerOffset), R2a);
+    masm.subPtr(BaselineStackReg, R2a);
 
     // Store frame size without VMFunction arguments for GC marking.
-    masm.ma_subu(t7, t6, Imm32(argSize));
-    masm.storePtr(t7, Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfFrameSize()));
+    masm.ma_subu(R2b, R2a, Imm32(argSize));
+    masm.storePtr(R2b, Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfFrameSize()));
 
     // Push frame descriptor and perform the tail call.
     // BaselineTailCallReg (ra) already contains the return address (as we
     // keep it there through the stub calls), but the VMWrapper code being
     // called expects the return address to also be pushed on the stack.
     MOZ_ASSERT(BaselineTailCallReg == ra);
-    masm.makeFrameDescriptor(t6, IonFrame_BaselineJS);
+    masm.makeFrameDescriptor(R2a, IonFrame_BaselineJS);
     masm.subPtr(Imm32(2 * sizeof(intptr_t)), StackPointer);
-    masm.storePtr(t6, Address(StackPointer, sizeof(intptr_t)));
+    masm.storePtr(R2a, Address(StackPointer, sizeof(intptr_t)));
     masm.storePtr(ra, Address(StackPointer, 0));
 
     masm.branch(target);
@@ -122,8 +130,14 @@ EmitCreateStubFrameDescriptor(MacroAssembler &masm, Register reg)
 inline void
 EmitCallVM(JitCode *target, MacroAssembler &masm)
 {
-    EmitCreateStubFrameDescriptor(masm, t6);
-    masm.push(t6);
+#if _MIPS_SIM == _ABIO32
+    Register tmp = t6;
+#else // _ABIN32 || _ABI64
+    Register tmp = a6;
+#endif
+
+    EmitCreateStubFrameDescriptor(masm, tmp);
+    masm.push(tmp);
     masm.call(target);
 }
 

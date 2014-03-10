@@ -57,10 +57,18 @@ public:
     // For storing compare result
     static const RegisterID cmpTempRegister = MIPSRegisters::t3;
     // For storing data loaded from the memory
+#if _MIPS_SIM == _ABIO32
     static const RegisterID dataTemp2Register = MIPSRegisters::t4;
+#else
+    static const RegisterID dataTemp2Register = MIPSRegisters::a7;
+#endif
 
     // FP temp register
+#if _MIPS_SIM == _ABIO32
     static const FPRegisterID fpTempRegister = MIPSRegisters::f16;
+#else // _ABIN32 || _ABI64
+    static const FPRegisterID fpTempRegister = MIPSRegisters::f20;
+#endif
 
     enum Condition {
         Equal,
@@ -413,6 +421,11 @@ public:
     void urshift32(TrustedImm32 imm, RegisterID dest)
     {
         m_assembler.srl(dest, dest, imm.m_value);
+    }
+
+    void ins64(TrustedImm32 pos, TrustedImm32 size, RegisterID src, RegisterID dest)
+    {
+        m_assembler.dins(dest, src, pos.m_value, size.m_value);
     }
 
     void sub32(RegisterID src, RegisterID dest)
@@ -849,11 +862,11 @@ public:
                 ori     immTemp, immTemp, address.offset & 0xffff
                 addu    addrTemp, addrTemp, immTemp
                 (Big-Endian)
-                lw      dest, 0(addrTemp)
-                lw      dest, 3(addrTemp)
+                lwl     dest, 0(addrTemp)
+                lwr     dest, 3(addrTemp)
                 (Little-Endian)
-                lw      dest, 3(addrTemp)
-                lw      dest, 0(addrTemp)
+                lwl     dest, 3(addrTemp)
+                lwr     dest, 0(addrTemp)
             */
             m_assembler.sll(addrTempRegister, address.index, address.scale);
             m_assembler.addu(addrTempRegister, addrTempRegister, address.base);
@@ -883,6 +896,19 @@ public:
 
     DataLabel32 load32WithAddressOffsetPatch(Address address, RegisterID dest)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui addrTemp, address.offset >> 16
+            ori addrTemp, addrTemp, address.offset & 0xffff
+            gslwx dest, 0(addrTemp, address.base)
+        */
+        DataLabel32 dataLabel(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_assembler.lw(dest, addrTempRegister, address.base, 0);
+        m_fixedWidth = false;
+        return dataLabel;
+#else
         m_fixedWidth = true;
         /*
             lui addrTemp, address.offset >> 16
@@ -896,10 +922,25 @@ public:
         m_assembler.lw(dest, addrTempRegister, 0);
         m_fixedWidth = false;
         return dataLabel;
+#endif
     }
 
     void load64WithPatch(Address address, RegisterID tag, RegisterID payload, int tag_offset, int payload_offset)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui         addrTemp, address.offset >> 16
+            ori         addrTemp, addrTemp, address.offset & 0xffff
+            gslwx       tag, tag_offset(addrTemp, address.base)
+            gslwx       payload, payload_offset(addrTemp, address.base)
+        */
+        Label label(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_assembler.lw(tag, addrTempRegister, address.base, tag_offset);
+        m_assembler.lw(payload, addrTempRegister, address.base, payload_offset);
+        m_fixedWidth = false;
+#else
         m_fixedWidth = true;
         /*
             lui         addrTemp, address.offset >> 16
@@ -914,10 +955,25 @@ public:
         m_assembler.lw(tag, addrTempRegister, tag_offset);
         m_assembler.lw(payload, addrTempRegister, payload_offset);
         m_fixedWidth = false;
+#endif
     }
 
     void store64WithPatch(Address address, RegisterID tag, RegisterID payload, int tag_offset, int payload_offset)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui         addrTemp, address.offset >> 16
+            ori         addrTemp, addrTemp, address.offset & 0xffff
+            gsswx       tag, tag_offset(addrTemp, address.base)
+            gsswx       payload, payload_offset(addrTemp, address.base)
+        */
+        Label label(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_fixedWidth = false;
+        m_assembler.sw(tag, addrTempRegister, address.base, tag_offset);
+        m_assembler.sw(payload, addrTempRegister, address.base, payload_offset);
+#else
         m_fixedWidth = true;
         /*
             lui         addrTemp, address.offset >> 16
@@ -932,10 +988,27 @@ public:
         m_assembler.addu(addrTempRegister, addrTempRegister, address.base);
         m_assembler.sw(tag, addrTempRegister, tag_offset);
         m_assembler.sw(payload, addrTempRegister, payload_offset);
+#endif
     }
 
     void store64WithPatch(Address address, Imm32 tag, RegisterID payload, int tag_offset, int payload_offset)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui         addrTemp, address.offset >> 16
+            ori         addrTemp, addrTemp, address.offset & 0xffff
+            li          immTemp, tag
+            gsswx       immTemp, tag_offset(addrTemp, address.base)
+            gsswx       payload, payload_offset(addrTemp, address.base)
+        */
+        Label label(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_fixedWidth = false;
+        move(tag, immTempRegister);
+        m_assembler.sw(immTempRegister, addrTempRegister, address.base, tag_offset);
+        m_assembler.sw(payload, addrTempRegister, address.base, payload_offset);
+#else
         m_fixedWidth = true;
         /*
             lui         addrTemp, address.offset >> 16
@@ -952,10 +1025,29 @@ public:
         move(tag, immTempRegister);
         m_assembler.sw(immTempRegister, addrTempRegister, tag_offset);
         m_assembler.sw(payload, addrTempRegister, payload_offset);
+#endif
     }
 
     void store64WithPatch(Address address, Imm32 tag, Imm32 payload, int tag_offset, int payload_offset)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui         addrTemp, address.offset >> 16
+            ori         addrTemp, addrTemp, address.offset & 0xffff
+            li          immTemp, tag
+            gsswx       immTemp, tag_offset(addrTemp, address.base)
+            li          immTemp, payload
+            gsswx       immTemp, payload_offset(addrTemp, address.base)
+        */
+        Label label(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_fixedWidth = false;
+        move(tag, immTempRegister);
+        m_assembler.sw(immTempRegister, addrTempRegister, address.base, tag_offset);
+        move(payload, immTempRegister);
+        m_assembler.sw(immTempRegister, addrTempRegister, address.base, payload_offset);
+#else
         m_fixedWidth = true;
         /*
             lui         addrTemp, address.offset >> 16
@@ -974,6 +1066,7 @@ public:
         m_assembler.sw(immTempRegister, addrTempRegister, tag_offset);
         move(payload, immTempRegister);
         m_assembler.sw(immTempRegister, addrTempRegister, payload_offset);
+#endif
     }
 
     Label loadPtrWithPatchToLEA(Address address, RegisterID dest)
@@ -1043,6 +1136,19 @@ public:
 
     DataLabel32 store32WithAddressOffsetPatch(RegisterID src, Address address)
     {
+#if defined(__mips_loongson_vector_rev)
+        m_fixedWidth = true;
+        /*
+            lui addrTemp, address.offset >> 16
+            ori addrTemp, addrTemp, address.offset & 0xffff
+            gsswx src, 0(addrTemp, address.base)
+        */
+        DataLabel32 dataLabel(this);
+        move(Imm32(address.offset), addrTempRegister);
+        m_assembler.sw(src, addrTempRegister, address.base, 0);
+        m_fixedWidth = false;
+        return dataLabel;
+#else
         m_fixedWidth = true;
         /*
             lui addrTemp, address.offset >> 16
@@ -1056,6 +1162,7 @@ public:
         m_assembler.sw(src, addrTempRegister, 0);
         m_fixedWidth = false;
         return dataLabel;
+#endif
     }
 
     void store8(RegisterID src, ImplicitAddress address)
@@ -1927,7 +2034,7 @@ public:
 
     Jump branchSub32(Condition cond, Imm32 imm, Address dest)
     {
-	// Save the original value at dest to dataTemp2Register
+        // Save the original value at dest to dataTemp2Register
         load32(dest, dataTemp2Register);
 
         // Calculate the result and save it to dest
@@ -2345,6 +2452,7 @@ public:
             m_assembler.lwc1(dest, addrTempRegister, address.offset);
             m_assembler.lwc1(FPRegisterID(dest + 1), addrTempRegister, address.offset + 4);
         } else {
+            /*
                 sll     addrTemp, address.index, address.scale
                 addu    addrTemp, addrTemp, address.base
                 li      immTemp, address.offset
@@ -2572,7 +2680,11 @@ public:
         m_assembler.bgez(src, 5);
         m_assembler.cvtdw(dest, fpTempRegister);
 
+#if defined(__mips_loongson_vector_rev)
+        m_assembler.xorInsn(fpTempRegister, fpTempRegister, fpTempRegister);
+#else
         m_assembler.mtc1(MIPSRegisters::zero, fpTempRegister);
+#endif
         m_assembler.lui(dataTempRegister, 0x41F0);
 #if WTF_MIPS_ISA_REV(2) && WTF_MIPS_FP64
         m_assembler.mthc1(dataTempRegister, fpTempRegister);
@@ -2760,8 +2872,12 @@ public:
     void zeroDouble(FPRegisterID dest)
     {
 #if WTF_MIPS_ISA_REV(2) && WTF_MIPS_FP64
+#if defined(__mips_loongson_vector_rev)
+        m_assembler.xorInsn(dest, dest, dest);
+#else
         m_assembler.mtc1(MIPSRegisters::zero, dest);
         m_assembler.mthc1(MIPSRegisters::zero, dest);
+#endif
 #else
         m_assembler.mtc1(MIPSRegisters::zero, dest);
         m_assembler.mtc1(MIPSRegisters::zero, FPRegisterID(dest + 1));
