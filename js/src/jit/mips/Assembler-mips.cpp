@@ -1755,7 +1755,11 @@ void Assembler::updateBoundsCheck(uint32_t heapSize, Instruction *inst)
 static uintptr_t
 PageStart(uintptr_t p)
 {
+#if defined(__mips_loongson_vector_rev)
+    static const size_t PageSize = 16384;
+#else
     static const size_t PageSize = 4096;
+#endif
     return p & ~(PageSize - 1);
 }
 
