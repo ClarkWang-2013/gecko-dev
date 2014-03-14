@@ -3118,7 +3118,8 @@ MacroAssemblerMIPSCompat::passABIArg(const FloatRegister &freg, MoveOp::Type typ
     passABIArg(MoveOperand(freg), type);
 }
 
-void MacroAssemblerMIPSCompat::checkStackAlignment()
+void
+MacroAssemblerMIPSCompat::checkStackAlignment()
 {
 #ifdef DEBUG
     Label aligned;
@@ -3127,6 +3128,14 @@ void MacroAssemblerMIPSCompat::checkStackAlignment()
     as_break(MAX_BREAK_CODE);
     bind(&aligned);
 #endif
+}
+
+void
+MacroAssemblerMIPSCompat::alignPointerUp(Register src, Register dest, uint32_t alignment)
+{
+    MOZ_ASSERT(alignment > 1);
+    ma_addu(dest, src, Imm32(alignment - 1));
+    ma_and(dest, dest, Imm32(~(alignment - 1)));
 }
 
 void
