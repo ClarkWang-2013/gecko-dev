@@ -240,142 +240,6 @@ template void MacroAssembler::guardType(const ValueOperand &value, types::Type t
                                         Register scratch, Label *miss);
 
 void
-MacroAssembler::PushRegsInMask(RegisterSet set)
-{
-    int32_t diffF = set.fpus().size() * sizeof(double);
-    int32_t diffG = set.gprs().size() * sizeof(intptr_t);
-
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    // On x86, always use push to push the integer registers, as it's fast
-    // on modern hardware and it's a small instruction.
-    for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-        diffG -= sizeof(intptr_t);
-        Push(*iter);
-    }
-#elif defined(JS_CODEGEN_ARM)
-    if (set.gprs().size() > 1) {
-        adjustFrame(diffG);
-        startDataTransferM(IsStore, StackPointer, DB, WriteBack);
-        for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= sizeof(intptr_t);
-            transferReg(*iter);
-        }
-        finishDataTransfer();
-    } else {
-        reserveStack(diffG);
-        for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= sizeof(intptr_t);
-            storePtr(*iter, Address(StackPointer, diffG));
-        }
-    }
-#else
-    reserveStack(diffG);
-    for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-        diffG -= sizeof(intptr_t);
-        storePtr(*iter, Address(StackPointer, diffG));
-    }
-#endif
-    JS_ASSERT(diffG == 0);
-
-#ifdef JS_CODEGEN_ARM
-    adjustFrame(diffF);
-    diffF += transferMultipleByRuns(set.fpus(), IsStore, StackPointer, DB);
-#elif defined(JS_CODEGEN_MIPS)
-    // Double values have to be aligned. We reserve extra space so that we can
-    // start writing from the first aligned location.
-    // We reserve a whole extra double so that the buffer has even size.
-    ma_and(SecondScratchReg, sp, Imm32(~(StackAlignment - 1)));
-    reserveStack(diffF + sizeof(double));
-
-    for (FloatRegisterForwardIterator iter(set.fpus()); iter.more(); iter++) {
-        // Use assembly s.d because we have alligned the stack.
-        as_sd(*iter, SecondScratchReg, -diffF);
-        diffF -= sizeof(double);
-    }
-#else
-    reserveStack(diffF);
-    for (FloatRegisterBackwardIterator iter(set.fpus()); iter.more(); iter++) {
-        diffF -= sizeof(double);
-        storeDouble(*iter, Address(StackPointer, diffF));
-    }
-#endif
-    JS_ASSERT(diffF == 0);
-}
-
-void
-MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
-{
-    int32_t diffG = set.gprs().size() * sizeof(intptr_t);
-    int32_t diffF = set.fpus().size() * sizeof(double);
-    const int32_t reservedG = diffG;
-    const int32_t reservedF = diffF;
-
-#ifdef JS_CODEGEN_ARM
-    // ARM can load multiple registers at once, but only if we want back all
-    // the registers we previously saved to the stack.
-    if (ignore.empty(true)) {
-        diffF -= transferMultipleByRuns(set.fpus(), IsLoad, StackPointer, IA);
-        adjustFrame(-reservedF);
-    } else
-#endif
-    {
-#ifdef JS_CODEGEN_MIPS
-        // Read the buffer form the first aligned location.
-        ma_addu(SecondScratchReg, sp, Imm32(reservedF + sizeof(double)));
-        ma_and(SecondScratchReg, SecondScratchReg, Imm32(~(StackAlignment - 1)));
-
-        for (FloatRegisterForwardIterator iter(set.fpus()); iter.more(); iter++) {
-            if (!ignore.has(*iter))
-                // Use assembly l.d because we have alligned the stack.
-                as_ld(*iter, SecondScratchReg, -diffF);
-            diffF -= sizeof(double);
-        }
-        freeStack(reservedF + sizeof(double));
-#else
-        for (FloatRegisterBackwardIterator iter(set.fpus()); iter.more(); iter++) {
-            diffF -= sizeof(double);
-            if (!ignore.has(*iter))
-                loadDouble(Address(StackPointer, diffF), *iter);
-        }
-        freeStack(reservedF);
-#endif
-    }
-    JS_ASSERT(diffF == 0);
-
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    // On x86, use pop to pop the integer registers, if we're not going to
-    // ignore any slots, as it's fast on modern hardware and it's a small
-    // instruction.
-    if (ignore.empty(false)) {
-        for (GeneralRegisterForwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= sizeof(intptr_t);
-            Pop(*iter);
-        }
-    } else
-#endif
-#ifdef JS_CODEGEN_ARM
-    if (set.gprs().size() > 1 && ignore.empty(false)) {
-        startDataTransferM(IsLoad, StackPointer, IA, WriteBack);
-        for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= sizeof(intptr_t);
-            transferReg(*iter);
-        }
-        finishDataTransfer();
-        adjustFrame(-reservedG);
-    } else
-#endif
-    {
-        for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= sizeof(intptr_t);
-            if (!ignore.has(*iter))
-                loadPtr(Address(StackPointer, diffG), *iter);
-        }
-        freeStack(reservedG);
-    }
-    JS_ASSERT(diffG == 0);
-}
-
-void
 MacroAssembler::branchNurseryPtr(Condition cond, const Address &ptr1, const ImmMaybeNurseryPtr &ptr2,
                                  Label *label)
 {
@@ -470,12 +334,7 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, AnyRegister dest
             // Bail out if the value doesn't fit into a signed int32 value. This
             // is what allows MLoadTypedArrayElement to have a type() of
             // MIRType_Int32 for UInt32 array loads.
-#ifndef JS_CODEGEN_MIPS
-            test32(dest.gpr(), dest.gpr());
-            j(Assembler::Signed, fail);
-#else
-            ma_b(dest.gpr(), dest.gpr(), fail, Assembler::Signed);
-#endif
+            branchTest32(Assembler::Signed, dest.gpr(), dest.gpr(), fail);
         }
         break;
       case ScalarTypeDescr::TYPE_FLOAT32:
@@ -519,18 +378,11 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
       case ScalarTypeDescr::TYPE_UINT32:
         // Don't clobber dest when we could fail, instead use temp.
         load32(src, temp);
-#ifndef JS_CODEGEN_MIPS
-        test32(temp, temp);
-#endif
         if (allowDouble) {
             // If the value fits in an int32, store an int32 type tag.
             // Else, convert the value to double and box it.
             Label done, isDouble;
-#ifndef JS_CODEGEN_MIPS
-            j(Assembler::Signed, &isDouble);
-#else
-            ma_b(temp, temp, &isDouble, Assembler::Signed, ShortJump);
-#endif
+            branchTest32(Assembler::Signed, temp, temp, &isDouble);
             {
                 tagValue(JSVAL_TYPE_INT32, temp, dest);
                 jump(&done);
@@ -543,11 +395,7 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
             bind(&done);
         } else {
             // Bailout if the value does not fit in an int32.
-#ifndef JS_CODEGEN_MIPS
-            j(Assembler::Signed, fail);
-#else
-            ma_b(temp, temp, fail, Assembler::Signed);
-#endif
+            branchTest32(Assembler::Signed, temp, temp, fail);
             tagValue(JSVAL_TYPE_INT32, temp, dest);
         }
         break;
@@ -573,115 +421,14 @@ template void MacroAssembler::loadFromTypedArray(int arrayType, const Address &s
 template void MacroAssembler::loadFromTypedArray(int arrayType, const BaseIndex &src, const ValueOperand &dest,
                                                  bool allowDouble, Register temp, Label *fail);
 
-// Note: this function clobbers the input register.
 void
-MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
+MacroAssembler::newGCThing(Register result, Register temp, gc::AllocKind allocKind, Label *fail,
+                           gc::InitialHeap initialHeap /* = gc::DefaultHeap */)
 {
-    JS_ASSERT(input != ScratchFloatReg);
-#ifdef JS_CODEGEN_ARM
-    ma_vimm(0.5, ScratchFloatReg);
-    if (hasVFPv3()) {
-        Label notSplit;
-        ma_vadd(input, ScratchFloatReg, ScratchFloatReg);
-        // Convert the double into an unsigned fixed point value with 24 bits of
-        // precision. The resulting number will look like 0xII.DDDDDD
-        as_vcvtFixed(ScratchFloatReg, false, 24, true);
-        // Move the fixed point value into an integer register
-        as_vxfer(output, InvalidReg, ScratchFloatReg, FloatToCore);
-        // see if this value *might* have been an exact integer after adding 0.5
-        // This tests the 1/2 through 1/16,777,216th places, but 0.5 needs to be tested out to
-        // the 1/140,737,488,355,328th place.
-        ma_tst(output, Imm32(0x00ffffff));
-        // convert to a uint8 by shifting out all of the fraction bits
-        ma_lsr(Imm32(24), output, output);
-        // If any of the bottom 24 bits were non-zero, then we're good, since this number
-        // can't be exactly XX.0
-        ma_b(&notSplit, NonZero);
-        as_vxfer(ScratchRegister, InvalidReg, input, FloatToCore);
-        ma_cmp(ScratchRegister, Imm32(0));
-        // If the lower 32 bits of the double were 0, then this was an exact number,
-        // and it should be even.
-        ma_bic(Imm32(1), output, NoSetCond, Zero);
-        bind(&notSplit);
+    // Inlined equivalent of js::gc::NewGCThing() without failure case handling.
 
-    } else {
-        Label outOfRange;
-        ma_vcmpz(input);
-        // do the add, in place so we can reference it later
-        ma_vadd(input, ScratchFloatReg, input);
-        // do the conversion to an integer.
-        as_vcvt(VFPRegister(ScratchFloatReg).uintOverlay(), VFPRegister(input));
-        // copy the converted value out
-        as_vxfer(output, InvalidReg, ScratchFloatReg, FloatToCore);
-        as_vmrs(pc);
-        ma_mov(Imm32(0), output, NoSetCond, Overflow);  // NaN => 0
-        ma_b(&outOfRange, Overflow);  // NaN
-        ma_cmp(output, Imm32(0xff));
-        ma_mov(Imm32(0xff), output, NoSetCond, Above);
-        ma_b(&outOfRange, Above);
-        // convert it back to see if we got the same value back
-        as_vcvt(ScratchFloatReg, VFPRegister(ScratchFloatReg).uintOverlay());
-        // do the check
-        as_vcmp(ScratchFloatReg, input);
-        as_vmrs(pc);
-        ma_bic(Imm32(1), output, NoSetCond, Zero);
-        bind(&outOfRange);
-    }
-#else
+    int thingSize = int(gc::Arena::thingSize(allocKind));
 
-    Label positive, done;
-
-    // <= 0 or NaN --> 0
-    zeroDouble(ScratchFloatReg);
-    branchDouble(DoubleGreaterThan, input, ScratchFloatReg, &positive);
-    {
-        move32(Imm32(0), output);
-        jump(&done);
-    }
-
-    bind(&positive);
-
-    // Add 0.5 and truncate.
-    loadConstantDouble(0.5, ScratchFloatReg);
-    addDouble(ScratchFloatReg, input);
-
-    Label outOfRange;
-
-#ifndef JS_CODEGEN_MIPS
-    // Truncate to int32 and ensure the result <= 255. This relies on the
-    // processor setting output to a value > 255 for doubles outside the int32
-    // range (for instance 0x80000000).
-    cvttsd2si(input, output);
-#else
-    branchTruncateDouble(input, output, &outOfRange);
-#endif
-    branch32(Assembler::Above, output, Imm32(255), &outOfRange);
-    {
-        // Check if we had a tie.
-        convertInt32ToDouble(output, ScratchFloatReg);
-        branchDouble(DoubleNotEqual, input, ScratchFloatReg, &done);
-
-        // It was a tie. Mask out the ones bit to get an even value.
-        // See also js_TypedArray_uint8_clamp_double.
-        and32(Imm32(~1), output);
-        jump(&done);
-    }
-
-    // > 255 --> 255
-    bind(&outOfRange);
-    {
-        move32(Imm32(255), output);
-    }
-
-    bind(&done);
-#endif
-}
-
-// Inlined version of gc::CheckAllocatorState that checks the bare essentials
-// and bails for anything that cannot be handled with our jit allocators.
-void
-MacroAssembler::checkAllocatorState(Label *fail)
-{
 #ifdef JS_GC_ZEAL
     // Don't execute the inline path if gcZeal is active.
     branch32(Assembler::NotEqual,
@@ -693,66 +440,29 @@ MacroAssembler::checkAllocatorState(Label *fail)
     // as the metadata to use for the object may vary between executions of the op.
     if (GetIonContext()->compartment->hasObjectMetadataCallback())
         jump(fail);
-}
 
-// Inline version of ShouldNurseryAllocate.
-bool
-MacroAssembler::shouldNurseryAllocate(gc::AllocKind allocKind, gc::InitialHeap initialHeap)
-{
 #ifdef JSGC_GENERATIONAL
-    // Note that Ion elides barriers on writes to objects know to be in the
-    // nursery, so any allocation that can be made into the nursery must be made
-    // into the nursery, even if the nursery is disabled. At runtime these will
-    // take the out-of-line path, which is required to insert a barrier for the
-    // initializing writes.
-    return IsNurseryAllocable(allocKind) && initialHeap != gc::TenuredHeap;
-#else
-    return false;
-#endif
-}
-
-// Inline version of Nursery::allocateObject.
-void
-MacroAssembler::nurseryAllocate(Register result, Register slots, gc::AllocKind allocKind,
-                                size_t nDynamicSlots, gc::InitialHeap initialHeap, Label *fail)
-{
-#ifdef JSGC_GENERATIONAL
-    JS_ASSERT(IsNurseryAllocable(allocKind));
-    JS_ASSERT(initialHeap != gc::TenuredHeap);
-
-    // This allocation site is requesting too many dynamic slots. Several
-    // allocation sites assume that nursery allocation will succeed to
-    // avoid needing barriers later. Ensure these sites limit their slot
-    // requests appropriately.
-    JS_ASSERT(nDynamicSlots < Nursery::MaxNurserySlots);
-
-    // No explicit check for nursery.isEnabled() is needed, as the comparison
-    // with the nursery's end will always fail in such cases.
-    const Nursery &nursery = GetIonContext()->runtime->gcNursery();
-    Register temp = slots;
-    int thingSize = int(gc::Arena::thingSize(allocKind));
-    int totalSize = thingSize + nDynamicSlots * sizeof(HeapSlot);
-    loadPtr(AbsoluteAddress(nursery.addressOfPosition()), result);
-    computeEffectiveAddress(Address(result, totalSize), temp);
-    branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(nursery.addressOfCurrentEnd()), temp, fail);
-    storePtr(temp, AbsoluteAddress(nursery.addressOfPosition()));
-
-    if (nDynamicSlots)
-        computeEffectiveAddress(Address(result, thingSize), slots);
+    // Always use nursery allocation if it is possible to do so. The jit
+    // assumes a nursery pointer is returned to avoid barriers.
+    if (allocKind <= gc::FINALIZE_OBJECT_LAST && initialHeap != gc::TenuredHeap) {
+        // Inline Nursery::allocate. No explicit check for nursery.isEnabled()
+        // is needed, as the comparison with the nursery's end will always fail
+        // in such cases.
+        const Nursery &nursery = GetIonContext()->runtime->gcNursery();
+        loadPtr(AbsoluteAddress(nursery.addressOfPosition()), result);
+        computeEffectiveAddress(Address(result, thingSize), temp);
+        branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(nursery.addressOfCurrentEnd()), temp, fail);
+        storePtr(temp, AbsoluteAddress(nursery.addressOfPosition()));
+        return;
+    }
 #endif // JSGC_GENERATIONAL
-}
 
-// Inlined version of FreeSpan::allocate.
-void
-MacroAssembler::freeSpanAllocate(Register result, Register temp, gc::AllocKind allocKind, Label *fail)
-{
     CompileZone *zone = GetIonContext()->compartment->zone();
-    int thingSize = int(gc::Arena::thingSize(allocKind));
 
-    // Load FreeSpan::first of |zone|'s freeLists for |allocKind|. If there is
-    // no room remaining in the span, we bail to finish the allocation. The
-    // interpreter will call |refillFreeLists|, setting up a new FreeSpan so
-    // that we can continue allocating in the jit.
+    // Inline FreeSpan::allocate.
+    // There is always exactly one FreeSpan per allocKind per JSCompartment.
+    // If a FreeSpan is replaced, its members are updated in the freeLists table,
+    // which the code below always re-reads.
     loadPtr(AbsoluteAddress(zone->addressOfFreeListFirst(allocKind)), result);
     branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(zone->addressOfFreeListLast(allocKind)), result, fail);
     computeEffectiveAddress(Address(result, thingSize), temp);
@@ -760,118 +470,25 @@ MacroAssembler::freeSpanAllocate(Register result, Register temp, gc::AllocKind a
 }
 
 void
-MacroAssembler::callMallocStub(size_t nbytes, Register result, Label *fail)
+MacroAssembler::newGCThing(Register result, Register temp, JSObject *templateObject, Label *fail,
+                           gc::InitialHeap initialHeap)
 {
-    // This register must match the one in JitRuntime::generateMallocStub.
-    const Register regNBytes = CallTempReg0;
-
-    JS_ASSERT(nbytes > 0);
-    JS_ASSERT(nbytes <= INT32_MAX);
-
-    if (regNBytes != result)
-        push(regNBytes);
-    move32(Imm32(nbytes), regNBytes);
-    call(GetIonContext()->runtime->jitRuntime()->mallocStub());
-    if (regNBytes != result) {
-        movePtr(regNBytes, result);
-        pop(regNBytes);
-    }
-    branchTest32(Assembler::Zero, result, result, fail);
-}
-
-void
-MacroAssembler::callFreeStub(Register slots)
-{
-    // This register must match the one in JitRuntime::generateFreeStub.
-    const Register regSlots = CallTempReg0;
-
-    push(regSlots);
-    movePtr(slots, regSlots);
-    call(GetIonContext()->runtime->jitRuntime()->freeStub());
-    pop(regSlots);
-}
-
-// Inlined equivalent of gc::AllocateObject, without failure case handling.
-void
-MacroAssembler::allocateObject(Register result, Register slots, gc::AllocKind allocKind,
-                               uint32_t nDynamicSlots, gc::InitialHeap initialHeap, Label *fail)
-{
+    gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
     JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
 
-    checkAllocatorState(fail);
-
-    if (shouldNurseryAllocate(allocKind, initialHeap))
-        return nurseryAllocate(result, slots, allocKind, nDynamicSlots, initialHeap, fail);
-
-    if (!nDynamicSlots)
-        return freeSpanAllocate(result, slots, allocKind, fail);
-
-    callMallocStub(nDynamicSlots * sizeof(HeapValue), slots, fail);
-
-    Label failAlloc;
-    Label success;
-
-    push(slots);
-    freeSpanAllocate(result, slots, allocKind, &failAlloc);
-    pop(slots);
-    jump(&success);
-
-    bind(&failAlloc);
-    pop(slots);
-    callFreeStub(slots);
-    jump(fail);
-
-    bind(&success);
-}
-
-void
-MacroAssembler::newGCThing(Register result, Register temp, JSObject *templateObj,
-                            gc::InitialHeap initialHeap, Label *fail)
-{
-    // This method does not initialize the object: if external slots get
-    // allocated into |temp|, there is no easy way for us to ensure the caller
-    // frees them. Instead just assert this case does not happen.
-    JS_ASSERT(!templateObj->numDynamicSlots());
-
-    gc::AllocKind allocKind = templateObj->tenuredGetAllocKind();
-    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
-
-    allocateObject(result, temp, allocKind, templateObj->numDynamicSlots(), initialHeap, fail);
-}
-
-void
-MacroAssembler::createGCObject(Register obj, Register temp, JSObject *templateObj,
-                               gc::InitialHeap initialHeap, Label *fail)
-{
-    uint32_t nDynamicSlots = templateObj->numDynamicSlots();
-    gc::AllocKind allocKind = templateObj->tenuredGetAllocKind();
-    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
-
-    allocateObject(obj, temp, allocKind, nDynamicSlots, initialHeap, fail);
-    initGCThing(obj, temp, templateObj);
-}
-
-
-// Inlined equivalent of gc::AllocateNonObject, without failure case handling.
-// Non-object allocation does not need to worry about slots, so can take a
-// simpler path.
-void
-MacroAssembler::allocateNonObject(Register result, Register temp, gc::AllocKind allocKind, Label *fail)
-{
-    checkAllocatorState(fail);
-    freeSpanAllocate(result, temp, allocKind, fail);
+    newGCThing(result, temp, allocKind, fail, initialHeap);
 }
 
 void
 MacroAssembler::newGCString(Register result, Register temp, Label *fail)
 {
-    allocateNonObject(result, temp, js::gc::FINALIZE_STRING, fail);
+    newGCThing(result, temp, js::gc::FINALIZE_STRING, fail);
 }
 
 void
 MacroAssembler::newGCShortString(Register result, Register temp, Label *fail)
 {
-    allocateNonObject(result, temp, js::gc::FINALIZE_SHORT_STRING, fail);
+    newGCThing(result, temp, js::gc::FINALIZE_SHORT_STRING, fail);
 }
 
 void
@@ -927,7 +544,6 @@ MacroAssembler::newGCThingPar(Register result, Register cx, Register tempReg1, R
 {
     gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
     JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
-    JS_ASSERT(!templateObject->numDynamicSlots());
 
     newGCThingPar(result, cx, tempReg1, tempReg2, allocKind, fail);
 }
@@ -947,7 +563,7 @@ MacroAssembler::newGCShortStringPar(Register result, Register cx, Register tempR
 }
 
 void
-MacroAssembler::copySlotsFromTemplate(Register obj, const JSObject *templateObj,
+MacroAssembler::copySlotsFromTemplate(Register obj, Register temp, const JSObject *templateObj,
                                       uint32_t start, uint32_t end)
 {
     uint32_t nfixed = Min(templateObj->numFixedSlots(), end);
@@ -956,26 +572,27 @@ MacroAssembler::copySlotsFromTemplate(Register obj, const JSObject *templateObj,
 }
 
 void
-MacroAssembler::fillSlotsWithUndefined(Address base, Register temp, uint32_t start, uint32_t end)
+MacroAssembler::fillSlotsWithUndefined(Register obj, Register temp, const JSObject *templateObj,
+                                       uint32_t start, uint32_t end)
 {
 #ifdef JS_NUNBOX32
     // We only have a single spare register, so do the initialization as two
     // strided writes of the tag and body.
     jsval_layout jv = JSVAL_TO_IMPL(UndefinedValue());
+    uint32_t nfixed = Min(templateObj->numFixedSlots(), end);
 
-    Address addr = base;
-    move32(Imm32(jv.s.payload.i32), temp);
-    for (unsigned i = start; i < end; ++i, addr.offset += sizeof(HeapValue))
-        store32(temp, ToPayload(addr));
+    mov(ImmWord(jv.s.tag), temp);
+    for (unsigned i = start; i < nfixed; i++)
+        store32(temp, ToType(Address(obj, JSObject::getFixedSlotOffset(i))));
 
-    addr = base;
-    move32(Imm32(jv.s.tag), temp);
-    for (unsigned i = start; i < end; ++i, addr.offset += sizeof(HeapValue))
-        store32(temp, ToType(addr));
+    mov(ImmWord(jv.s.payload.i32), temp);
+    for (unsigned i = start; i < nfixed; i++)
+        store32(temp, ToPayload(Address(obj, JSObject::getFixedSlotOffset(i))));
 #else
     moveValue(UndefinedValue(), temp);
-    for (uint32_t i = start; i < end; ++i, base.offset += sizeof(HeapValue))
-        storePtr(temp, base);
+    uint32_t nfixed = Min(templateObj->numFixedSlots(), end);
+    for (unsigned i = start; i < nfixed; i++)
+        storePtr(temp, Address(obj, JSObject::getFixedSlotOffset(i)));
 #endif
 }
 
@@ -992,16 +609,13 @@ FindStartOfUndefinedSlots(JSObject *templateObj, uint32_t nslots)
 }
 
 void
-MacroAssembler::initGCSlots(Register obj, Register slots, JSObject *templateObj)
+MacroAssembler::initGCSlots(Register obj, Register temp, JSObject *templateObj)
 {
     // Slots of non-array objects are required to be initialized.
     // Use the values currently in the template object.
     uint32_t nslots = templateObj->lastProperty()->slotSpan(templateObj->getClass());
     if (nslots == 0)
         return;
-
-    uint32_t nfixed = templateObj->numFixedSlots();
-    uint32_t ndynamic = templateObj->numDynamicSlots();
 
     // Attempt to group slot writes such that we minimize the amount of
     // duplicated data we need to embed in code and load into registers. In
@@ -1011,41 +625,22 @@ MacroAssembler::initGCSlots(Register obj, Register slots, JSObject *templateObj)
     // duplicated writes of UndefinedValue to the tail. For the majority of
     // objects, the "tail" will be the entire slot range.
     uint32_t startOfUndefined = FindStartOfUndefinedSlots(templateObj, nslots);
-    JS_ASSERT(startOfUndefined <= nfixed); // Reserved slots must be fixed.
-
-    // Copy over any preserved reserved slots.
-    copySlotsFromTemplate(obj, templateObj, 0, startOfUndefined);
-
-    // Fill the rest of the fixed slots with undefined.
-    fillSlotsWithUndefined(Address(obj, JSObject::getFixedSlotOffset(startOfUndefined)), slots,
-                           startOfUndefined, nfixed);
-
-    if (ndynamic) {
-        // We are short one register to do this elegantly. Borrow the obj
-        // register briefly for our slots base address.
-        push(obj);
-        loadPtr(Address(obj, JSObject::offsetOfSlots()), obj);
-        fillSlotsWithUndefined(Address(obj, 0), slots, 0, ndynamic);
-        pop(obj);
-    }
+    copySlotsFromTemplate(obj, temp, templateObj, 0, startOfUndefined);
+    fillSlotsWithUndefined(obj, temp, templateObj, startOfUndefined, nslots);
 }
 
 void
-MacroAssembler::initGCThing(Register obj, Register slots, JSObject *templateObj)
+MacroAssembler::initGCThing(Register obj, Register temp, JSObject *templateObj)
 {
-    // Fast initialization of an empty object returned by allocateObject().
+    // Fast initialization of an empty object returned by NewGCThing().
 
     JS_ASSERT(!templateObj->hasDynamicElements());
 
     storePtr(ImmGCPtr(templateObj->lastProperty()), Address(obj, JSObject::offsetOfShape()));
     storePtr(ImmGCPtr(templateObj->type()), Address(obj, JSObject::offsetOfType()));
-    if (templateObj->hasDynamicSlots())
-        storePtr(slots, Address(obj, JSObject::offsetOfSlots()));
-    else
-        storePtr(ImmPtr(nullptr), Address(obj, JSObject::offsetOfSlots()));
+    storePtr(ImmPtr(nullptr), Address(obj, JSObject::offsetOfSlots()));
 
     if (templateObj->is<ArrayObject>()) {
-        Register temp = slots;
         JS_ASSERT(!templateObj->getDenseInitializedLength());
 
         int elementsOffset = JSObject::offsetOfFixedElements();
@@ -1068,7 +663,7 @@ MacroAssembler::initGCThing(Register obj, Register slots, JSObject *templateObj)
     } else {
         storePtr(ImmPtr(emptyObjectElements), Address(obj, JSObject::offsetOfElements()));
 
-        initGCSlots(obj, slots, templateObj);
+        initGCSlots(obj, temp, templateObj);
 
         if (templateObj->hasPrivate()) {
             uint32_t nfixed = templateObj->numFixedSlots();
@@ -1101,12 +696,7 @@ MacroAssembler::compareStrings(JSOp op, Register left, Register right, Register 
     branchTest32(Assembler::Zero, result, atomBit, &notAtom);
     branchTest32(Assembler::Zero, temp, atomBit, &notAtom);
 
-#ifndef JS_CODEGEN_MIPS
-    cmpPtr(left, right);
-    emitSet(JSOpToCondition(MCompare::Compare_String, op), result);
-#else
-    ma_cmp_set(result, left, right, JSOpToCondition(MCompare::Compare_String, op));
-#endif
+    cmpPtrSet(JSOpToCondition(MCompare::Compare_String, op), left, right, result);
     jump(&done);
 
     bind(&notAtom);
@@ -1515,7 +1105,7 @@ MacroAssembler::printf(const char *output)
     setupUnalignedABICall(1, temp);
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf0_));
+    callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, Printf0_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1541,7 +1131,7 @@ MacroAssembler::printf(const char *output, Register value)
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
     passABIArg(value);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf1_));
+    callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, Printf1_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1565,7 +1155,7 @@ MacroAssembler::tracelogStart(JSScript *script)
     passABIArg(type);
     movePtr(ImmGCPtr(script), rscript);
     passABIArg(rscript);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, TraceLogStart));
+    callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, TraceLogStart));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1586,7 +1176,7 @@ MacroAssembler::tracelogStop()
     passABIArg(logger);
     move32(Imm32(TraceLogging::SCRIPT_STOP), type);
     passABIArg(type);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, TraceLogStop));
+    callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, TraceLogStop));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1607,7 +1197,7 @@ MacroAssembler::tracelogLog(TraceLogging::Type type)
     passABIArg(logger);
     move32(Imm32(type), rtype);
     passABIArg(rtype);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, TraceLogStop));
+    callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, TraceLogStop));
 
     PopRegsInMask(RegisterSet::Volatile());
 }

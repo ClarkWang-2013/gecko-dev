@@ -250,11 +250,7 @@ MoveEmitterMIPS::emitDoubleMove(const MoveOperand &from, const MoveOperand &to)
             if(to.reg() == a2)
                 masm.as_mfc1(a2, from.floatReg());
             else if(to.reg() == a3)
-#if _MIPS_SIM == _ABIO32
-                masm.as_mfc1_Odd(a3, from.floatReg());
-#else // _ABIN32 || _ABI64
-                masm.as_mfhc1(a3, from.floatReg());
-#endif
+                masm.moveFromDoubleHi(from.floatReg(), a3);
             else
                 MOZ_ASSUME_UNREACHABLE("Invalid emitDoubleMove arguments.");
         } else {

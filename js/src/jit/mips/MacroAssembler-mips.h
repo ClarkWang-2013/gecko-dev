@@ -7,8 +7,6 @@
 #ifndef jit_mips_MacroAssembler_mips_h
 #define jit_mips_MacroAssembler_mips_h
 
-#include "mozilla/DebugOnly.h"
-
 #include "jsopcode.h"
 
 #include "jit/IonCaches.h"
@@ -16,11 +14,8 @@
 #include "jit/mips/Assembler-mips.h"
 #include "jit/MoveResolver.h"
 
-using mozilla::DebugOnly;
-
 namespace js {
 namespace jit {
-
 
 enum LoadStoreSize
 {
@@ -223,8 +218,22 @@ class MacroAssemblerMIPS : public Assembler
     // branches when done from within mips-specific code
     void ma_b(Register lhs, Register rhs, Label *l, Condition c, JumpKind jumpKind = LongJump);
     void ma_b(Register lhs, Imm32 imm, Label *l, Condition c, JumpKind jumpKind = LongJump);
+    void ma_b(Register lhs, ImmPtr imm, Label *l, Condition c, JumpKind jumpKind = LongJump) {
+        ma_b(lhs, Imm32(uint32_t(imm.value)), l, c, jumpKind);
+    }
+    void ma_b(Register lhs, ImmGCPtr imm, Label *l, Condition c, JumpKind jumpKind = LongJump) {
+        MOZ_ASSERT(lhs != ScratchRegister);
+        ma_li(ScratchRegister, imm);
+        ma_b(lhs, Imm32(uint32_t(imm.value)), l, c, jumpKind);
+    }
     void ma_b(Register lhs, Address addr, Label *l, Condition c, JumpKind jumpKind = LongJump);
     void ma_b(Address addr, Imm32 imm, Label *l, Condition c, JumpKind jumpKind = LongJump);
+    void ma_b(Address addr, Register rhs, Label *l, Condition c, JumpKind jumpKind = LongJump) {
+        MOZ_ASSERT(rhs != ScratchRegister);
+        ma_lw(ScratchRegister, addr);
+        ma_b(ScratchRegister, rhs, l, c, jumpKind);
+    }
+
     void ma_b(Label *l, JumpKind jumpKind = LongJump);
     void ma_bal(Label *l, JumpKind jumpKind = LongJump);
 
@@ -252,6 +261,18 @@ class MacroAssemblerMIPS : public Assembler
     void ma_bc1d(FloatRegister lhs, FloatRegister rhs, Label *label, DoubleCondition c,
                  JumpKind jumpKind = LongJump, FPConditionBit fcc = FCC0);
 
+
+    // These fuctions abstract the access to high part of the double precision
+    // float register. It is intended to work on both 32 bit and 64 bit
+    // floating point coprocessor.
+    // :TODO: (Bug 985881) Modify this for N32 ABI to use mthc1 and mfhc1
+    void moveToDoubleHi(Register src, FloatRegister dest) {
+        as_mtc1(src, getOddPair(dest));
+    }
+    void moveFromDoubleHi(FloatRegister src, Register dest) {
+        as_mfc1(dest, getOddPair(src));
+    }
+
   protected:
     void branchWithCode(InstImm code, Label *label, JumpKind jumpKind);
     Condition ma_cmp(Register rd, Register lhs, Register rhs, Condition c);
@@ -278,7 +299,12 @@ class MacroAssemblerMIPS : public Assembler
         ma_cmp_set(dst, lhs, Imm32(uint32_t(imm.value)), c);
     }
     void ma_cmp_set(Register rd, Register rs, Address addr, Condition c);
-    void ma_cmp_set(Register dst, Address lhs, Register imm, Condition c);
+    void ma_cmp_set(Register dst, Address lhs, Register rhs, Condition c);
+    void ma_cmp_set(Register dst, Address lhs, ImmPtr imm, Condition c) {
+        ma_lw(ScratchRegister, lhs);
+        ma_li(SecondScratchReg, Imm32(uint32_t(imm.value)));
+        ma_cmp_set(dst, ScratchRegister, SecondScratchReg, c);
+    }
     void ma_cmp_set_double(Register dst, FloatRegister lhs, FloatRegister rhs, DoubleCondition c);
     void ma_cmp_set_float32(Register dst, FloatRegister lhs, FloatRegister rhs, DoubleCondition c);
 };
@@ -610,6 +636,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void branchTestNull(Condition cond, const ValueOperand &value, Label *label);
     void branchTestNull(Condition cond, const Register &tag, Label *label);
     void branchTestNull(Condition cond, const BaseIndex &src, Label *label);
+    void testNullSet(Condition cond, const ValueOperand &value, Register dest);
 
     void branchTestObject(Condition cond, const ValueOperand &value, Label *label);
     void branchTestObject(Condition cond, const Register &tag, Label *label);
@@ -623,6 +650,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void branchTestUndefined(Condition cond, const Register &tag, Label *label);
     void branchTestUndefined(Condition cond, const BaseIndex &src, Label *label);
     void branchTestUndefined(Condition cond, const Address &address, Label *label);
+    void testUndefinedSet(Condition cond, const ValueOperand &value, Register dest);
 
     void branchTestNumber(Condition cond, const ValueOperand &value, Label *label);
     void branchTestNumber(Condition cond, const Register &tag, Label *label);
@@ -634,13 +662,18 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
 
     void branchTestMagicValue(Condition cond, const ValueOperand &val, JSWhyMagic why,
                               Label *label) {
-        MOZ_ASSERT(cond == Equal || cond == NotEqual);
-        // Test for magic
-        Label notmagic;
-        branchTestMagic(cond, val, &notmagic);
-        // Test magic value
-        branch32(cond, val.payloadReg(), Imm32(static_cast<int32_t>(why)), label);
-        bind(&notmagic);
+        JS_ASSERT(cond == Equal || cond == NotEqual);
+        if (cond == Equal) {
+            // Test for magic
+            Label notmagic;
+            branchTestMagic(NotEqual, val, &notmagic);
+            // Test magic value
+            branch32(Equal, val.payloadReg(), Imm32(static_cast<int32_t>(why)), label);
+            bind(&notmagic);
+        } else {
+            branchTestMagic(NotEqual, val, label);
+            branch32(NotEqual, val.payloadReg(), Imm32(static_cast<int32_t>(why)), label);
+        }
     }
 
     void branchTestInt32Truthy(bool b, const ValueOperand &value, Label *label);
@@ -913,6 +946,15 @@ public:
     void sub32(Imm32 imm, Register dest);
     void sub32(Register src, Register dest);
 
+    template <typename T>
+    void add32TestOverflow(T src, Register dest, Label *overflow) {
+        ma_addTestOverflow(dest, dest, src, overflow);
+    }
+    template <typename T>
+    void sub32TestOverflow(T src, Register dest, Label *overflow) {
+        ma_subTestOverflow(dest, dest, src, overflow);
+    }
+
     void and32(Imm32 imm, Register dest);
     void and32(Imm32 imm, const Address &dest);
     void or32(Imm32 imm, const Address &dest);
@@ -1012,11 +1054,7 @@ public:
 
     void zeroDouble(FloatRegister reg) {
         as_mtc1(zero, reg);
-#if _MIPS_SIM == _ABIO32
-        as_mtc1_Odd(zero, reg);
-#else // _ABIN32 || _ABI64
-        as_mthc1(zero, reg);
-#endif
+        moveToDoubleHi(zero, reg);
     }
 
     void clampIntToUint8(Register reg) {
@@ -1074,6 +1112,18 @@ public:
     // If source is a double, load it into dest. If source is int32,
     // convert it to double. Else, branch to failure.
     void ensureDouble(const ValueOperand &source, FloatRegister dest, Label *failure);
+
+    template <typename T1, typename T2>
+    void cmpPtrSet(Assembler::Condition cond, T1 lhs, T2 rhs, const Register &dest)
+    {
+        ma_cmp_set(dest, lhs, rhs, cond);
+    }
+
+    template <typename T1, typename T2>
+    void cmp32Set(Assembler::Condition cond, T1 lhs, T2 rhs, const Register &dest)
+    {
+        ma_cmp_set(dest, lhs, rhs, cond);
+    }
 
     // Setup a call to C/C++ code, given the number of general arguments it
     // takes. Note that this only supports cdecl.

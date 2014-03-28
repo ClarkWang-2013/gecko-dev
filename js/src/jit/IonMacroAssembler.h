@@ -331,36 +331,8 @@ class MacroAssembler : public MacroAssemblerSpecific
         branchPtr(cond, familyAddr, ImmPtr(handlerp), label);
     }
 
-// Implemented for MIPS in MacroAssembler-mips.h
-#ifndef JS_CODEGEN_MIPS
-    template <typename Value>
-    Condition testMIRType(Condition cond, const Value &val, MIRType type) {
-        switch (type) {
-          case MIRType_Null:        return testNull(cond, val);
-          case MIRType_Undefined:   return testUndefined(cond, val);
-          case MIRType_Boolean:     return testBoolean(cond, val);
-          case MIRType_Int32:       return testInt32(cond, val);
-          case MIRType_String:      return testString(cond, val);
-          case MIRType_Object:      return testObject(cond, val);
-          case MIRType_Double:      return testDouble(cond, val);
-          case MIRType_Magic:       return testMagic(cond, val);
-          default:
-            MOZ_ASSUME_UNREACHABLE("Bad MIRType");
-        }
-    }
-
     template <typename Value>
     void branchTestMIRType(Condition cond, const Value &val, MIRType type, Label *label) {
-        cond = testMIRType(cond, val, type);
-        j(cond, label);
-    }
-#else
-    template <typename Value>
-    void branchTestMIRType(Condition cond, const Value &val, MIRType type, Label *label) {
-        JS_ASSERT(type == MIRType_Null    || type == MIRType_Undefined  ||
-                  type == MIRType_Boolean || type == MIRType_Int32      ||
-                  type == MIRType_String  || type == MIRType_Object     ||
-                  type == MIRType_Double  || type == MIRType_Magic);
         switch (type) {
           case MIRType_Null:        return branchTestNull(cond, val, label);
           case MIRType_Undefined:   return branchTestUndefined(cond, val, label);
@@ -374,7 +346,6 @@ class MacroAssembler : public MacroAssemblerSpecific
             MOZ_ASSUME_UNREACHABLE("Bad MIRType");
         }
     }
-#endif
 
     // Branches to |label| if |reg| is false. |reg| should be a C++ bool.
     void branchIfFalseBool(Register reg, Label *label) {
@@ -811,30 +782,10 @@ class MacroAssembler : public MacroAssemblerSpecific
     void branchEqualTypeIfNeeded(MIRType type, MDefinition *maybeDef, Register tag, Label *label);
 
     // Inline allocation.
-  private:
-    void checkAllocatorState(Label *fail);
-    bool shouldNurseryAllocate(gc::AllocKind allocKind, gc::InitialHeap initialHeap);
-    void nurseryAllocate(Register result, Register slots, gc::AllocKind allocKind,
-                         size_t nDynamicSlots, gc::InitialHeap initialHeap, Label *fail);
-    void freeSpanAllocate(Register result, Register temp, gc::AllocKind allocKind, Label *fail);
-    void allocateObject(Register result, Register slots, gc::AllocKind allocKind,
-                        uint32_t nDynamicSlots, gc::InitialHeap initialHeap, Label *fail);
-    void allocateNonObject(Register result, Register temp, gc::AllocKind allocKind, Label *fail);
-    void copySlotsFromTemplate(Register obj, const JSObject *templateObj,
-                               uint32_t start, uint32_t end);
-    void fillSlotsWithUndefined(Address addr, Register temp, uint32_t start, uint32_t end);
-    void initGCSlots(Register obj, Register temp, JSObject *templateObj);
-
-  public:
-    void callMallocStub(size_t nbytes, Register result, Label *fail);
-    void callFreeStub(Register slots);
-    void createGCObject(Register result, Register temp, JSObject *templateObj,
-                        gc::InitialHeap initialHeap, Label *fail);
-
-    void newGCThing(Register result, Register temp, JSObject *templateObj,
-                     gc::InitialHeap initialHeap, Label *fail);
-    void initGCThing(Register obj, Register temp, JSObject *templateObj);
-
+    void newGCThing(Register result, Register temp, gc::AllocKind allocKind, Label *fail,
+                    gc::InitialHeap initialHeap = gc::DefaultHeap);
+    void newGCThing(Register result, Register temp, JSObject *templateObject, Label *fail,
+                    gc::InitialHeap initialHeap);
     void newGCString(Register result, Register temp, Label *fail);
     void newGCShortString(Register result, Register temp, Label *fail);
 
@@ -847,6 +798,12 @@ class MacroAssembler : public MacroAssemblerSpecific
     void newGCShortStringPar(Register result, Register cx, Register tempReg1, Register tempReg2,
                              Label *fail);
 
+    void copySlotsFromTemplate(Register obj, Register temp, const JSObject *templateObj,
+                               uint32_t start, uint32_t end);
+    void fillSlotsWithUndefined(Register obj, Register temp, const JSObject *templateObj,
+                                uint32_t start, uint32_t end);
+    void initGCSlots(Register obj, Register temp, JSObject *templateObj);
+    void initGCThing(Register obj, Register temp, JSObject *templateObj);
 
     // Compares two strings for equality based on the JSOP.
     // This checks for identical pointers, atoms and length and fails for everything else.

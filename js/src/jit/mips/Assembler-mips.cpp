@@ -97,19 +97,15 @@ js::jit::RT(Register r)
     return r.code() << RTShift;
 }
 
+// Use to code odd float registers.
+// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RT(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
-#if _MIPS_SIM == _ABIO32
-    return (2 * r.code()) << RTShift;
-#else // _ABIN32 || _ABI64
     return r.code() << RTShift;
-#endif
 }
 
-// Use to code odd float registers.
-// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RT(uint32_t regCode)
 {
@@ -124,19 +120,15 @@ js::jit::RD(Register r)
     return r.code() << RDShift;
 }
 
+// Use to code odd float registers.
+// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RD(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
-#if _MIPS_SIM == _ABIO32
-    return (2 * r.code()) << RDShift;
-#else // _ABIN32 || _ABI64
     return r.code() << RDShift;
-#endif
 }
 
-// Use to code odd float registers.
-// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RD(uint32_t regCode)
 {
@@ -155,11 +147,7 @@ uint32_t
 js::jit::SA(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
-#if _MIPS_SIM == _ABIO32
-    return (2 * r.code()) << SAShift;
-#else // _ABIN32 || _ABI64
     return r.code() << SAShift;
-#endif
 }
 
 Register
@@ -1130,40 +1118,6 @@ Assembler::as_dmfc1(Register rt, FloatRegister fs)
 {
     return writeInst(InstReg(op_cop1, rs_dmfc1, rt, fs).encode());
 }
-
-#if _MIPS_SIM == _ABIO32
-// :TODO: Bug 972836, Remove _Odd functions once we can use odd regs.
-BufferOffset
-Assembler::as_ls_Odd(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm16::isInSignedRange(off));
-    // Hardcoded because it will be removed once we can use odd regs.
-    return writeInst(op_lwc1 | RS(base) | RT(fd.code() * 2 + 1) | Imm16(off).encode());
-}
-
-BufferOffset
-Assembler::as_ss_Odd(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm16::isInSignedRange(off));
-    // Hardcoded because it will be removed once we can use odd regs.
-    return writeInst(op_swc1 | RS(base) | RT(fd.code() * 2 + 1) | Imm16(off).encode());
-}
-
-BufferOffset
-Assembler::as_mtc1_Odd(Register rt, FloatRegister fs)
-{
-    // Hardcoded because it will be removed once we can use odd regs.
-    return writeInst(op_cop1 | rs_mtc1 | RT(rt) | RD(fs.code() * 2 + 1));
-}
-
-BufferOffset
-Assembler::as_mfc1_Odd(Register rt, FloatRegister fs)
-{
-    // Hardcoded because it will be removed once we can use odd regs.
-    return writeInst(op_cop1 | rs_mfc1 | RT(rt) | RD(fs.code() * 2 + 1));
-}
-#endif
-
 
 // FP convert instructions
 BufferOffset
