@@ -1681,6 +1681,8 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
 
 #if defined(USES_O32_ABI)
         if (!ignore.has(*iter) && ((*iter).code() % 2 == 0))
+#elif defined(USES_N32_ABI)
+        if (!ignore.has(*iter))
 #endif
             // Use assembly l.d because we have alligned the stack.
             as_ld(*iter, SecondScratchReg, -diffF);
