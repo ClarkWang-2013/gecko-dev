@@ -20,7 +20,7 @@ namespace jit {
 uint32_t GetMIPSFlags()
 {
     static bool isSet = false;
-    static uint32_t flags = HWCAP_MIPS;
+    static uint32_t flags = 0;
     if (isSet)
         return flags;
 #if WTF_OS_LINUX

@@ -17,6 +17,15 @@
 #ifdef _mips_hard_float
 #define JS_CODEGEN_MIPS_HARDFP
 #endif
+
+#if _MIPS_SIM == _ABIO32
+#define USES_O32_ABI
+#elif _MIPS_SIM == _ABIN32
+#define USES_N32_ABI
+#else
+#error "Unsupported ABI"
+#endif
+
 namespace js {
 namespace jit {
 
@@ -77,7 +86,7 @@ class Registers
         a1 = r5,
         a2 = r6,
         a3 = r7,
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         t0 = r8,
         t1 = r9,
         t2 = r10,
@@ -90,7 +99,7 @@ class Registers
         ta1 = t5,
         ta2 = t6,
         ta3 = t7,
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
         a4 = r8,
         a5 = r9,
         a6 = r10,
@@ -126,9 +135,9 @@ class Registers
 
     static const char *GetName(Code code) {
         static const char * const Names[] = { "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
                                               "t0",   "t1", "t2", "t3", "t4", "t5", "t6", "t7",
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
                                               "a4",   "a5", "a6", "a7", "t0", "t1", "t2", "t3",
 #endif
                                               "s0",   "s1", "s2", "s3", "s4", "s5", "s6", "s7",
@@ -149,9 +158,9 @@ class Registers
     static const uint32_t Allocatable = 14;
 
     static const uint32_t AllMask = 0xffffffff;
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3);
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
     static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3) |
                                        (1 << a4) | (1 << a5) | (1 << a6) | (1 << a7);
 #endif
@@ -163,7 +172,7 @@ class Registers
         (1 << Registers::a1) |
         (1 << Registers::a2) |
         (1 << Registers::a3) |
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         (1 << Registers::t0) |
         (1 << Registers::t1) |
         (1 << Registers::t2) |
@@ -172,7 +181,7 @@ class Registers
         (1 << Registers::t5) |
         (1 << Registers::t6) |
         (1 << Registers::t7);
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
         (1 << Registers::a4) |
         (1 << Registers::a5) |
         (1 << Registers::a6) |
@@ -309,7 +318,7 @@ class FloatRegisters
     static const uint32_t AllMask = 0xffffffff;
 
     static const uint32_t VolatileMask =
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         (1 << FloatRegisters::f0) |
         (1 << FloatRegisters::f2) |
         (1 << FloatRegisters::f4) |
@@ -320,7 +329,7 @@ class FloatRegisters
         (1 << FloatRegisters::f14) |
         (1 << FloatRegisters::f16) |
         (1 << FloatRegisters::f18);
-#elif _MIPS_SIM == _ABIN32
+#elif defined(USES_N32_ABI)
         (1 << FloatRegisters::f0) |
         (1 << FloatRegisters::f1) |
         (1 << FloatRegisters::f2) |
@@ -358,10 +367,10 @@ class FloatRegisters
 
     static const uint32_t WrapperMask = VolatileMask;
 
-#if _MIPS_SIM == _ABIO32
     // :TODO: (Bug 972836) // Fix this once odd regs can be used as float32
     // only. For now we don't allocate odd regs for O32 ABI.
-static const uint32_t NonAllocatableMask =
+    static const uint32_t NonAllocatableMask =
+#if defined(USES_O32_ABI)
         (1 << FloatRegisters::f1) |
         (1 << FloatRegisters::f3) |
         (1 << FloatRegisters::f5) |
@@ -381,11 +390,10 @@ static const uint32_t NonAllocatableMask =
         // f18 and f16 are MIPS scratch float registers.
         (1 << FloatRegisters::f16) |
         (1 << FloatRegisters::f18);
-#elif _MIPS_SIM == _ABIN32
-    // f21 and f23 are MIPS scratch float registers.
-    static const uint32_t NonAllocatableMask =
-        (1 << f21) |
-        (1 << f23);
+#elif defined(USES_N32_ABI)
+        // f21 and f23 are MIPS scratch float registers.
+        (1 << FloatRegisters::f21) |
+        (1 << FloatRegisters::f23);
 #endif
 
     // Registers that can be allocated without being saved, generally.
