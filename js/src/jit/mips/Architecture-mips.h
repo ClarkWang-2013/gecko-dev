@@ -158,12 +158,11 @@ class Registers
     static const uint32_t Allocatable = 14;
 
     static const uint32_t AllMask = 0xffffffff;
-#if defined(USES_O32_ABI)
-    static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3);
-#elif defined(USES_N32_ABI)
-    static const uint32_t ArgRegMask = (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3) |
-                                       (1 << a4) | (1 << a5) | (1 << a6) | (1 << a7);
+    static const uint32_t ArgRegMask =
+#if defined(USES_N32_ABI)
+        (1 << a4) | (1 << a5) | (1 << a6) | (1 << a7) |
 #endif
+        (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3);
 
     static const uint32_t VolatileMask =
         (1 << Registers::v0) |
@@ -172,25 +171,14 @@ class Registers
         (1 << Registers::a1) |
         (1 << Registers::a2) |
         (1 << Registers::a3) |
-#if defined(USES_O32_ABI)
         (1 << Registers::t0) |
         (1 << Registers::t1) |
         (1 << Registers::t2) |
         (1 << Registers::t3) |
-        (1 << Registers::t4) |
-        (1 << Registers::t5) |
-        (1 << Registers::t6) |
-        (1 << Registers::t7);
-#elif defined(USES_N32_ABI)
-        (1 << Registers::a4) |
-        (1 << Registers::a5) |
-        (1 << Registers::a6) |
-        (1 << Registers::a7) |
-        (1 << Registers::t0) |
-        (1 << Registers::t1) |
-        (1 << Registers::t2) |
-        (1 << Registers::t3);
-#endif
+        (1 << Registers::ta0) |
+        (1 << Registers::ta1) |
+        (1 << Registers::ta2) |
+        (1 << Registers::ta3);
 
     // We use this constant to save registers when entering functions. This
     // is why $ra is added here even though it is not "Non Volatile".
@@ -311,14 +299,36 @@ class FloatRegisters
     static const Code Invalid = invalid_freg;
 
     static const uint32_t Total = 32;
-    // :TODO: (Bug 972836) // Fix this once odd regs can be used as float32
-    // only. For now we don't allocate odd regs for O32 ABI.
-    static const uint32_t Allocatable = 14;
+    static const uint32_t Allocatable =
+#if defined(USES_O32_ABI)
+        // :TODO: (Bug 972836) // Fix this once odd regs can be used as float32
+        // only. For now we don't allocate odd regs for O32 ABI.
+        14;
+#elif defined(USES_N32_ABI)
+        30;
+#endif
 
     static const uint32_t AllMask = 0xffffffff;
 
     static const uint32_t VolatileMask =
-#if defined(USES_O32_ABI)
+#if defined(USES_N32_ABI)
+        (1 << FloatRegisters::f1) |
+        (1 << FloatRegisters::f3) |
+        (1 << FloatRegisters::f5) |
+        (1 << FloatRegisters::f7) |
+        (1 << FloatRegisters::f9) |
+        (1 << FloatRegisters::f11) |
+        (1 << FloatRegisters::f13) |
+        (1 << FloatRegisters::f15) |
+        (1 << FloatRegisters::f17) |
+        (1 << FloatRegisters::f19) |
+        (1 << FloatRegisters::f21) |
+        (1 << FloatRegisters::f23) |
+        (1 << FloatRegisters::f25) |
+        (1 << FloatRegisters::f27) |
+        (1 << FloatRegisters::f29) |
+        (1 << FloatRegisters::f31) |
+#endif
         (1 << FloatRegisters::f0) |
         (1 << FloatRegisters::f2) |
         (1 << FloatRegisters::f4) |
@@ -329,34 +339,6 @@ class FloatRegisters
         (1 << FloatRegisters::f14) |
         (1 << FloatRegisters::f16) |
         (1 << FloatRegisters::f18);
-#elif defined(USES_N32_ABI)
-        (1 << FloatRegisters::f0) |
-        (1 << FloatRegisters::f1) |
-        (1 << FloatRegisters::f2) |
-        (1 << FloatRegisters::f3) |
-        (1 << FloatRegisters::f4) |
-        (1 << FloatRegisters::f5) |
-        (1 << FloatRegisters::f6) |
-        (1 << FloatRegisters::f7) |
-        (1 << FloatRegisters::f8) |
-        (1 << FloatRegisters::f9) |
-        (1 << FloatRegisters::f10) |
-        (1 << FloatRegisters::f11) |
-        (1 << FloatRegisters::f12) |
-        (1 << FloatRegisters::f13) |
-        (1 << FloatRegisters::f14) |
-        (1 << FloatRegisters::f15) |
-        (1 << FloatRegisters::f16) |
-        (1 << FloatRegisters::f17) |
-        (1 << FloatRegisters::f18) |
-        (1 << FloatRegisters::f19) |
-        (1 << FloatRegisters::f21) |
-        (1 << FloatRegisters::f23) |
-        (1 << FloatRegisters::f25) |
-        (1 << FloatRegisters::f27) |
-        (1 << FloatRegisters::f29) |
-        (1 << FloatRegisters::f31);
-#endif
     static const uint32_t NonVolatileMask =
         (1 << FloatRegisters::f20) |
         (1 << FloatRegisters::f22) |
@@ -367,10 +349,10 @@ class FloatRegisters
 
     static const uint32_t WrapperMask = VolatileMask;
 
-    // :TODO: (Bug 972836) // Fix this once odd regs can be used as float32
-    // only. For now we don't allocate odd regs for O32 ABI.
     static const uint32_t NonAllocatableMask =
 #if defined(USES_O32_ABI)
+        // :TODO: (Bug 972836) // Fix this once odd regs can be used as float32
+        // only. For now we don't allocate odd regs for O32 ABI.
         (1 << FloatRegisters::f1) |
         (1 << FloatRegisters::f3) |
         (1 << FloatRegisters::f5) |
