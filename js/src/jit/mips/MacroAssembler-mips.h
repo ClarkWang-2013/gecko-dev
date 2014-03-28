@@ -267,10 +267,18 @@ class MacroAssemblerMIPS : public Assembler
     // floating point coprocessor.
     // :TODO: (Bug 985881) Modify this for N32 ABI to use mthc1 and mfhc1
     void moveToDoubleHi(Register src, FloatRegister dest) {
+#if defined(USES_O32_ABI)
         as_mtc1(src, getOddPair(dest));
+#elif defined(USES_N32_ABI)
+        as_mthc1(src, dest);
+#endif
     }
     void moveFromDoubleHi(FloatRegister src, Register dest) {
+#if defined(USES_O32_ABI)
         as_mfc1(dest, getOddPair(src));
+#elif defined(USES_N32_ABI)
+        as_mfhc1(dest, src);
+#endif
     }
 
   protected:

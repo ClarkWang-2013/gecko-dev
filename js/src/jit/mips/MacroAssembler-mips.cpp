@@ -1654,8 +1654,9 @@ MacroAssembler::PushRegsInMask(RegisterSet set)
         // :TODO: (Bug 972836) Fix this once odd regs can be used as
         // float32 only. For now we skip saving odd regs for O32 ABI.
 
-        // :TODO: (Bug 985881) Make a switch for N32 ABI.
+#if defined(USES_O32_ABI)
         if ((*iter).code() % 2 == 0)
+#endif
             as_sd(*iter, SecondScratchReg, -diffF);
         diffF -= sizeof(double);
     }
@@ -1678,8 +1679,9 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
         // :TODO: (Bug 972836) Fix this once odd regs can be used as
         // float32 only. For now we skip loading odd regs for O32 ABI.
 
-        // :TODO: (Bug 985881) Make a switch for N32 ABI.
+#if defined(USES_O32_ABI)
         if (!ignore.has(*iter) && ((*iter).code() % 2 == 0))
+#endif
             // Use assembly l.d because we have alligned the stack.
             as_ld(*iter, SecondScratchReg, -diffF);
         diffF -= sizeof(double);
@@ -2546,7 +2548,6 @@ MacroAssemblerMIPSCompat::unboxDouble(const ValueOperand &operand, const FloatRe
 void
 MacroAssemblerMIPSCompat::unboxDouble(const Address &src, const FloatRegister &dest)
 {
-#if _MIPS_SIM == _ABIO32
     ma_lw(ScratchRegister, Address(src.base, src.offset + PAYLOAD_OFFSET));
     as_mtc1(ScratchRegister, dest);
     ma_lw(ScratchRegister, Address(src.base, src.offset + TAG_OFFSET));
