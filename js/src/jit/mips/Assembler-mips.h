@@ -29,7 +29,7 @@ static MOZ_CONSTEXPR_VAR Register a0 = { Registers::a0 };
 static MOZ_CONSTEXPR_VAR Register a1 = { Registers::a1 };
 static MOZ_CONSTEXPR_VAR Register a2 = { Registers::a2 };
 static MOZ_CONSTEXPR_VAR Register a3 = { Registers::a3 };
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
 static MOZ_CONSTEXPR_VAR Register t0 = { Registers::t0 };
 static MOZ_CONSTEXPR_VAR Register t1 = { Registers::t1 };
 static MOZ_CONSTEXPR_VAR Register t2 = { Registers::t2 };
@@ -38,7 +38,11 @@ static MOZ_CONSTEXPR_VAR Register t4 = { Registers::t4 };
 static MOZ_CONSTEXPR_VAR Register t5 = { Registers::t5 };
 static MOZ_CONSTEXPR_VAR Register t6 = { Registers::t6 };
 static MOZ_CONSTEXPR_VAR Register t7 = { Registers::t7 };
-#else // _ABIN32 || _ABI64
+static MOZ_CONSTEXPR_VAR Register ta0 = { Registers::t4 };
+static MOZ_CONSTEXPR_VAR Register ta1 = { Registers::t5 };
+static MOZ_CONSTEXPR_VAR Register ta2 = { Registers::t6 };
+static MOZ_CONSTEXPR_VAR Register ta3 = { Registers::t7 };
+#elif defined(USES_N32_ABI)
 static MOZ_CONSTEXPR_VAR Register a4 = { Registers::a4 };
 static MOZ_CONSTEXPR_VAR Register a5 = { Registers::a5 };
 static MOZ_CONSTEXPR_VAR Register a6 = { Registers::a6 };
@@ -47,6 +51,10 @@ static MOZ_CONSTEXPR_VAR Register t0 = { Registers::t0 };
 static MOZ_CONSTEXPR_VAR Register t1 = { Registers::t1 };
 static MOZ_CONSTEXPR_VAR Register t2 = { Registers::t2 };
 static MOZ_CONSTEXPR_VAR Register t3 = { Registers::t3 };
+static MOZ_CONSTEXPR_VAR Register ta0 = { Registers::a4 };
+static MOZ_CONSTEXPR_VAR Register ta1 = { Registers::a5 };
+static MOZ_CONSTEXPR_VAR Register ta2 = { Registers::a6 };
+static MOZ_CONSTEXPR_VAR Register ta3 = { Registers::a7 };
 #endif
 static MOZ_CONSTEXPR_VAR Register s0 = { Registers::s0 };
 static MOZ_CONSTEXPR_VAR Register s1 = { Registers::s1 };
@@ -75,13 +83,8 @@ static MOZ_CONSTEXPR_VAR Register CallTempReg0 = t0;
 static MOZ_CONSTEXPR_VAR Register CallTempReg1 = t1;
 static MOZ_CONSTEXPR_VAR Register CallTempReg2 = t2;
 static MOZ_CONSTEXPR_VAR Register CallTempReg3 = t3;
-#if _MIPS_SIM == _ABIO32
-static MOZ_CONSTEXPR_VAR Register CallTempReg4 = t4;
-static MOZ_CONSTEXPR_VAR Register CallTempReg5 = t5;
-#else // _ABIN32 || _ABI64
-static MOZ_CONSTEXPR_VAR Register CallTempReg4 = a2;
-static MOZ_CONSTEXPR_VAR Register CallTempReg5 = a3;
-#endif
+static MOZ_CONSTEXPR_VAR Register CallTempReg4 = ta0;
+static MOZ_CONSTEXPR_VAR Register CallTempReg5 = ta1;
 
 static MOZ_CONSTEXPR_VAR Register IntArgReg0 = a0;
 static MOZ_CONSTEXPR_VAR Register IntArgReg1 = a1;
@@ -89,10 +92,11 @@ static MOZ_CONSTEXPR_VAR Register IntArgReg2 = a2;
 static MOZ_CONSTEXPR_VAR Register IntArgReg3 = a3;
 static MOZ_CONSTEXPR_VAR Register GlobalReg = s6; // used by Odin
 static MOZ_CONSTEXPR_VAR Register HeapReg = s7; // used by Odin
-#if _MIPS_SIM == _ABIO32
-static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { t0, t1, t2, t3, t4 };
-#else // _ABIN32 || _ABI64
-static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { t0, t1, t2, t3 };
+static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] =
+#if defined(USES_O32_ABI)
+        { t0, t1, t2, t3, t4 };
+#elif defined(USES_N32_ABI)
+        { t0, t1, t2, t3 };
 #endif
 static const uint32_t NumCallTempNonArgRegs = mozilla::ArrayLength(CallTempNonArgRegs);
 
@@ -108,12 +112,12 @@ class ABIArgGenerator
     ABIArg &current() { return current_; }
 
     uint32_t stackBytesConsumedSoFar() const {
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         if (usedArgSlots_ <= 4)
             return 4 * sizeof(intptr_t);
 
         return usedArgSlots_ * sizeof(intptr_t);
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
         if (usedArgSlots_ <= 8)
             return 0;
 
@@ -136,10 +140,10 @@ static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = fp;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = { FloatRegisters::f0 };
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f18 };
 static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f16 };
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f23 };
 static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f21 };
 #endif
@@ -147,39 +151,37 @@ static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters:
 static MOZ_CONSTEXPR_VAR FloatRegister NANReg = { FloatRegisters::f30 };
 
 static MOZ_CONSTEXPR_VAR FloatRegister f0  = {FloatRegisters::f0};
-static MOZ_CONSTEXPR_VAR FloatRegister f2  = {FloatRegisters::f2};
-static MOZ_CONSTEXPR_VAR FloatRegister f4  = {FloatRegisters::f4};
-static MOZ_CONSTEXPR_VAR FloatRegister f6  = {FloatRegisters::f6};
-static MOZ_CONSTEXPR_VAR FloatRegister f8  = {FloatRegisters::f8};
-static MOZ_CONSTEXPR_VAR FloatRegister f10 = {FloatRegisters::f10};
-static MOZ_CONSTEXPR_VAR FloatRegister f12 = {FloatRegisters::f12};
-static MOZ_CONSTEXPR_VAR FloatRegister f14 = {FloatRegisters::f14};
-static MOZ_CONSTEXPR_VAR FloatRegister f16 = {FloatRegisters::f16};
-static MOZ_CONSTEXPR_VAR FloatRegister f18 = {FloatRegisters::f18};
-static MOZ_CONSTEXPR_VAR FloatRegister f20 = {FloatRegisters::f20};
-static MOZ_CONSTEXPR_VAR FloatRegister f22 = {FloatRegisters::f22};
-static MOZ_CONSTEXPR_VAR FloatRegister f24 = {FloatRegisters::f24};
-static MOZ_CONSTEXPR_VAR FloatRegister f26 = {FloatRegisters::f26};
-static MOZ_CONSTEXPR_VAR FloatRegister f28 = {FloatRegisters::f28};
-static MOZ_CONSTEXPR_VAR FloatRegister f30 = {FloatRegisters::f30};
-#if _MIPS_SIM != _ABIO32
 static MOZ_CONSTEXPR_VAR FloatRegister f1  = {FloatRegisters::f1};
+static MOZ_CONSTEXPR_VAR FloatRegister f2  = {FloatRegisters::f2};
 static MOZ_CONSTEXPR_VAR FloatRegister f3  = {FloatRegisters::f3};
+static MOZ_CONSTEXPR_VAR FloatRegister f4  = {FloatRegisters::f4};
 static MOZ_CONSTEXPR_VAR FloatRegister f5  = {FloatRegisters::f5};
+static MOZ_CONSTEXPR_VAR FloatRegister f6  = {FloatRegisters::f6};
 static MOZ_CONSTEXPR_VAR FloatRegister f7  = {FloatRegisters::f7};
+static MOZ_CONSTEXPR_VAR FloatRegister f8  = {FloatRegisters::f8};
 static MOZ_CONSTEXPR_VAR FloatRegister f9  = {FloatRegisters::f9};
+static MOZ_CONSTEXPR_VAR FloatRegister f10 = {FloatRegisters::f10};
 static MOZ_CONSTEXPR_VAR FloatRegister f11 = {FloatRegisters::f11};
+static MOZ_CONSTEXPR_VAR FloatRegister f12 = {FloatRegisters::f12};
 static MOZ_CONSTEXPR_VAR FloatRegister f13 = {FloatRegisters::f13};
+static MOZ_CONSTEXPR_VAR FloatRegister f14 = {FloatRegisters::f14};
 static MOZ_CONSTEXPR_VAR FloatRegister f15 = {FloatRegisters::f15};
+static MOZ_CONSTEXPR_VAR FloatRegister f16 = {FloatRegisters::f16};
 static MOZ_CONSTEXPR_VAR FloatRegister f17 = {FloatRegisters::f17};
+static MOZ_CONSTEXPR_VAR FloatRegister f18 = {FloatRegisters::f18};
 static MOZ_CONSTEXPR_VAR FloatRegister f19 = {FloatRegisters::f19};
+static MOZ_CONSTEXPR_VAR FloatRegister f20 = {FloatRegisters::f20};
 static MOZ_CONSTEXPR_VAR FloatRegister f21 = {FloatRegisters::f21};
+static MOZ_CONSTEXPR_VAR FloatRegister f22 = {FloatRegisters::f22};
 static MOZ_CONSTEXPR_VAR FloatRegister f23 = {FloatRegisters::f23};
+static MOZ_CONSTEXPR_VAR FloatRegister f24 = {FloatRegisters::f24};
 static MOZ_CONSTEXPR_VAR FloatRegister f25 = {FloatRegisters::f25};
+static MOZ_CONSTEXPR_VAR FloatRegister f26 = {FloatRegisters::f26};
 static MOZ_CONSTEXPR_VAR FloatRegister f27 = {FloatRegisters::f27};
+static MOZ_CONSTEXPR_VAR FloatRegister f28 = {FloatRegisters::f28};
 static MOZ_CONSTEXPR_VAR FloatRegister f29 = {FloatRegisters::f29};
+static MOZ_CONSTEXPR_VAR FloatRegister f30 = {FloatRegisters::f30};
 static MOZ_CONSTEXPR_VAR FloatRegister f31 = {FloatRegisters::f31};
-#endif
 
 // MIPS CPUs can only load multibyte data that is "naturally"
 // four-byte-aligned, sp register should be eight-byte-aligned.
@@ -1329,9 +1331,9 @@ class InstJump : public Instruction
     }
 };
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
 static const uint32_t NumIntArgRegs = 4;
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
 static const uint32_t NumIntArgRegs = 8;
 static const uint32_t NumFloatArgRegs = NumIntArgRegs;
 #endif
@@ -1346,7 +1348,7 @@ GetIntArgReg(uint32_t usedArgSlots, Register *out)
     return false;
 }
 
-#if _MIPS_SIM != _ABIO32
+#if defined(USES_N32_ABI)
 static inline bool
 GetFloatArgReg(uint32_t usedArgSlots, FloatRegister *out)
 {
@@ -1386,10 +1388,10 @@ static inline uint32_t
 GetArgStackDisp(uint32_t usedArgSlots)
 {
     MOZ_ASSERT(usedArgSlots >= NumIntArgRegs);
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     // Even register arguments have place reserved on stack.
     return usedArgSlots * sizeof(intptr_t);
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
     return (usedArgSlots - NumIntArgRegs) * sizeof(int64_t);
 #endif
 }

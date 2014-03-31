@@ -43,7 +43,7 @@ ABIArgGenerator::next(MIRType type)
         break;
       case MIRType_Float32:
       case MIRType_Double:
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         if (!usedArgSlots_) {
             current_ = ABIArg(f12);
             usedArgSlots_ += 2;
@@ -59,7 +59,7 @@ ABIArgGenerator::next(MIRType type)
             current_ = ABIArg(usedArgSlots_ * sizeof(intptr_t));
             usedArgSlots_ += 2;
         }
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
         FloatRegister destFReg;
         if (0 == usedArgSlots_) {
             firstArgFloat = true;
@@ -97,20 +97,11 @@ js::jit::RT(Register r)
     return r.code() << RTShift;
 }
 
-// Use to code odd float registers.
-// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RT(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
     return r.code() << RTShift;
-}
-
-uint32_t
-js::jit::RT(uint32_t regCode)
-{
-    MOZ_ASSERT((regCode & ~RegMask) == 0);
-    return regCode << RTShift;
 }
 
 uint32_t
@@ -120,20 +111,11 @@ js::jit::RD(Register r)
     return r.code() << RDShift;
 }
 
-// Use to code odd float registers.
-// :TODO: Bug 972836, It will be removed once we can use odd regs.
 uint32_t
 js::jit::RD(FloatRegister r)
 {
     MOZ_ASSERT(r.code() < FloatRegisters::Total);
     return r.code() << RDShift;
-}
-
-uint32_t
-js::jit::RD(uint32_t regCode)
-{
-    MOZ_ASSERT((regCode & ~RegMask) == 0);
-    return regCode << RDShift;
 }
 
 uint32_t
