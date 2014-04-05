@@ -223,8 +223,8 @@ MacroAssemblerMIPS::negateDouble(FloatRegister reg)
 void
 MacroAssemblerMIPS::inc64(AbsoluteAddress dest)
 {
-#if _MIPS_SIM == _ABIO32
     ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
+#if defined(USES_O32_ABI)
     as_lw(SecondScratchReg, ScratchRegister, 0);
 
     as_addiu(SecondScratchReg, SecondScratchReg, 1);
@@ -237,8 +237,7 @@ MacroAssemblerMIPS::inc64(AbsoluteAddress dest)
 
     ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
     as_sw(SecondScratchReg, ScratchRegister, 4);
-#else // _ABIN32 || _ABI64
-    ma_li(ScratchRegister, Imm32((int32_t)dest.addr));
+#elif defined(USES_N32_ABI)
     as_ld(SecondScratchReg, ScratchRegister, 0);
     as_daddiu(SecondScratchReg, SecondScratchReg, 1);
     as_sd(SecondScratchReg, ScratchRegister, 0);
@@ -1402,7 +1401,7 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
     // Use single precision load instructions so we don't have to worry about
     // alignment.
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     int32_t off2 = address.offset + TAG_OFFSET;
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
         as_ls(ft, address.base, Imm16(address.offset).encode());
@@ -1413,7 +1412,7 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
         as_ls(ft, ScratchRegister, PAYLOAD_OFFSET);
         as_ls(getOddPair(ft), ScratchRegister, TAG_OFFSET);
     }
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
 #if defined(__mips_loongson_vector_rev)
     int32_t off2 = address.offset + 7;
     if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
@@ -1444,7 +1443,7 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
 void
 MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
 {
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     int32_t off2 = address.offset + TAG_OFFSET;
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
         as_ss(ft, address.base, Imm16(address.offset).encode());
@@ -1455,7 +1454,7 @@ MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
         as_ss(ft, ScratchRegister, PAYLOAD_OFFSET);
         as_ss(getOddPair(ft), ScratchRegister, TAG_OFFSET);
     }
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
 #if defined(__mips_loongson_vector_rev)
     int32_t off2 = address.offset + 7;
     if (Imm8::isInSignedRange(address.offset) && Imm8::isInSignedRange(off2)) {
@@ -3100,7 +3099,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
     if (!enoughMemory_)
         return;
     switch (type) {
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
       case MoveOp::FLOAT32:
         if (!usedArgSlots_) {
             if (from.floatReg() != f12)
@@ -3152,7 +3151,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
             usedArgSlots_ += 2;
         }
         break;
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
       case MoveOp::FLOAT32:
       case MoveOp::DOUBLE:
         FloatRegister destFReg;
@@ -3231,11 +3230,11 @@ MacroAssemblerMIPSCompat::callWithABIPre(uint32_t *stackAdjust)
     // Reserve place for $ra.
     *stackAdjust = sizeof(intptr_t);
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     *stackAdjust += usedArgSlots_ > NumIntArgRegs ?
                     usedArgSlots_ * sizeof(intptr_t) :
                     NumIntArgRegs * sizeof(intptr_t);
-#else // _ABIN32 || _ABI64
+#elif defined(USES_N32_ABI)
     *stackAdjust += usedArgSlots_ > NumIntArgRegs ?
                     (usedArgSlots_ - NumIntArgRegs) * sizeof(intptr_t) : 0;
 #endif
