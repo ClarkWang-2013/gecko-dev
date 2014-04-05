@@ -81,35 +81,27 @@ EmitChangeICReturnAddress(MacroAssembler &masm, Register reg)
 inline void
 EmitTailCallVM(JitCode *target, MacroAssembler &masm, uint32_t argSize)
 {
-#if _MIPS_SIM == _ABIO32
-    Register R2a = t6;
-    Register R2b = t7;
-#else // _ABIN32 || _ABI64
-    Register R2a = a6;
-    Register R2b = a7;
-#endif
-
     // We assume during this that R0 and R1 have been pushed, and that R2 is
     // unused.
-    MOZ_ASSERT(R2 == ValueOperand(R2b, R2a));
+    MOZ_ASSERT(R2 == ValueOperand(ta3, ta2));
 
     // Compute frame size.
-    masm.movePtr(BaselineFrameReg, R2a);
-    masm.addPtr(Imm32(BaselineFrame::FramePointerOffset), R2a);
-    masm.subPtr(BaselineStackReg, R2a);
+    masm.movePtr(BaselineFrameReg, ta2);
+    masm.addPtr(Imm32(BaselineFrame::FramePointerOffset), ta2);
+    masm.subPtr(BaselineStackReg, ta2);
 
     // Store frame size without VMFunction arguments for GC marking.
-    masm.ma_subu(R2b, R2a, Imm32(argSize));
-    masm.storePtr(R2b, Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfFrameSize()));
+    masm.ma_subu(ta3, ta2, Imm32(argSize));
+    masm.storePtr(ta3, Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfFrameSize()));
 
     // Push frame descriptor and perform the tail call.
     // BaselineTailCallReg (ra) already contains the return address (as we
     // keep it there through the stub calls), but the VMWrapper code being
     // called expects the return address to also be pushed on the stack.
     MOZ_ASSERT(BaselineTailCallReg == ra);
-    masm.makeFrameDescriptor(R2a, IonFrame_BaselineJS);
+    masm.makeFrameDescriptor(ta2, IonFrame_BaselineJS);
     masm.subPtr(Imm32(sizeof(IonCommonFrameLayout)), StackPointer);
-    masm.storePtr(R2a, Address(StackPointer, IonCommonFrameLayout::offsetOfDescriptor()));
+    masm.storePtr(ta2, Address(StackPointer, IonCommonFrameLayout::offsetOfDescriptor()));
     masm.storePtr(ra, Address(StackPointer, IonCommonFrameLayout::offsetOfReturnAddress()));
 
     masm.branch(target);
@@ -130,14 +122,8 @@ EmitCreateStubFrameDescriptor(MacroAssembler &masm, Register reg)
 inline void
 EmitCallVM(JitCode *target, MacroAssembler &masm)
 {
-#if _MIPS_SIM == _ABIO32
-    Register tmp = t6;
-#else // _ABIN32 || _ABI64
-    Register tmp = a6;
-#endif
-
-    EmitCreateStubFrameDescriptor(masm, tmp);
-    masm.push(tmp);
+    EmitCreateStubFrameDescriptor(masm, ta2);
+    masm.push(ta2);
     masm.call(target);
 }
 
