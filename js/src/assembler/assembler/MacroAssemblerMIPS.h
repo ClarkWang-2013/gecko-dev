@@ -57,16 +57,16 @@ public:
     // For storing compare result
     static const RegisterID cmpTempRegister = MIPSRegisters::t3;
     // For storing data loaded from the memory
-#if _MIPS_SIM == _ABIO32
+#if WTF_MIPS_ABI_O32
     static const RegisterID dataTemp2Register = MIPSRegisters::t4;
-#else
+#elif WTF_MIPS_ABI_N32
     static const RegisterID dataTemp2Register = MIPSRegisters::a7;
 #endif
 
     // FP temp register
-#if _MIPS_SIM == _ABIO32
+#if WTF_MIPS_ABI_O32
     static const FPRegisterID fpTempRegister = MIPSRegisters::f16;
-#else // _ABIN32 || _ABI64
+#elif WTF_MIPS_ABI_N32
     static const FPRegisterID fpTempRegister = MIPSRegisters::f20;
 #endif
 
