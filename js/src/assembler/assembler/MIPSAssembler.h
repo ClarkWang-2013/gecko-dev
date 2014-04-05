@@ -89,7 +89,7 @@ typedef enum {
     a1 = r5,
     a2 = r6,
     a3 = r7,
-#if _MIPS_SIM == _ABIO32
+#if WTF_MIPS_ABI_O32
     t0 = r8,
     t1 = r9,
     t2 = r10,
@@ -102,7 +102,7 @@ typedef enum {
     ta1 = t5,
     ta2 = t6,
     ta3 = t7,
-#else // _ABIN32 || _ABI64
+#elif WTF_MIPS_ABI_N32
     a4 = r8,
     a5 = r9,
     a6 = r10,
