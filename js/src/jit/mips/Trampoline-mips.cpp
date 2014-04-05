@@ -33,7 +33,7 @@ struct EnterJITRegs
     double f22;
     double f20;
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     // empty slot for alignment
     uintptr_t align;
 
@@ -47,7 +47,7 @@ struct EnterJITRegs
     uintptr_t s2;
     uintptr_t s1;
     uintptr_t s0;
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     // non-volatile registers.
     uint64_t ra;
     uint64_t s7;
@@ -64,7 +64,7 @@ struct EnterJITRegs
 #endif
 };
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
 struct EnterJITArgs
 {
     // First 4 argumet placeholders
@@ -87,7 +87,7 @@ GenerateReturn(MacroAssembler &masm, int returnCode)
     MOZ_ASSERT(masm.framePushed() == sizeof(EnterJITRegs));
 
     // Restore non-volatile registers
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s0)), s0);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s1)), s1);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s2)), s2);
@@ -97,15 +97,7 @@ GenerateReturn(MacroAssembler &masm, int returnCode)
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s6)), s6);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s7)), s7);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, ra)), ra);
-
-    // Restore non-volatile floating point registers
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f20)), f20);
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f22)), f22);
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f24)), f24);
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f26)), f26);
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f28)), f28);
-    masm.loadDouble(Address(StackPointer, offsetof(EnterJITRegs, f30)), f30);
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     masm.ma_ld(s0, Address(StackPointer, offsetof(EnterJITRegs, s0)));
     masm.ma_ld(s1, Address(StackPointer, offsetof(EnterJITRegs, s1)));
     masm.ma_ld(s2, Address(StackPointer, offsetof(EnterJITRegs, s2)));
@@ -115,6 +107,7 @@ GenerateReturn(MacroAssembler &masm, int returnCode)
     masm.ma_ld(s6, Address(StackPointer, offsetof(EnterJITRegs, s6)));
     masm.ma_ld(s7, Address(StackPointer, offsetof(EnterJITRegs, s7)));
     masm.ma_ld(ra, Address(StackPointer, offsetof(EnterJITRegs, ra)));
+#endif
 
     // Restore non-volatile floating point registers
     masm.as_ld(f20, StackPointer, offsetof(EnterJITRegs, f20));
@@ -123,7 +116,6 @@ GenerateReturn(MacroAssembler &masm, int returnCode)
     masm.as_ld(f26, StackPointer, offsetof(EnterJITRegs, f26));
     masm.as_ld(f28, StackPointer, offsetof(EnterJITRegs, f28));
     masm.as_ld(f30, StackPointer, offsetof(EnterJITRegs, f30));
-#endif
 
     masm.freeStack(sizeof(EnterJITRegs));
 
@@ -137,7 +129,7 @@ GeneratePrologue(MacroAssembler &masm)
     // rather than the JIT'd code, because they are scanned by the conservative
     // scanner.
     masm.reserveStack(sizeof(EnterJITRegs));
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     masm.storePtr(s0, Address(StackPointer, offsetof(EnterJITRegs, s0)));
     masm.storePtr(s1, Address(StackPointer, offsetof(EnterJITRegs, s1)));
     masm.storePtr(s2, Address(StackPointer, offsetof(EnterJITRegs, s2)));
@@ -147,7 +139,7 @@ GeneratePrologue(MacroAssembler &masm)
     masm.storePtr(s6, Address(StackPointer, offsetof(EnterJITRegs, s6)));
     masm.storePtr(s7, Address(StackPointer, offsetof(EnterJITRegs, s7)));
     masm.storePtr(ra, Address(StackPointer, offsetof(EnterJITRegs, ra)));
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     masm.ma_sd(s0, Address(StackPointer, offsetof(EnterJITRegs, s0)));
     masm.ma_sd(s1, Address(StackPointer, offsetof(EnterJITRegs, s1)));
     masm.ma_sd(s2, Address(StackPointer, offsetof(EnterJITRegs, s2)));
@@ -184,10 +176,10 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     const Register reg_argv = a2;
     const Register reg_frame = a3;
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     const Address slotToken(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, calleeToken));
     const Address slotVp(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, vp));
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     const Register reg_token = a4;
     const Register reg_chain = a5;
     const Register reg_values = a6;
@@ -204,7 +196,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     // Save stack pointer into s4
     masm.movePtr(StackPointer, s4);
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     // Load calleeToken into s2.
     masm.loadPtr(slotToken, s2);
 #endif
@@ -214,10 +206,10 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         masm.movePtr(StackPointer, BaselineFrameReg);
 
     // Load the number of actual arguments into s3.
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     masm.loadPtr(slotVp, s3);
     masm.unboxInt32(Address(s3, 0), s3);
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     masm.unboxInt32(Address(reg_vp, 0), s3);
 #endif
 
@@ -249,9 +241,9 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
 
     masm.subPtr(Imm32(2 * sizeof(uintptr_t)), StackPointer);
     masm.storePtr(s3, Address(StackPointer, sizeof(uintptr_t))); // actual arguments
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     masm.storePtr(s2, Address(StackPointer, 0)); // callee token
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     masm.storePtr(reg_token, Address(StackPointer, 0)); // callee token
 #endif
 
@@ -268,7 +260,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         regs.take(BaselineFrameReg);
         regs.take(reg_code);
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         const Address slotNumStackValues(BaselineFrameReg, sizeof(EnterJITRegs) +
                                          offsetof(EnterJITArgs, numStackValues));
         const Address slotScopeChain(BaselineFrameReg, sizeof(EnterJITRegs) +
@@ -280,10 +272,10 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
 
         Register scratch = regs.takeAny();
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         Register numStackValues = regs.takeAny();
         masm.load32(slotNumStackValues, numStackValues);
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
         Register numStackValues = reg_values;
 #endif
 
@@ -349,9 +341,9 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         masm.bind(&notOsr);
         // Load the scope chain in R1.
         MOZ_ASSERT(R1.scratchReg() != reg_code);
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
         masm.loadPtr(slotScopeChain, R1.scratchReg());
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
         masm.ma_move(R1.scratchReg(), reg_chain);
 #endif
     }
@@ -372,11 +364,11 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     masm.rshiftPtr(Imm32(4), s0);
     masm.addPtr(s0, StackPointer);
 
-#if _MIPS_SIM == _ABIO32
+#if defined(USES_O32_ABI)
     // Store the returned value into the slotVp
     masm.loadPtr(slotVp, s1);
     masm.storeValue(JSReturnOperand, Address(s1, 0));
-#else // _ABIN32
+#elif defined(USES_N32_ABI)
     // Store the returned value into the vp
     masm.ma_ld(reg_vp, Address(StackPointer, offsetof(EnterJITRegs, a7)));
     masm.storeValue(JSReturnOperand, Address(reg_vp, 0));
@@ -481,15 +473,9 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     // frame. Including |this|, there are (|nargs| + 1) arguments to copy.
     MOZ_ASSERT(ArgumentsRectifierReg == s3);
 
-#if _MIPS_SIM == _ABIO32
-    Register numActArgsReg = t6;
-    Register calleeTokenReg = t7;
-    Register numArgsReg = t5;
-#else // _ABIN32
-    Register numActArgsReg = a6;
-    Register calleeTokenReg = a7;
-    Register numArgsReg = a5;
-#endif
+    Register numActArgsReg = ta2;
+    Register calleeTokenReg = ta3;
+    Register numArgsReg = ta1;
 
     // Copy number of actual arguments into numActArgsReg
     masm.loadPtr(Address(StackPointer, IonRectifierFrameLayout::offsetOfNumActualArgs()),
@@ -502,11 +488,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     masm.ma_subu(t1, numArgsReg, s3);
 
-#if _MIPS_SIM == _ABIO32
-    masm.moveValue(UndefinedValue(), ValueOperand(t3, t4));
-#else // _ABIN32
-    masm.moveValue(UndefinedValue(), ValueOperand(t3, a4));
-#endif
+    masm.moveValue(UndefinedValue(), ValueOperand(t3, ta0));
 
     masm.movePtr(StackPointer, t2); // Save %sp.
 
@@ -516,11 +498,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
         masm.bind(&undefLoopTop);
 
         masm.subPtr(Imm32(sizeof(Value)), StackPointer);
-#if _MIPS_SIM == _ABIO32
-        masm.storeValue(ValueOperand(t3, t4), Address(StackPointer, 0));
-#else // _ABIN32
-        masm.storeValue(ValueOperand(t3, a4), Address(StackPointer, 0));
-#endif
+        masm.storeValue(ValueOperand(t3, ta0), Address(StackPointer, 0));
         masm.sub32(Imm32(1), t1);
 
         masm.ma_b(t1, t1, &undefLoopTop, Assembler::NonZero, ShortJump);
