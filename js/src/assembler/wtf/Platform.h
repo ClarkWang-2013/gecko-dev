@@ -144,6 +144,13 @@
 #if defined(__MIPSEB__)
 #define WTF_CPU_BIG_ENDIAN 1
 #endif
+#if (_MIPS_SIM == _ABIO32)
+#define WTF_MIPS_ABI_O32 1
+#elif (_MIPS_SIM == _ABIN32)
+#define WTF_MIPS_ABI_N32 1
+#else
+#error "Unsupported ABI"
+#endif
 #define WTF_MIPS_PIC (defined __PIC__)
 #define WTF_MIPS_ARCH __mips
 #define WTF_MIPS_ISA(v) (defined WTF_MIPS_ARCH && WTF_MIPS_ARCH == v)
