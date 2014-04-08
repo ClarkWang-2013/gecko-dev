@@ -184,9 +184,6 @@ public:
         OP_SH_RD = 11,
         OP_SH_RT = 16,
         OP_SH_RS = 21,
-#if defined(__mips_loongson_vector_rev)
-        OP_SH_OF = 3,
-#endif
         OP_SH_SHAMT = 6,
         OP_SH_CODE = 16,
         OP_SH_FD = 6,
@@ -388,14 +385,6 @@ public:
                  | (rt << OP_SH_RT));
     }
 
-#if defined(__mips_loongson_vector_rev)
-    void xorInsn(FPRegisterID rd, FPRegisterID rs, FPRegisterID rt)
-    {
-        emitInst(0x4b800002 | (rd << OP_SH_FD) | (rs << OP_SH_FS)
-                 | (rt << OP_SH_FT));
-    }
-#endif
-
     void xori(RegisterID rt, RegisterID rs, int imm)
     {
         emitInst(0x38000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
@@ -501,15 +490,6 @@ public:
         loadDelayNop();
     }
 
-#if defined(__mips_loongson_vector_rev)
-    void lb(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xd8000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-        loadDelayNop();
-    }
-#endif
-
     void lbu(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0x90000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
@@ -523,15 +503,6 @@ public:
                  | (offset & 0xffff));
         loadDelayNop();
     }
-
-#if defined(__mips_loongson_vector_rev)
-    void lw(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xd8000002 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-        loadDelayNop();
-    }
-#endif
 
     void lwl(RegisterID rt, RegisterID rs, int offset)
     {
@@ -554,15 +525,6 @@ public:
         loadDelayNop();
     }
 
-#if defined(__mips_loongson_vector_rev)
-    void lh(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xd8000001 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-        loadDelayNop();
-    }
-#endif
-
     void lhu(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0x94000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
@@ -576,41 +538,17 @@ public:
                  | (offset & 0xffff));
     }
 
-#if defined(__mips_loongson_vector_rev)
-    void sb(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xf8000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-    }
-#endif
-
     void sh(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0xa4000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
                  | (offset & 0xffff));
     }
 
-#if defined(__mips_loongson_vector_rev)
-    void sh(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xf8000001 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-    }
-#endif
-
     void sw(RegisterID rt, RegisterID rs, int offset)
     {
         emitInst(0xac000000 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
                  | (offset & 0xffff));
     }
-
-#if defined(__mips_loongson_vector_rev)
-    void sw(RegisterID rt, RegisterID rs, RegisterID rd, int offset)
-    {
-        emitInst(0xf8000002 | (rt << OP_SH_RT) | (rs << OP_SH_RS)
-                 | (rd << OP_SH_RD) | ((offset & 0xff) << OP_SH_OF));
-    }
-#endif
 
     void jr(RegisterID rs)
     {

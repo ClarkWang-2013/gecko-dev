@@ -224,8 +224,6 @@ static const uint32_t SAShift = 6;
 static const uint32_t SABits = 5;
 static const uint32_t FunctionShift = 0;
 static const uint32_t FunctionBits = 5;
-static const uint32_t Imm8Shift = 6;
-static const uint32_t Imm8Bits = 8;
 static const uint32_t Imm16Shift = 0;
 static const uint32_t Imm16Bits = 16;
 static const uint32_t Imm26Shift = 0;
@@ -239,7 +237,6 @@ static const uint32_t FccShift = 2;
 
 // MIPS instruction  field bit masks.
 static const uint32_t OpcodeMask = ((1 << OpcodeBits) - 1) << OpcodeShift;
-static const uint32_t Imm8Mask = ((1 << Imm8Bits) - 1) << Imm8Shift;
 static const uint32_t Imm16Mask = ((1 << Imm16Bits) - 1) << Imm16Shift;
 static const uint32_t Imm26Mask = ((1 << Imm26Bits) - 1) << Imm26Shift;
 static const uint32_t Imm28Mask = ((1 << Imm28Bits) - 1) << Imm28Shift;
@@ -327,12 +324,10 @@ enum Opcode {
     op_swr      = 46 << OpcodeShift,
 
     op_lwc1     = 49 << OpcodeShift,
-    op_lwc2     = 50 << OpcodeShift,
     op_ldc1     = 53 << OpcodeShift,
     op_ld       = 55 << OpcodeShift,
 
     op_swc1     = 57 << OpcodeShift,
-    op_swc2     = 58 << OpcodeShift,
     op_sdc1     = 61 << OpcodeShift,
     op_sd       = 63 << OpcodeShift,
 };
@@ -437,10 +432,6 @@ enum FunctionField {
     ff_c_ult_fmt   = 53,
     ff_c_ole_fmt   = 54,
     ff_c_ule_fmt   = 55,
-
-    // lwc2, swc2 encoding of function field.
-    ff_gslsl       = 6,
-    ff_gslsr       = 7,
 };
 
 class MacroAssemblerMIPS;
@@ -556,32 +547,6 @@ class Imm16
     }
     static Imm16 upper (Imm32 imm) {
         return Imm16((imm.value >> 16) & 0xffff);
-    }
-};
-
-class Imm8
-{
-    uint8_t value;
-
-  public:
-    Imm8();
-    Imm8(uint32_t imm)
-      : value(imm)
-    { }
-    uint32_t encode() {
-        return value;
-    }
-    int32_t decodeSigned() {
-        return value;
-    }
-    uint32_t decodeUnsigned() {
-        return value;
-    }
-    static bool isInSignedRange(int32_t imm) {
-        return imm >= INT8_MIN  && imm <= INT8_MAX;
-    }
-    static bool isInUnsignedRange(uint32_t imm) {
-        return imm <= UINT8_MAX ;
     }
 };
 
@@ -955,11 +920,7 @@ class Assembler
     // Use these two functions only when you are sure address is aligned.
     // Otherwise, use ma_ld and ma_sd.
     BufferOffset as_ld(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_ldl(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_ldr(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_sd(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_sdl(FloatRegister fd, Register base, int32_t off);
-    BufferOffset as_sdr(FloatRegister fd, Register base, int32_t off);
 
     BufferOffset as_ls(FloatRegister fd, Register base, int32_t off);
     BufferOffset as_ss(FloatRegister fd, Register base, int32_t off);
@@ -1242,9 +1203,6 @@ class InstReg : public Instruction
     { }
     InstReg(Opcode op, RSField rs, FloatRegister ft, FloatRegister fd, uint32_t sa, FunctionField ff)
       : Instruction(op | rs | RT(ft) | RD(fd) | SA(sa) | ff)
-    { }
-    InstReg(Opcode op, Register rs, FloatRegister ft, uint32_t off, FunctionField ff)
-      : Instruction(op | RS(rs) | RT(ft) | ((off << Imm8Shift) &Imm8Mask) | ff)
     { }
 
     uint32_t extractRS () {

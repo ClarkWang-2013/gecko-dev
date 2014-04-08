@@ -1005,38 +1005,10 @@ Assembler::as_ld(FloatRegister fd, Register base, int32_t off)
 }
 
 BufferOffset
-Assembler::as_ldl(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm8::isInSignedRange(off));
-    return writeInst(InstReg(op_lwc2, base, fd, Imm8(off).encode(), ff_gslsl).encode());
-}
-
-BufferOffset
-Assembler::as_ldr(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm8::isInSignedRange(off));
-    return writeInst(InstReg(op_lwc2, base, fd, Imm8(off).encode(), ff_gslsr).encode());
-}
-
-BufferOffset
 Assembler::as_sd(FloatRegister fd, Register base, int32_t off)
 {
     MOZ_ASSERT(Imm16::isInSignedRange(off));
     return writeInst(InstImm(op_sdc1, base, fd, Imm16(off)).encode());
-}
-
-BufferOffset
-Assembler::as_sdl(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm8::isInSignedRange(off));
-    return writeInst(InstReg(op_swc2, base, fd, Imm8(off).encode(), ff_gslsl).encode());
-}
-
-BufferOffset
-Assembler::as_sdr(FloatRegister fd, Register base, int32_t off)
-{
-    MOZ_ASSERT(Imm8::isInSignedRange(off));
-    return writeInst(InstReg(op_swc2, base, fd, Imm8(off).encode(), ff_gslsr).encode());
 }
 
 BufferOffset
@@ -1691,11 +1663,7 @@ void Assembler::updateBoundsCheck(uint32_t heapSize, Instruction *inst)
 static uintptr_t
 PageStart(uintptr_t p)
 {
-#if defined(__mips_loongson_vector_rev)
-    static const size_t PageSize = 16384;
-#else
     static const size_t PageSize = 4096;
-#endif
     return p & ~(PageSize - 1);
 }
 
