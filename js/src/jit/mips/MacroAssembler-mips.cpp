@@ -1427,15 +1427,15 @@ MacroAssemblerMIPS::ma_ld(FloatRegister ft, Address address)
 #else // generic
     int32_t off2 = address.offset + 7;
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
-        as_ldl(SecondScratchReg, address.base, Imm16(off2).encode());
-        as_ldr(SecondScratchReg, address.base, Imm16(address.offset).encode());
+        as_ldl(ScratchRegister, address.base, Imm16(off2).encode());
+        as_ldr(ScratchRegister, address.base, Imm16(address.offset).encode());
     } else {
         ma_li(ScratchRegister, Imm32(address.offset));
-        as_addu(ScratchRegister, address.base, ScratchRegister);
-        as_ldl(SecondScratchReg, ScratchRegister, 7);
-        as_ldr(SecondScratchReg, ScratchRegister, 0);
+        as_addu(SecondScratchReg, address.base, ScratchRegister);
+        as_ldl(ScratchRegister, SecondScratchReg, 7);
+        as_ldr(ScratchRegister, SecondScratchReg, 0);
     }
-    as_dmtc1(SecondScratchReg, ft);
+    as_dmtc1(ScratchRegister, ft);
 #endif
 #endif
 }
@@ -1468,15 +1468,16 @@ MacroAssemblerMIPS::ma_sd(FloatRegister ft, Address address)
     }
 #else // generic
     int32_t off2 = address.offset + 7;
-    as_dmfc1(SecondScratchReg, ft);
     if (Imm16::isInSignedRange(address.offset) && Imm16::isInSignedRange(off2)) {
-        as_sdl(SecondScratchReg, address.base, Imm16(off2).encode());
-        as_sdr(SecondScratchReg, address.base, Imm16(address.offset).encode());
+        as_dmfc1(ScratchRegister, ft);
+        as_sdl(ScratchRegister, address.base, Imm16(off2).encode());
+        as_sdr(ScratchRegister, address.base, Imm16(address.offset).encode());
     } else {
         ma_li(ScratchRegister, Imm32(address.offset));
-        as_addu(ScratchRegister, address.base, ScratchRegister);
-        as_sdl(SecondScratchReg, ScratchRegister, 7);
-        as_sdr(SecondScratchReg, ScratchRegister, 0);
+        as_addu(SecondScratchReg, address.base, ScratchRegister);
+        as_dmfc1(ScratchRegister, ft);
+        as_sdl(ScratchRegister, SecondScratchReg, 7);
+        as_sdr(ScratchRegister, SecondScratchReg, 0);
     }
 #endif
 #endif
