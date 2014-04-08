@@ -1434,7 +1434,7 @@ class YarrGenerator : private MacroAssembler {
                 lshiftPtr(Imm32(32), index);
                 orPtr(index, returnRegister);
 #elif WTF_CPU_MIPS && WTF_MIPS_ABI_N32
-                ins64(TrustedImm32(32), TrustedImm32(32), index, returnRegister);
+                packd32in64(index, returnRegister, returnRegister2, returnRegister);
 #else
                 move(index, returnRegister2);
 #endif
@@ -1760,7 +1760,7 @@ class YarrGenerator : private MacroAssembler {
                 move(TrustedImm32(int(WTF::notFound)), returnRegister);
 #elif WTF_CPU_MIPS && WTF_MIPS_ABI_N32
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
-                ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
+                packd32in64(MIPSRegisters::zero, returnRegister, returnRegister2, returnRegister);
 #else
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
                 move(TrustedImm32(0), returnRegister2);
@@ -2009,7 +2009,7 @@ class YarrGenerator : private MacroAssembler {
                 move(TrustedImm32(int(WTF::notFound)), returnRegister);
 #elif WTF_CPU_MIPS && WTF_MIPS_ABI_N32
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
-                ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
+                packd32in64(MIPSRegisters::zero, returnRegister, returnRegister2, returnRegister);
 #else
                 move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
                 move(TrustedImm32(0), returnRegister2);
@@ -2667,7 +2667,7 @@ public:
         move(TrustedImm32(int(WTF::notFound)), returnRegister);
 #elif WTF_CPU_MIPS && WTF_MIPS_ABI_N32
         move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
-        ins64(TrustedImm32(32), TrustedImm32(32), MIPSRegisters::zero, returnRegister);
+        packd32in64(MIPSRegisters::zero, returnRegister, returnRegister2, returnRegister);
 #else
         move(TrustedImmPtr((void*)WTF::notFound), returnRegister);
         move(TrustedImm32(0), returnRegister2);

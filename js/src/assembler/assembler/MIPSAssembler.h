@@ -432,6 +432,17 @@ public:
                  | (rs << OP_SH_RS));
     }
 
+    void dsll(RegisterID rd, RegisterID rt, int shamt)
+    {
+        if ((0 <= shamt) && (shamt <= 31)) {
+            emitInst(0x00000038 | (rd << OP_SH_RD) | (rt << OP_SH_RT)
+                     | ((shamt & 0x1f) << OP_SH_SHAMT));
+        } else {
+            emitInst(0x0000003c | (rd << OP_SH_RD) | (rt << OP_SH_RT)
+                     | (((shamt - 32) & 0x1f) << OP_SH_SHAMT));
+        }
+    }
+
     void sra(RegisterID rd, RegisterID rt, int shamt)
     {
         emitInst(0x00000003 | (rd << OP_SH_RD) | (rt << OP_SH_RT)
@@ -454,6 +465,17 @@ public:
     {
         emitInst(0x00000006 | (rd << OP_SH_RD) | (rt << OP_SH_RT)
                  | (rs << OP_SH_RS));
+    }
+
+    void dsrl(RegisterID rd, RegisterID rt, int shamt)
+    {
+        if ((0 <= shamt) && (31 <= shamt)) {
+            emitInst(0x0000003a | (rd << OP_SH_RD) | (rt << OP_SH_RT)
+                     | ((shamt & 0x1f) << OP_SH_SHAMT));
+        } else {
+            emitInst(0x0000003e | (rd << OP_SH_RD) | (rt << OP_SH_RT)
+                     | (((shamt - 32) & 0x1f) << OP_SH_SHAMT));
+        }
     }
 
     void dins(RegisterID rt, RegisterID rs, int pos, int size)

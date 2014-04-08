@@ -342,6 +342,11 @@ public:
         m_assembler.sllv(dest, dest, shiftAmount);
     }
 
+    void lshift64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        m_assembler.dsll(dest, src, imm.m_value);
+    }
+
     void mul32(RegisterID src, RegisterID dest)
     {
         m_assembler.mul(dest, dest, src);
@@ -423,9 +428,23 @@ public:
         m_assembler.srl(dest, dest, imm.m_value);
     }
 
-    void ins64(TrustedImm32 pos, TrustedImm32 size, RegisterID src, RegisterID dest)
+    void urshift64(TrustedImm32 imm, RegisterID dest)
     {
-        m_assembler.dins(dest, src, pos.m_value, size.m_value);
+        m_assembler.dsrl(dest, dest, imm.m_value);
+    }
+
+    void packd32in64(RegisterID hi, RegisterID lo, RegisterID scratch, RegisterID dest)
+    {
+#if WTF_MIPS_ISA_AT_LEAST(64) && WTF_MIPS_ISA_REV(2)
+        if (lo != dest)
+          move(lo, dest);
+        m_assembler.dins(dest, hi, 32, 32);
+#else
+        lshift64(TrustedImm32(32), hi, scratch);
+        lshift64(TrustedImm32(32), lo, dest);
+        urshift64(TrustedImm32(32), dest);
+        m_assembler.orInsn(dest, dest, scratch);
+#endif
     }
 
     void sub32(RegisterID src, RegisterID dest)
