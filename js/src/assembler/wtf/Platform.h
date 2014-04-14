@@ -146,7 +146,9 @@
 #endif
 #if (_MIPS_SIM == _ABIO32)
 #define WTF_MIPS_ABI_O32 1
+#define WTF_MIPS_ABI_N32 0
 #elif (_MIPS_SIM == _ABIN32)
+#define WTF_MIPS_ABI_O32 0
 #define WTF_MIPS_ABI_N32 1
 #else
 #error "Unsupported ABI"
