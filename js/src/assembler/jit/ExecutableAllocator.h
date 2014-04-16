@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #ifndef assembler_jit_ExecutableAllocator_h
@@ -33,6 +33,7 @@
 
 #include "assembler/wtf/Platform.h"
 #include "jit/arm/Simulator-arm.h"
+#include "jit/mips/Simulator-mips.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
 
@@ -61,7 +62,7 @@ extern  "C" void sync_instruction_memory(caddr_t v, u_int len);
 #include <e32std.h>
 #endif
 
-#if WTF_CPU_MIPS && WTF_OS_LINUX
+#if WTF_CPU_MIPS && WTF_OS_LINUX && !JS_MIPS_SIMULATOR
 #include <sys/cachectl.h>
 #endif
 
@@ -298,7 +299,7 @@ private:
 
         if ((std::numeric_limits<size_t>::max() - granularity) <= request)
             return OVERSIZE_ALLOCATION;
-        
+
         // Round up to next page boundary
         size_t size = request + (granularity - 1);
         size = size & ~(granularity - 1);
@@ -416,7 +417,7 @@ public:
     static void cacheFlush(void*, size_t)
     {
     }
-#elif defined(JS_ARM_SIMULATOR)
+#elif defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     static void cacheFlush(void *code, size_t size)
     {
         js::jit::Simulator::FlushICache(code, size);

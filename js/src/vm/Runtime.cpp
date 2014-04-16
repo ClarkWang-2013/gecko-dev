@@ -29,12 +29,13 @@
 #include "jswatchpoint.h"
 #include "jswrapper.h"
 
-#if defined(JS_ION)
+#if defined(JS_ION) && !defined(JS_CODEGEN_MIPS)
 # include "assembler/assembler/MacroAssembler.h"
 #endif
 #include "jit/arm/Simulator-arm.h"
 #include "jit/AsmJSSignalHandlers.h"
 #include "jit/JitCompartment.h"
+#include "jit/mips/Simulator-mips.h"
 #include "jit/PcScriptCache.h"
 #include "js/MemoryMetrics.h"
 #include "js/SliceBudget.h"
@@ -74,7 +75,7 @@ PerThreadData::PerThreadData(JSRuntime *runtime)
     jitStackLimit(0),
     activation_(nullptr),
     asmJSActivationStack_(nullptr),
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     simulator_(nullptr),
     simulatorStackLimit_(0),
 #endif
@@ -88,7 +89,7 @@ PerThreadData::~PerThreadData()
     if (dtoaState)
         js_DestroyDtoaState(dtoaState);
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js_delete(simulator_);
 #endif
 }
@@ -105,7 +106,6 @@ PerThreadData::init()
 
 static const JSWrapObjectCallbacks DefaultWrapObjectCallbacks = {
     TransparentObjectWrapper,
-    nullptr,
     nullptr
 };
 
@@ -243,7 +243,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime, JSUseHelperThreads useHelperThrea
     gcFinalizeCallback(nullptr),
     gcMallocBytes(0),
     gcMallocGCTriggered(false),
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     simulatorRuntime_(nullptr),
 #endif
     scriptAndCountsVector(nullptr),
@@ -319,14 +319,16 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime, JSUseHelperThreads useHelperThrea
     PodZero(&asmJSCacheOps);
 
 #if JS_STACK_GROWTH_DIRECTION > 0
-    nativeStackLimit = UINTPTR_MAX;
+    mainThread.nativeStackLimit = UINTPTR_MAX;
 #endif
 }
 
 static bool
 JitSupportsFloatingPoint()
 {
-#if defined(JS_ION)
+#ifdef JS_CODEGEN_MIPS
+    return true;
+#elif defined(JS_ION)
     if (!JSC::MacroAssembler::supportsFloatingPoint())
         return false;
 
@@ -411,7 +413,7 @@ JSRuntime::init(uint32_t maxbytes)
 
     dateTimeInfo.updateTimeZoneAdjustment();
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     simulatorRuntime_ = js::jit::CreateSimulatorRuntime();
     if (!simulatorRuntime_)
         return false;
@@ -541,7 +543,7 @@ JSRuntime::~JSRuntime()
     gcNursery.disable();
 #endif
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::DestroySimulatorRuntime(simulatorRuntime_);
 #endif
 
@@ -574,7 +576,7 @@ JSRuntime::resetJitStackLimit()
     AutoLockForInterrupt lock(this);
     mainThread.setJitStackLimit(mainThread.nativeStackLimit[js::StackForUntrustedScript]);
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     mainThread.setJitStackLimit(js::jit::Simulator::StackLimit());
 #endif
  }
@@ -630,6 +632,7 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 #ifdef JSGC_GENERATIONAL
     rtSizes->gc.nurseryCommitted += gcNursery.sizeOfHeapCommitted();
     rtSizes->gc.nurseryDecommitted += gcNursery.sizeOfHeapDecommitted();
+    rtSizes->gc.nurseryHugeSlots += gcNursery.sizeOfHugeSlots(mallocSizeOf);
     gcStoreBuffer.addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
 #endif
 }

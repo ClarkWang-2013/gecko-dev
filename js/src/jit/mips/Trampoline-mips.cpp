@@ -68,7 +68,7 @@ struct EnterJITRegs
 struct EnterJITArgs
 {
     // First 4 argumet placeholders
-    void * jitcode; // <- sp points here when function is entered.
+    void *jitcode; // <- sp points here when function is entered.
     int maxArgc;
     Value *maxArgv;
     InterpreterFrame *fp;
@@ -175,11 +175,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     const Register reg_argc = a1;
     const Register reg_argv = a2;
     const Register reg_frame = a3;
-
-#if defined(USES_O32_ABI)
-    const Address slotToken(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, calleeToken));
-    const Address slotVp(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, vp));
-#elif defined(USES_N32_ABI)
+#if defined(USES_N32_ABI)
     const Register reg_token = a4;
     const Register reg_chain = a5;
     const Register reg_values = a6;
@@ -192,6 +188,11 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     AutoFlushCache afc("GenerateEnterJIT", cx->runtime()->jitRuntime());
 
     GeneratePrologue(masm);
+
+#if defined(USES_O32_ABI)
+    const Address slotToken(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, calleeToken));
+    const Address slotVp(sp, sizeof(EnterJITRegs) + offsetof(EnterJITArgs, vp));
+#endif
 
     // Save stack pointer into s4
     masm.movePtr(StackPointer, s4);
@@ -248,7 +249,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
 #endif
 
     masm.subPtr(StackPointer, s4);
-    masm.makeFrameDescriptor(s4, IonFrame_Entry);
+    masm.makeFrameDescriptor(s4, JitFrame_Entry);
     masm.push(s4); // descriptor
 
     CodeLabel returnLabel;
@@ -296,7 +297,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
 
         // Enter exit frame.
         masm.addPtr(Imm32(BaselineFrame::Size() + BaselineFrame::FramePointerOffset), scratch);
-        masm.makeFrameDescriptor(scratch, IonFrame_BaselineJS);
+        masm.makeFrameDescriptor(scratch, JitFrame_BaselineJS);
 
         // Push frame descriptor and fake return address.
         masm.reserveStack(2 * sizeof(uintptr_t));
@@ -524,10 +525,10 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
         MOZ_ASSERT(sizeof(Value) == 2 * sizeof(uint32_t));
         // Read argument and push to stack.
         masm.subPtr(Imm32(sizeof(Value)), StackPointer);
-        masm.load32(Address(t2, sizeof(Value) / 2), t0);
-        masm.store32(t0, Address(StackPointer, sizeof(Value) / 2));
-        masm.load32(Address(t2, 0), t0);
-        masm.store32(t0, Address(StackPointer, 0));
+        masm.load32(Address(t2, NUNBOX32_TYPE_OFFSET), t0);
+        masm.store32(t0, Address(StackPointer, NUNBOX32_TYPE_OFFSET));
+        masm.load32(Address(t2, NUNBOX32_PAYLOAD_OFFSET), t0);
+        masm.store32(t0, Address(StackPointer, NUNBOX32_PAYLOAD_OFFSET));
 
         masm.ma_b(s3, s3, &copyLoopTop, Assembler::NonZero, ShortJump);
     }
@@ -537,7 +538,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     masm.lshiftPtr(Imm32(3), t0);
 
     // Construct sizeDescriptor.
-    masm.makeFrameDescriptor(t0, IonFrame_Rectifier);
+    masm.makeFrameDescriptor(t0, JitFrame_Rectifier);
 
     // Construct IonJSFrameLayout.
     masm.subPtr(Imm32(3 * sizeof(uintptr_t)), StackPointer);

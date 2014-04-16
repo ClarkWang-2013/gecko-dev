@@ -232,7 +232,7 @@ js::DestroyContext(JSContext *cx, DestroyContextMode mode)
         MOZ_CRASH();
 #endif
 
-#if (defined(JSGC_ROOT_ANALYSIS) || defined(JSGC_USE_EXACT_ROOTING)) && defined(DEBUG)
+#if defined(JSGC_USE_EXACT_ROOTING) && defined(DEBUG)
     for (int i = 0; i < THING_ROOT_LIMIT; ++i)
         JS_ASSERT(cx->thingGCRooters[i] == nullptr);
 #endif
@@ -1303,7 +1303,7 @@ JSContext::mark(JSTracer *trc)
 void *
 ThreadSafeContext::stackLimitAddressForJitCode(StackKind kind)
 {
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     return runtime_->mainThread.addressOfSimulatorStackLimit();
 #endif
     return stackLimitAddress(kind);

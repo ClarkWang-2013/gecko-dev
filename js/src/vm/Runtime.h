@@ -141,18 +141,6 @@ struct ConservativeGCData
      */
     uintptr_t           *nativeStackTop;
 
-#if defined(JSGC_ROOT_ANALYSIS) && (JS_STACK_GROWTH_DIRECTION < 0)
-    /*
-     * Record old contents of the native stack from the last time there was a
-     * scan, to reduce the overhead involved in repeatedly rescanning the
-     * native stack during root analysis. oldStackData stores words in reverse
-     * order starting at oldStackEnd.
-     */
-    uintptr_t           *oldStackMin, *oldStackEnd;
-    uintptr_t           *oldStackData;
-    size_t              oldStackCapacity; // in sizeof(uintptr_t)
-#endif
-
     union {
         jmp_buf         jmpbuf;
         uintptr_t       words[JS_HOWMANY(sizeof(jmp_buf), sizeof(uintptr_t))];
@@ -576,7 +564,7 @@ class PerThreadData : public PerThreadDataFriendFields
     /* See AsmJSActivation comment. Protected by rt->interruptLock. */
     js::AsmJSActivation *asmJSActivationStack_;
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::Simulator *simulator_;
     uintptr_t simulatorStackLimit_;
 #endif
@@ -648,7 +636,7 @@ class PerThreadData : public PerThreadDataFriendFields
         }
     };
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::Simulator *simulator() const;
     void setSimulator(js::jit::Simulator *sim);
     js::jit::SimulatorRuntime *simulatorRuntime() const;
@@ -1262,7 +1250,7 @@ struct JSRuntime : public JS::shadow::Runtime,
      */
     mozilla::Atomic<bool, mozilla::ReleaseAcquire> gcMallocGCTriggered;
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::SimulatorRuntime *simulatorRuntime_;
 #endif
 
@@ -1283,7 +1271,7 @@ struct JSRuntime : public JS::shadow::Runtime,
         {}
     };
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::SimulatorRuntime *simulatorRuntime() const;
     void setSimulatorRuntime(js::jit::SimulatorRuntime *srt);
 #endif

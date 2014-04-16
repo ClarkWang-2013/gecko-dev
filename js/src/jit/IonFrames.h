@@ -208,7 +208,7 @@ class FrameSizeClass
 
     explicit FrameSizeClass(uint32_t class_) : class_(class_)
     { }
-  
+
   public:
     FrameSizeClass()
     { }
@@ -283,7 +283,7 @@ inline JSScript *
 GetTopIonJSScript(uint8_t *ionTop, void **returnAddrOut, ExecutionMode mode)
 {
     IonFrameIterator iter(ionTop, mode);
-    JS_ASSERT(iter.type() == IonFrame_Exit);
+    JS_ASSERT(iter.type() == JitFrame_Exit);
     ++iter;
 
     JS_ASSERT(iter.returnAddressToFp() != nullptr);
@@ -450,7 +450,15 @@ class IonExitFooterFrame
     T *outParam() {
         return reinterpret_cast<T *>(reinterpret_cast<char *>(this) - sizeof(T));
     }
+
 };
+
+// We need to specialize this for MIPS because the Value address is forced to
+// be alligned in JitRuntime::generateVMWrapper()
+#ifdef JS_CODEGEN_MIPS
+template <>
+Value *IonExitFooterFrame::outParam<Value>();
+#endif
 
 class IonNativeExitFrameLayout;
 class IonOOLNativeExitFrameLayout;
@@ -780,14 +788,6 @@ struct IonDOMMethodExitFrameLayoutTraits {
     static const size_t offsetOfArgcFromArgv =
         offsetof(IonDOMMethodExitFrameLayout, argc_) -
         offsetof(IonDOMMethodExitFrameLayout, argv_);
-};
-
-class IonOsrFrameLayout : public IonJSFrameLayout
-{
-  public:
-    static inline size_t Size() {
-        return sizeof(IonOsrFrameLayout);
-    }
 };
 
 class ICStub;

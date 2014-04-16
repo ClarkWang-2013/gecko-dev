@@ -12,6 +12,8 @@
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineRegisters.h"
+#include "jit/IonFrames.h"
+#include "jit/mips/Simulator-mips.h"
 #include "jit/MoveEmitter.h"
 
 using namespace js;
@@ -1523,7 +1525,7 @@ MacroAssemblerMIPSCompat::buildFakeExitFrame(const Register &scratch, uint32_t *
     CodeLabel cl;
     ma_li(scratch, cl.dest());
 
-    uint32_t descriptor = MakeFrameDescriptor(framePushed(), IonFrame_OptimizedJS);
+    uint32_t descriptor = MakeFrameDescriptor(framePushed(), JitFrame_IonJS);
     Push(Imm32(descriptor));
     Push(scratch);
 
@@ -1538,7 +1540,7 @@ bool
 MacroAssemblerMIPSCompat::buildOOLFakeExitFrame(void *fakeReturnAddr)
 {
     mozilla::DebugOnly<uint32_t> initialDepth = framePushed();
-    uint32_t descriptor = MakeFrameDescriptor(framePushed(), IonFrame_OptimizedJS);
+    uint32_t descriptor = MakeFrameDescriptor(framePushed(), JitFrame_IonJS);
 
     Push(Imm32(descriptor)); // descriptor_
     Push(ImmPtr(fakeReturnAddr));
@@ -1549,7 +1551,7 @@ MacroAssemblerMIPSCompat::buildOOLFakeExitFrame(void *fakeReturnAddr)
 void
 MacroAssemblerMIPSCompat::callWithExitFrame(JitCode *target)
 {
-    uint32_t descriptor = MakeFrameDescriptor(framePushed(), IonFrame_OptimizedJS);
+    uint32_t descriptor = MakeFrameDescriptor(framePushed(), JitFrame_IonJS);
     Push(Imm32(descriptor)); // descriptor
 
     addPendingJump(m_buffer.nextOffset(), ImmPtr(target->raw()), Relocation::JITCODE);
@@ -1561,7 +1563,7 @@ void
 MacroAssemblerMIPSCompat::callWithExitFrame(JitCode *target, Register dynStack)
 {
     ma_addu(dynStack, dynStack, Imm32(framePushed()));
-    makeFrameDescriptor(dynStack, IonFrame_OptimizedJS);
+    makeFrameDescriptor(dynStack, JitFrame_IonJS);
     Push(dynStack); // descriptor
 
     addPendingJump(m_buffer.nextOffset(), ImmPtr(target->raw()), Relocation::JITCODE);
@@ -1615,7 +1617,7 @@ MacroAssembler::PushRegsInMask(RegisterSet set)
         diffG -= sizeof(intptr_t);
         storePtr(*iter, Address(StackPointer, diffG));
     }
-    JS_ASSERT(diffG == 0);
+    MOZ_ASSERT(diffG == 0);
 
     // Double values have to be aligned. We reserve extra space so that we can
     // start writing from the first aligned location.
@@ -1634,7 +1636,7 @@ MacroAssembler::PushRegsInMask(RegisterSet set)
             as_sd(*iter, SecondScratchReg, -diffF);
         diffF -= sizeof(double);
     }
-    JS_ASSERT(diffF == 0);
+    MOZ_ASSERT(diffF == 0);
 }
 
 void
@@ -1663,7 +1665,7 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
         diffF -= sizeof(double);
     }
     freeStack(reservedF + sizeof(double));
-    JS_ASSERT(diffF == 0);
+    MOZ_ASSERT(diffF == 0);
 
     for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
         diffG -= sizeof(intptr_t);
@@ -1671,7 +1673,7 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
             loadPtr(Address(StackPointer, diffG), *iter);
     }
     freeStack(reservedG);
-    JS_ASSERT(diffG == 0);
+    MOZ_ASSERT(diffG == 0);
 }
 
 void
@@ -2139,6 +2141,14 @@ void
 MacroAssemblerMIPSCompat::subPtr(Imm32 imm, const Register dest)
 {
     ma_subu(dest, dest, imm);
+}
+
+void
+MacroAssemblerMIPSCompat::subPtr(const Register &src, const Address &dest)
+{
+    loadPtr(dest, SecondScratchReg);
+    subPtr(src, SecondScratchReg);
+    storePtr(SecondScratchReg, dest);
 }
 
 void
@@ -3040,6 +3050,7 @@ MacroAssemblerMIPSCompat::setupABICall(uint32_t args)
     inCall_ = true;
     args_ = args;
     passedArgs_ = 0;
+    passedArgTypes_ = 0;
 
     usedArgSlots_ = 0;
     firstArgType = MoveOp::GENERAL;
@@ -3098,6 +3109,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
             }
         }
         usedArgSlots_++;
+        passedArgTypes_ = (passedArgTypes_ << ArgType_Shift) | ArgType_Float32;
         break;
       case MoveOp::DOUBLE:
         if (!usedArgSlots_) {
@@ -3125,6 +3137,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
             enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
             usedArgSlots_ += 2;
         }
+        passedArgTypes_ = (passedArgTypes_ << ArgType_Shift) | ArgType_Double;
         break;
 #elif defined(USES_N32_ABI)
       case MoveOp::FLOAT32:
@@ -3159,6 +3172,7 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
             enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
         }
         usedArgSlots_++;
+        passedArgTypes_ = (passedArgTypes_ << ArgType_Shift) | ArgType_General;
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("Unexpected argument type");
@@ -3260,9 +3274,55 @@ MacroAssemblerMIPSCompat::callWithABIPost(uint32_t stackAdjust, MoveOp::Type res
     inCall_ = false;
 }
 
+#if defined(DEBUG) && defined(JS_MIPS_SIMULATOR)
+static void
+AssertValidABIFunctionType(uint32_t passedArgTypes)
+{
+    switch (passedArgTypes) {
+      case Args_General0:
+      case Args_General1:
+      case Args_General2:
+      case Args_General3:
+      case Args_General4:
+      case Args_General5:
+      case Args_General6:
+      case Args_General7:
+      case Args_General8:
+      case Args_Double_None:
+      case Args_Int_Double:
+      case Args_Float32_Float32:
+      case Args_Double_Double:
+      case Args_Double_Int:
+      case Args_Double_DoubleInt:
+      case Args_Double_DoubleDouble:
+      case Args_Double_IntDouble:
+      case Args_Int_IntDouble:
+        break;
+      default:
+        MOZ_ASSUME_UNREACHABLE("Unexpected type");
+    }
+}
+#endif
+
 void
 MacroAssemblerMIPSCompat::callWithABI(void *fun, MoveOp::Type result)
 {
+#ifdef JS_MIPS_SIMULATOR
+    MOZ_ASSERT(passedArgs_ <= 15);
+    passedArgTypes_ <<= ArgType_Shift;
+    switch (result) {
+      case MoveOp::GENERAL: passedArgTypes_ |= ArgType_General; break;
+      case MoveOp::DOUBLE:  passedArgTypes_ |= ArgType_Double;  break;
+      case MoveOp::FLOAT32: passedArgTypes_ |= ArgType_Float32; break;
+      default: MOZ_ASSUME_UNREACHABLE("Invalid return type");
+    }
+#ifdef DEBUG
+    AssertValidABIFunctionType(passedArgTypes_);
+#endif
+    ABIFunctionType type = ABIFunctionType(passedArgTypes_);
+    fun = Simulator::RedirectNativeFunction(fun, type);
+#endif
+
     uint32_t stackAdjust;
     callWithABIPre(&stackAdjust);
     ma_call(ImmPtr(fun));

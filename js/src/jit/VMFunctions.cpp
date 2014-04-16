@@ -12,6 +12,7 @@
 #include "jit/BaselineIC.h"
 #include "jit/IonFrames.h"
 #include "jit/JitCompartment.h"
+#include "jit/mips/Simulator-mips.h"
 #include "vm/ArrayObject.h"
 #include "vm/Debugger.h"
 #include "vm/Interpreter.h"
@@ -120,7 +121,7 @@ CheckOverRecursed(JSContext *cx)
     // has not yet been set to 1. That's okay; it will be set to 1 very shortly,
     // and in the interim we might just fire a few useless calls to
     // CheckOverRecursed.
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, 0, return false);
 #else
     JS_CHECK_RECURSION(cx, return false);
@@ -153,7 +154,7 @@ CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
     uint8_t spDummy;
     uint8_t *checkSp = (&spDummy) - extra;
     if (earlyCheck) {
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
         (void)checkSp;
         JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, extra, frame->setOverRecursed());
 #else
@@ -167,7 +168,7 @@ CheckOverRecursedWithExtra(JSContext *cx, BaselineFrame *frame,
     if (frame->overRecursed())
         return false;
 
-#ifdef JS_ARM_SIMULATOR
+#if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     JS_CHECK_SIMULATOR_RECURSION_WITH_EXTRA(cx, extra, return false);
 #else
     JS_CHECK_RECURSION_WITH_SP(cx, checkSp, return false);
@@ -525,10 +526,9 @@ NewSlots(JSRuntime *rt, unsigned nslots)
 }
 
 JSObject *
-NewCallObject(JSContext *cx, HandleScript script,
-              HandleShape shape, HandleTypeObject type, HeapSlot *slots)
+NewCallObject(JSContext *cx, HandleShape shape, HandleTypeObject type, HeapSlot *slots)
 {
-    JSObject *obj = CallObject::create(cx, script, shape, type, slots);
+    JSObject *obj = CallObject::create(cx, shape, type, slots);
     if (!obj)
         return nullptr;
 
@@ -538,6 +538,25 @@ NewCallObject(JSContext *cx, HandleScript script,
     // the call object tenured, so barrier as needed before re-entering.
     if (!IsInsideNursery(cx->runtime(), obj))
         cx->runtime()->gcStoreBuffer.putWholeCell(obj);
+#endif
+
+    return obj;
+}
+
+JSObject *
+NewSingletonCallObject(JSContext *cx, HandleShape shape, HeapSlot *slots)
+{
+    JSObject *obj = CallObject::createSingleton(cx, shape, slots);
+    if (!obj)
+        return nullptr;
+
+#ifdef JSGC_GENERATIONAL
+    // The JIT creates call objects in the nursery, so elides barriers for
+    // the initializing writes. The interpreter, however, may have allocated
+    // the call object tenured, so barrier as needed before re-entering.
+    MOZ_ASSERT(!IsInsideNursery(cx->runtime(), obj),
+               "singletons are created in the tenured heap");
+    cx->runtime()->gcStoreBuffer.putWholeCell(obj);
 #endif
 
     return obj;
@@ -1002,7 +1021,7 @@ Recompile(JSContext *cx)
     JitActivationIterator activations(cx->runtime());
     IonFrameIterator iter(activations);
 
-    JS_ASSERT(iter.type() == IonFrame_Exit);
+    JS_ASSERT(iter.type() == JitFrame_Exit);
     ++iter;
 
     bool isConstructing = iter.isConstructing();
@@ -1058,12 +1077,12 @@ AssertValidStringPtr(JSContext *cx, JSString *str)
     JS_ASSERT(str->length() <= JSString::MAX_LENGTH);
 
     gc::AllocKind kind = str->tenuredGetAllocKind();
-    if (str->isShort())
-        JS_ASSERT(kind == gc::FINALIZE_SHORT_STRING);
+    if (str->isFatInline())
+        JS_ASSERT(kind == gc::FINALIZE_FAT_INLINE_STRING);
     else if (str->isExternal())
         JS_ASSERT(kind == gc::FINALIZE_EXTERNAL_STRING);
     else if (str->isAtom() || str->isFlat())
-        JS_ASSERT(kind == gc::FINALIZE_STRING || kind == gc::FINALIZE_SHORT_STRING);
+        JS_ASSERT(kind == gc::FINALIZE_STRING || kind == gc::FINALIZE_FAT_INLINE_STRING);
     else
         JS_ASSERT(kind == gc::FINALIZE_STRING);
 }
