@@ -19,6 +19,8 @@
 # include "jit/arm/MacroAssembler-arm.h"
 #elif defined(JS_CODEGEN_MIPS)
 # include "jit/mips/MacroAssembler-mips.h"
+#else
+# error "Unknown architecture!"
 #endif
 #include "jit/IonInstrumentation.h"
 #include "jit/JitCompartment.h"
@@ -1035,13 +1037,15 @@ class MacroAssembler : public MacroAssemblerSpecific
         bind(&stackFull);
     }
 
+    // spsPushFrame variant for Ion-optimized scripts.
     void spsPushFrame(SPSProfiler *p, const char *str, JSScript *s, Register temp) {
         Label stackFull;
         spsProfileEntryAddress(p, 0, temp, &stackFull);
 
         storePtr(ImmPtr(str),  Address(temp, ProfileEntry::offsetOfString()));
         storePtr(ImmGCPtr(s),  Address(temp, ProfileEntry::offsetOfScript()));
-        storePtr(ImmPtr(nullptr), Address(temp, ProfileEntry::offsetOfStackAddress()));
+        storePtr(ImmPtr((void*) ProfileEntry::SCRIPT_OPT_STACKPOINTER),
+                 Address(temp, ProfileEntry::offsetOfStackAddress()));
         store32(Imm32(ProfileEntry::NullPCIndex), Address(temp, ProfileEntry::offsetOfPCIdx()));
 
         /* Always increment the stack size, whether or not we actually pushed. */
@@ -1050,6 +1054,7 @@ class MacroAssembler : public MacroAssemblerSpecific
         add32(Imm32(1), Address(temp, 0));
     }
 
+    // spsPushFrame variant for Baseline-optimized scripts.
     void spsPushFrame(SPSProfiler *p, const Address &str, const Address &script,
                       Register temp, Register temp2)
     {
@@ -1124,10 +1129,12 @@ class MacroAssembler : public MacroAssemblerSpecific
     void printf(const char *output);
     void printf(const char *output, Register value);
 
-#if JS_TRACE_LOGGING
-    void tracelogStart(JSScript *script);
-    void tracelogStop();
-    void tracelogLog(TraceLogging::Type type);
+#ifdef JS_TRACE_LOGGING
+    void tracelogStart(Register logger, uint32_t textId);
+    void tracelogStart(Register logger, Register textId);
+    void tracelogStop(Register logger, uint32_t textId);
+    void tracelogStop(Register logger, Register textId);
+    void tracelogStop(Register logger);
 #endif
 
 #define DISPATCH_FLOATING_POINT_OP(method, type, arg1d, arg1f, arg2)    \
