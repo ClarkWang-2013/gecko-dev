@@ -42,6 +42,11 @@ static const int32_t NUNBOX32_PAYLOAD_OFFSET = 0;
 // For MIPS this is 2 instructions relative call.
 static const uint32_t BAILOUT_TABLE_ENTRY_SIZE = 2 * sizeof(void *);
 
+// When using O32 ABI, general purpose register is 32-bit, pass the first
+// four arguments through registers (a0-a3).
+// When using N32 ABI, general purpose register is 64-bit, pass the first
+// eight arguments through registers (a0-a7). In this case, we just using
+// the low 32-bits of GPRs in JavaScript engine with JS_NUNBOX32.
 class Registers
 {
   public:
@@ -311,6 +316,10 @@ class FloatRegisters
 
     static const uint32_t VolatileMask =
 #if defined(USES_N32_ABI)
+        // We can use odd registers on N32 because on N32 all 32 registers can be
+        // used as both float32 and float64. This is because N32 is used only on
+        // MIPS64 CPU-s. There is no overlapping of odd and even registers on N32,
+        // so we can use all registers safely.
         (1 << FloatRegisters::f1) |
         (1 << FloatRegisters::f3) |
         (1 << FloatRegisters::f5) |
