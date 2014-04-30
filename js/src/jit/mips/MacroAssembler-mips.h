@@ -843,9 +843,9 @@ public:
                 // If both are, this is just a swap of two registers.
                 JS_ASSERT(d1 != ScratchRegister);
                 JS_ASSERT(d0 != ScratchRegister);
-                ma_move(ScratchRegister, d1);
-                ma_move(d1, d0);
-                ma_move(d0, ScratchRegister);
+                move32(d1, ScratchRegister);
+                move32(d0, d1);
+                move32(ScratchRegister, d0);
                 return;
             }
             // If only one is, copy that source first.
@@ -854,9 +854,9 @@ public:
         }
 
         if (s0 != d0)
-            ma_move(d0, s0);
+            move32(s0, d0);
         if (s1 != d1)
-            ma_move(d1, s1);
+            move32(s1, d1);
     }
 
     void storeValue(ValueOperand val, Operand dst);
@@ -1254,6 +1254,11 @@ public:
     void moveFloat32(FloatRegister src, FloatRegister dest) {
         as_movs(dest, src);
     }
+
+#ifdef JSGC_GENERATIONAL
+    void branchPtrInNurseryRange(Register ptr, Register temp, Label *label);
+    void branchValueIsNurseryObject(ValueOperand value, Register temp, Label *label);
+#endif
 };
 
 typedef MacroAssemblerMIPSCompat MacroAssemblerSpecific;

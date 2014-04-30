@@ -1539,7 +1539,6 @@ MacroAssemblerMIPSCompat::buildFakeExitFrame(const Register &scratch, uint32_t *
 bool
 MacroAssemblerMIPSCompat::buildOOLFakeExitFrame(void *fakeReturnAddr)
 {
-    mozilla::DebugOnly<uint32_t> initialDepth = framePushed();
     uint32_t descriptor = MakeFrameDescriptor(framePushed(), JitFrame_IonJS);
 
     Push(Imm32(descriptor)); // descriptor_
@@ -2982,6 +2981,14 @@ MacroAssemblerMIPSCompat::linkParallelExitFrame(const Register &pt)
     ma_sw(StackPointer, Address(pt, offsetof(PerThreadData, ionTop)));
 }
 
+void
+MacroAssemblerMIPS::ma_callIonNoPush(const Register r)
+{
+    // This is a MIPS hack to push return address during jalr delay slot.
+    as_jalr(r);
+    as_sw(ra, StackPointer, 0);
+}
+
 // This macrosintruction calls the ion code and pushes the return address to
 // the stack in the case when stack is alligned.
 void
@@ -3467,3 +3474,30 @@ MacroAssemblerMIPSCompat::toggledCall(JitCode *target, bool enabled)
     MOZ_ASSERT(nextOffset().getOffset() - offset.offset() == ToggledCallSize());
     return offset;
 }
+
+#ifdef JSGC_GENERATIONAL
+
+void
+MacroAssemblerMIPSCompat::branchPtrInNurseryRange(Register ptr, Register temp, Label *label)
+{
+    JS_ASSERT(ptr != temp);
+    JS_ASSERT(ptr != SecondScratchReg);
+
+    const Nursery &nursery = GetIonContext()->runtime->gcNursery();
+    movePtr(ImmWord(-ptrdiff_t(nursery.start())), SecondScratchReg);
+    addPtr(ptr, SecondScratchReg);
+    branchPtr(Assembler::Below, SecondScratchReg, Imm32(Nursery::NurserySize), label);
+}
+
+void
+MacroAssemblerMIPSCompat::branchValueIsNurseryObject(ValueOperand value, Register temp, Label *label)
+{
+    Label done;
+
+    branchTestObject(Assembler::NotEqual, value, &done);
+    branchPtrInNurseryRange(value.payloadReg(), temp, label);
+
+    bind(&done);
+}
+
+#endif

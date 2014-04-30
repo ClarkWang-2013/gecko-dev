@@ -1146,7 +1146,13 @@ class MOZ_STACK_CLASS ModuleCompiler
 
         uint32_t funcStart = parser_.pc->maybeFunction->pn_body->pn_pos.begin;
         uint32_t offsetToEndOfUseAsm = parser_.tokenStream.currentToken().pos.end;
-        module_ = cx_->new_<AsmJSModule>(parser_.ss, funcStart, offsetToEndOfUseAsm);
+
+        // "use strict" should be added to the source if we are in an implicit
+        // strict context, see also comment above addUseStrict in
+        // js::FunctionToString.
+        bool strict = parser_.pc->sc->strict && !parser_.pc->sc->hasExplicitUseStrict();
+
+        module_ = cx_->new_<AsmJSModule>(parser_.ss, funcStart, offsetToEndOfUseAsm, strict);
         if (!module_)
             return false;
 
@@ -1517,7 +1523,6 @@ class MOZ_STACK_CLASS ModuleCompiler
     {
         module_->initFuncEnd(parser_.tokenStream.currentToken().pos.end,
                              parser_.tokenStream.peekTokenPos().end);
-
         masm_.finish();
         if (masm_.oom())
             return false;
@@ -6057,15 +6062,20 @@ StackArgBytes(const VectorT &argTypes)
     return iter.stackBytesConsumedSoFar();
 }
 
+static unsigned
+StackDecrementForCall(MacroAssembler &masm, unsigned bytesToPush)
+{
+    // Include extra padding so that, after pushing the bytesToPush,
+    // the stack is aligned for a call instruction.
+    unsigned alreadyPushed = AlignmentAtPrologue + masm.framePushed();
+    return AlignBytes(alreadyPushed + bytesToPush, StackAlignment) - alreadyPushed;
+}
+
 template <class VectorT>
 static unsigned
 StackDecrementForCall(MacroAssembler &masm, const VectorT &argTypes, unsigned extraBytes = 0)
 {
-    // Include extra padding so that, after pushing the arguments and
-    // extraBytes, the stack is aligned for a call instruction.
-    unsigned argBytes = StackArgBytes(argTypes);
-    unsigned alreadyPushed = AlignmentAtPrologue + masm.framePushed();
-    return AlignBytes(alreadyPushed + extraBytes + argBytes, StackAlignment) - alreadyPushed;
+    return StackDecrementForCall(masm, StackArgBytes(argTypes) + extraBytes);
 }
 
 #if defined(JS_CODEGEN_MIPS)
@@ -6110,7 +6120,7 @@ GenerateEntry(ModuleCompiler &m, const AsmJSModule::ExportedFunction &exportedFu
     masm.ma_vimm(GenericNaN(), NANReg);
 #elif defined(JS_CODEGEN_MIPS)
     masm.movePtr(IntArgReg1, GlobalReg);
-    masm.ma_lid(NANReg, GenericNaN());
+    masm.loadConstantDouble(GenericNaN(), NANReg);
 #endif
 
     // ARM, MIPS and x64 have a globally-pinned HeapReg (x86 uses immediates in
@@ -6344,8 +6354,13 @@ GenerateFFIInterpreterExit(ModuleCompiler &m, const ModuleCompiler::ExitDescript
     masm.align(CodeAlignment);
     m.setInterpExitOffset(exitIndex);
     masm.setFramePushed(0);
+#if defined(JS_CODEGEN_ARM)
+    masm.Push(lr);
+#endif
+#if defined(JS_CODEGEN_MIPS)
+    masm.Push(ra);
+#endif
 
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
     MIRType typeArray[] = { MIRType_Pointer,   // cx
                             MIRType_Pointer,   // exitDatum
                             MIRType_Int32,     // argc
@@ -6360,7 +6375,7 @@ GenerateFFIInterpreterExit(ModuleCompiler &m, const ModuleCompiler::ExitDescript
     masm.reserveStack(stackDec);
 
     // Fill the argument array.
-    unsigned offsetToCallerStackArgs = NativeFrameSize + masm.framePushed();
+    unsigned offsetToCallerStackArgs = AlignmentAtPrologue + masm.framePushed();
     unsigned offsetToArgv = StackArgBytes(invokeArgTypes);
     Register scratch = ABIArgGenerator::NonArgReturnVolatileReg0;
     FillArgumentArray(m, exit.sig().args(), offsetToArgv, offsetToCallerStackArgs, scratch);
@@ -6431,72 +6446,6 @@ GenerateFFIInterpreterExit(ModuleCompiler &m, const ModuleCompiler::ExitDescript
     // registers to restore.
     masm.freeStack(stackDec);
     masm.ret();
-#else
-    const unsigned arrayLength = Max<size_t>(1, exit.sig().args().length());
-    const unsigned arraySize = arrayLength * sizeof(Value);
-#if defined(JS_CODEGEN_ARM)
-    const unsigned reserveSize = AlignBytes(arraySize, StackAlignment) +
-        ShadowStackSpace;
-#elif defined(JS_CODEGEN_MIPS)
-    // On MIPS we have to reserve 4 * STACK_SLOT_SIZE for the pending call.
-    const unsigned reserveSize = AlignBytes(arraySize, StackAlignment) +
-        ShadowStackSpace + 4 * sizeof(intptr_t);
-#endif
-    const unsigned callerArgsOffset = reserveSize + NativeFrameSize + sizeof(int32_t);
-    masm.setFramePushed(0);
-#if defined(JS_CODEGEN_ARM)
-    masm.Push(lr);
-    masm.reserveStack(reserveSize + sizeof(int32_t));
-    int offsetToArgs = ShadowStackSpace;
-#elif defined(JS_CODEGEN_MIPS)
-    masm.Push(ra);
-    masm.reserveStack(reserveSize + sizeof(int32_t));
-    int offsetToArgs = ShadowStackSpace + 4 * sizeof(intptr_t);
-#endif
-
-    // Store arguments
-    FillArgumentArray(m, exit.sig().args(), offsetToArgs, callerArgsOffset, IntArgReg0);
-
-    // argument 0: cx
-    Register activation = IntArgReg3;
-    LoadAsmJSActivationIntoRegister(masm, activation);
-
-    LoadJSContextFromActivation(masm, activation, IntArgReg0);
-
-    // argument 1: exitIndex
-    masm.mov(ImmWord(exitIndex), IntArgReg1);
-
-    // argument 2: argc
-    masm.mov(ImmWord(exit.sig().args().length()), IntArgReg2);
-
-    // argument 3: argv
-    Address argv(StackPointer, offsetToArgs);
-    masm.lea(Operand(argv), IntArgReg3);
-
-    AssertStackAlignment(masm);
-    switch (exit.sig().retType().which()) {
-      case RetType::Void:
-        masm.call(AsmJSImm_InvokeFromAsmJS_Ignore);
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
-        break;
-      case RetType::Signed:
-        masm.call(AsmJSImm_InvokeFromAsmJS_ToInt32);
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
-        masm.unboxInt32(argv, ReturnReg);
-        break;
-      case RetType::Double:
-        masm.call(AsmJSImm_InvokeFromAsmJS_ToNumber);
-        masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
-        masm.loadDouble(argv, ReturnFloatReg);
-        break;
-      case RetType::Float:
-        MOZ_ASSUME_UNREACHABLE("Float32 shouldn't be returned from a FFI");
-        break;
-    }
-
-    masm.freeStack(reserveSize + sizeof(int32_t));
-    masm.ret();
-#endif
 }
 
 static void
@@ -6509,11 +6458,8 @@ GenerateOOLConvert(ModuleCompiler &m, RetType retType, Label *throwLabel)
     MIRTypeVector callArgTypes(m.cx());
     callArgTypes.infallibleAppend(typeArray, ArrayLength(typeArray));
 
-    // Reserve space for a call to InvokeFromAsmJS_* and an array of values
-    // passed to this FFI call.
-    unsigned arraySize = sizeof(Value);
-    unsigned stackDec = StackDecrementForCall(masm, callArgTypes, arraySize);
-    masm.reserveStack(stackDec);
+    // The stack is assumed to be aligned.  The frame is allocated by GenerateFFIIonExit and
+    // the stack usage here needs to kept in sync with GenerateFFIIonExit.
 
     // Store value
     unsigned offsetToArgv = StackArgBytes(callArgTypes);
@@ -6561,8 +6507,6 @@ GenerateOOLConvert(ModuleCompiler &m, RetType retType, Label *throwLabel)
       default:
           MOZ_ASSUME_UNREACHABLE("Unsupported convert type");
     }
-
-    masm.freeStack(stackDec);
 }
 
 static void
@@ -6574,31 +6518,62 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
     m.setIonExitOffset(exitIndex);
     masm.setFramePushed(0);
 
-    RegisterSet restoreSet = RegisterSet::Intersect(RegisterSet::All(),
-                                                    RegisterSet::Not(RegisterSet::Volatile()));
-#if defined(JS_CODEGEN_ARM)
-    masm.Push(lr);
+#if defined(JS_CODEGEN_X64)
+    masm.Push(HeapReg);
+#elif defined(JS_CODEGEN_ARM)
+    // The lr register holds the return address and needs to be saved.  The GlobalReg
+    // (r10) and HeapReg (r11) also need to be restored before returning to asm.js code.
+    // The NANReg also needs to be restored, but is a constant and is reloaded before
+    // returning to asm.js code.
+    masm.PushRegsInMask(RegisterSet(GeneralRegisterSet((1<<GlobalReg.code()) |
+                                                       (1<<HeapReg.code()) |
+                                                       (1<<lr.code())),
+                                    FloatRegisterSet(uint32_t(0))));
 #elif defined(JS_CODEGEN_MIPS)
-    masm.Push(ra);
+    masm.PushRegsInMask(RegisterSet(GeneralRegisterSet((1<<GlobalReg.code()) |
+                                                       (1<<HeapReg.code()) |
+                                                       (1<<ra.code())),
+                                    FloatRegisterSet(uint32_t(0))));
 #endif
-    masm.PushRegsInMask(restoreSet);
 
-    // Arguments are in the following order on the stack:
+    // The stack frame is used for the call into Ion and also for calls into C for OOL
+    // conversion of the result.  A frame large enough for both is allocated.
+    //
+    // Arguments to the Ion function are in the following order on the stack:
     // descriptor | callee | argc | this | arg1 | arg2 | ...
-
-    // Reserve and align space for the arguments
-    MIRTypeVector emptyVector(m.cx());
     unsigned argBytes = 3 * sizeof(size_t) + (1 + exit.sig().args().length()) * sizeof(Value);
-    unsigned extraBytes = 0;
+
+    // On ARM, we call with ma_callIonNoPush which, following the Ion calling convention,
+    // stores the return address into *sp. This means we need to include an extra word of
+    // space before the arguments in the stack allocation. (On x86/x64, the call
+    // instruction does the push itself and the ABI just requires us to be aligned before
+    // the call instruction.)
+    unsigned offsetToArgs = 0;
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
-    extraBytes += sizeof(size_t);
+    offsetToArgs += sizeof(size_t);
 #endif
-    unsigned stackDec = StackDecrementForCall(masm, emptyVector, argBytes + extraBytes);
-    masm.reserveStack(stackDec - extraBytes);
+
+    unsigned stackDecForIonCall = StackDecrementForCall(masm, argBytes + offsetToArgs);
+
+    // Reserve space for a call to AsmJSImm_CoerceInPlace_* and an array of values used by
+    // OOLConvert which reuses the same frame. This code needs to be kept in sync with the
+    // stack usage in GenerateOOLConvert.
+    MIRType typeArray[] = { MIRType_Pointer, MIRType_Pointer }; // cx, argv
+    MIRTypeVector callArgTypes(m.cx());
+    callArgTypes.infallibleAppend(typeArray, ArrayLength(typeArray));
+    unsigned stackDecForOOLCall = StackDecrementForCall(masm, callArgTypes, sizeof(Value));
+
+    // Allocate a frame large enough for both of the above calls.
+    unsigned stackDec = Max(stackDecForIonCall, stackDecForOOLCall);
+
+    masm.reserveStack(stackDec);
+    AssertStackAlignment(masm);
 
     // 1. Descriptor
-    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed() + extraBytes, JitFrame_Entry);
-    masm.storePtr(ImmWord(uintptr_t(descriptor)), Address(StackPointer, 0));
+    size_t argOffset = offsetToArgs;
+    uint32_t descriptor = MakeFrameDescriptor(masm.framePushed(), JitFrame_Entry);
+    masm.storePtr(ImmWord(uintptr_t(descriptor)), Address(StackPointer, argOffset));
+    argOffset += sizeof(size_t);
 
     // 2. Callee
     Register callee = ABIArgGenerator::NonArgReturnVolatileReg0;
@@ -6620,24 +6595,26 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
     masm.loadPtr(Address(callee, offsetof(AsmJSModule::ExitDatum, fun)), callee);
 
     // 2.3. Save callee
-    masm.storePtr(callee, Address(StackPointer, sizeof(size_t)));
+    masm.storePtr(callee, Address(StackPointer, argOffset));
+    argOffset += sizeof(size_t);
 
     // 3. Argc
     unsigned argc = exit.sig().args().length();
-    masm.storePtr(ImmWord(uintptr_t(argc)), Address(StackPointer, 2 * sizeof(size_t)));
+    masm.storePtr(ImmWord(uintptr_t(argc)), Address(StackPointer, argOffset));
+    argOffset += sizeof(size_t);
 
     // 4. |this| value
-    masm.storeValue(UndefinedValue(), Address(StackPointer, 3 * sizeof(size_t)));
+    masm.storeValue(UndefinedValue(), Address(StackPointer, argOffset));
+    argOffset += sizeof(Value);
 
     // 5. Fill the arguments
-    unsigned offsetToArgs = 3 * sizeof(size_t) + sizeof(Value);
     unsigned offsetToCallerStackArgs = masm.framePushed();
 #if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
     offsetToCallerStackArgs += NativeFrameSize;
-#else
-    offsetToCallerStackArgs += ShadowStackSpace;
 #endif
-    FillArgumentArray(m, exit.sig().args(), offsetToArgs, offsetToCallerStackArgs, scratch);
+    FillArgumentArray(m, exit.sig().args(), argOffset, offsetToCallerStackArgs, scratch);
+    argOffset += exit.sig().args().length() * sizeof(Value);
+    JS_ASSERT(argOffset == offsetToArgs + argBytes);
 
     // Get the pointer to the ion code
     Label done, oolConvert;
@@ -6649,36 +6626,94 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
     masm.branchIfFunctionHasNoScript(callee, &ionFailed);
 #endif
 
-    masm.loadPtr(Address(callee, JSFunction::offsetOfNativeOrScript()), scratch);
-    masm.loadBaselineOrIonNoArgCheck(scratch, scratch, SequentialExecution, maybeDebugBreakpoint);
+    masm.loadPtr(Address(callee, JSFunction::offsetOfNativeOrScript()), callee);
+    masm.loadBaselineOrIonNoArgCheck(callee, callee, SequentialExecution, maybeDebugBreakpoint);
 
-    LoadAsmJSActivationIntoRegister(masm, callee);
-    masm.push(scratch);
-    masm.setupUnalignedABICall(1, scratch);
-    masm.passABIArg(callee);
-    masm.callWithABI(AsmJSImm_EnableActivationFromAsmJS);
-    masm.pop(scratch);
+    AssertStackAlignment(masm);
+
+    {
+        // Enable Activation.
+        //
+        // This sequence requires four registers, and needs to preserve the 'callee'
+        // register, so there are five live registers.
+        JS_ASSERT(callee == AsmJSIonExitRegCallee);
+        Register reg0 = AsmJSIonExitRegE0;
+        Register reg1 = AsmJSIonExitRegE1;
+        Register reg2 = AsmJSIonExitRegE2;
+        Register reg3 = AsmJSIonExitRegE3;
+
+        LoadAsmJSActivationIntoRegister(masm, reg0);
+
+        // The following is inlined:
+        //   JSContext *cx = activation->cx();
+        //   Activation *act = cx->mainThread().activation();
+        //   act.active_ = true;
+        //   act.prevIonTop_ = cx->mainThread().ionTop;
+        //   act.prevJitJSContext_ = cx->mainThread().jitJSContext;
+        //   cx->mainThread().jitJSContext = cx;
+        // On the ARM store8() uses the secondScratchReg (lr) as a temp.
+        size_t offsetOfActivation = offsetof(JSRuntime, mainThread) +
+                                    PerThreadData::offsetOfActivation();
+        size_t offsetOfIonTop = offsetof(JSRuntime, mainThread) + offsetof(PerThreadData, ionTop);
+        size_t offsetOfJitJSContext = offsetof(JSRuntime, mainThread) +
+                                      offsetof(PerThreadData, jitJSContext);
+        masm.loadPtr(Address(reg0, AsmJSActivation::offsetOfContext()), reg3);
+        masm.loadPtr(Address(reg3, JSContext::offsetOfRuntime()), reg0);
+        masm.loadPtr(Address(reg0, offsetOfActivation), reg1);
+        masm.store8(Imm32(1), Address(reg1, JitActivation::offsetOfActiveUint8()));
+        masm.loadPtr(Address(reg0, offsetOfIonTop), reg2);
+        masm.storePtr(reg2, Address(reg1, JitActivation::offsetOfPrevIonTop()));
+        masm.loadPtr(Address(reg0, offsetOfJitJSContext), reg2);
+        masm.storePtr(reg2, Address(reg1, JitActivation::offsetOfPrevJitJSContext()));
+        masm.storePtr(reg3, Address(reg0, offsetOfJitJSContext));
+    }
 
     // 2. Call
-#if (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)) && defined(DEBUG)
-    // ARM still needs to push, before stack is aligned
-    masm.Push(scratch);
+    AssertStackAlignment(masm);
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
+    masm.ma_callIonNoPush(callee);
+    // The return address has been popped from the stack, so adjust the stack
+    // without changing the frame-pushed counter to keep the stack aligned.
+    masm.subPtr(Imm32(4), sp);
+#else
+    masm.callIon(callee);
 #endif
     AssertStackAlignment(masm);
-#if (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)) && defined(DEBUG)
-    masm.freeStack(sizeof(size_t));
-#endif
-    masm.callIon(scratch);
-    masm.freeStack(stackDec - extraBytes);
 
-    masm.push(JSReturnReg_Type);
-    masm.push(JSReturnReg_Data);
-    LoadAsmJSActivationIntoRegister(masm, callee);
-    masm.setupUnalignedABICall(1, scratch);
-    masm.passABIArg(callee);
-    masm.callWithABI(AsmJSImm_DisableActivationFromAsmJS);
-    masm.pop(JSReturnReg_Data);
-    masm.pop(JSReturnReg_Type);
+    {
+        // Disable Activation.
+        //
+        // This sequence needs three registers, and must preserve the JSReturnReg_Data and
+        // JSReturnReg_Type, so there are five live registers.
+        JS_ASSERT(JSReturnReg_Data == AsmJSIonExitRegReturnData);
+        JS_ASSERT(JSReturnReg_Type == AsmJSIonExitRegReturnType);
+        Register reg0 = AsmJSIonExitRegD0;
+        Register reg1 = AsmJSIonExitRegD1;
+        Register reg2 = AsmJSIonExitRegD2;
+
+        LoadAsmJSActivationIntoRegister(masm, reg0);
+
+        // The following is inlined:
+        //   JSContext *cx = activation->cx();
+        //   Activation *act = cx->mainThread().activation();
+        //   act.active_ = false;
+        //   cx->mainThread().ionTop = prevIonTop_;
+        //   cx->mainThread().jitJSContext = prevJitJSContext_;
+        // On the ARM store8() uses the secondScratchReg (lr) as a temp.
+        size_t offsetOfActivation = offsetof(JSRuntime, mainThread) +
+                                    PerThreadData::offsetOfActivation();
+        size_t offsetOfIonTop = offsetof(JSRuntime, mainThread) + offsetof(PerThreadData, ionTop);
+        size_t offsetOfJitJSContext = offsetof(JSRuntime, mainThread) +
+                                      offsetof(PerThreadData, jitJSContext);
+        masm.loadPtr(Address(reg0, AsmJSActivation::offsetOfContext()), reg0);
+        masm.loadPtr(Address(reg0, JSContext::offsetOfRuntime()), reg0);
+        masm.loadPtr(Address(reg0, offsetOfActivation), reg1);
+        masm.store8(Imm32(0), Address(reg1, JitActivation::offsetOfActiveUint8()));
+        masm.loadPtr(Address(reg1, JitActivation::offsetOfPrevIonTop()), reg2);
+        masm.storePtr(reg2, Address(reg0, offsetOfIonTop));
+        masm.loadPtr(Address(reg1, JitActivation::offsetOfPrevJitJSContext()), reg2);
+        masm.storePtr(reg2, Address(reg0, offsetOfJitJSContext));
+    }
 
 #ifdef DEBUG
     masm.branchTestMagicValue(Assembler::Equal, JSReturnOperand, JS_ION_ERROR, throwLabel);
@@ -6704,8 +6739,27 @@ GenerateFFIIonExit(ModuleCompiler &m, const ModuleCompiler::ExitDescriptor &exit
     }
 
     masm.bind(&done);
-    masm.PopRegsInMask(restoreSet);
+    masm.freeStack(stackDec);
+#if defined(JS_CODEGEN_ARM)
+    masm.ma_vimm(GenericNaN(), NANReg);
+    masm.PopRegsInMask(RegisterSet(GeneralRegisterSet((1<<GlobalReg.code()) |
+                                                      (1<<HeapReg.code()) |
+                                                      (1<<pc.code())),
+                                   FloatRegisterSet(uint32_t(0))));
+#elif defined(JS_CODEGEN_MIPS)
+    masm.loadConstantDouble(GenericNaN(), NANReg);
+    masm.PopRegsInMask(RegisterSet(GeneralRegisterSet((1<<GlobalReg.code()) |
+                                                      (1<<HeapReg.code()) |
+                                                      (1<<ra.code())),
+                                   FloatRegisterSet(uint32_t(0))));
+    masm.abiret();
+#else
+# if defined(JS_CODEGEN_X64)
+    masm.Pop(HeapReg);
+# endif
     masm.ret();
+#endif
+    JS_ASSERT(masm.framePushed() == 0);
 
     // oolConvert
     if (oolConvert.used()) {
@@ -6768,14 +6822,14 @@ GenerateStackOverflowExit(ModuleCompiler &m, Label *throwLabel)
 
     // MIPS ABI requires rewserving stack for registes $a0 to $a3.
 #if defined(JS_CODEGEN_MIPS)
-    masm.ma_subu(StackPointer, StackPointer, Imm32(4 * sizeof(intptr_t)));
+    masm.subPtr(Imm32(4 * sizeof(intptr_t)), StackPointer);
 #endif
 
     masm.call(AsmJSImm_ReportOverRecursed);
     masm.jump(throwLabel);
 
 #if defined(JS_CODEGEN_MIPS)
-    masm.ma_addu(StackPointer, StackPointer, Imm32(4 * sizeof(intptr_t)));
+    masm.addPtr(Imm32(4 * sizeof(intptr_t)), StackPointer);
 #endif
 
     return !masm.oom();
@@ -6796,7 +6850,7 @@ GenerateInterruptExit(ModuleCompiler &m, Label *throwLabel)
     masm.align(CodeAlignment);
     masm.bind(&m.interruptLabel());
 
-#if !defined(JS_CODEGEN_ARM) && !defined(JS_CODEGEN_MIPS)
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
     // Be very careful here not to perturb the machine state before saving it
     // to the stack. In particular, add/sub instructions may set conditions in
     // the flags register.
@@ -6844,14 +6898,14 @@ GenerateInterruptExit(ModuleCompiler &m, Label *throwLabel)
     masm.ret();                   // pop resumePC into PC
 #elif defined(JS_CODEGEN_MIPS)
     // Reserve space to store resumePC.
-    masm.ma_subu(StackPointer, StackPointer, Imm32(sizeof(intptr_t)));
+    masm.subPtr(Imm32(sizeof(intptr_t)), StackPointer);
     // set to zero so we can use masm.framePushed() below.
     masm.setFramePushed(0);
     // save all registers,except sp. After this stack is alligned.
     masm.PushRegsInMask(AllRegsExceptSP);
 
     // Save the stack pointer in a non-volatile register.
-    masm.mov(StackPointer, s0);
+    masm.movePtr(StackPointer, s0);
     // Align the stack.
     masm.ma_and(StackPointer, StackPointer, Imm32(~(StackAlignment - 1)));
 
@@ -6864,25 +6918,26 @@ GenerateInterruptExit(ModuleCompiler &m, Label *throwLabel)
     masm.loadPtr(Address(IntArgReg0, AsmJSActivation::offsetOfContext()), IntArgReg0);
 
     // MIPS ABI requires rewserving stack for registes $a0 to $a3.
-    masm.ma_subu(StackPointer, StackPointer, Imm32(4 * sizeof(intptr_t)));
+    masm.subPtr(Imm32(4 * sizeof(intptr_t)), StackPointer);
 
     masm.call(AsmJSImm_HandleExecutionInterrupt);
 
-    masm.ma_addu(StackPointer, StackPointer, Imm32(4 * sizeof(intptr_t)));
+    masm.addPtr(Imm32(4 * sizeof(intptr_t)), StackPointer);
 
     masm.branchIfFalseBool(ReturnReg, throwLabel);
 
     // This will restore stack to the address before the call.
-    masm.mov(s0, StackPointer);
+    masm.movePtr(s0, StackPointer);
     masm.PopRegsInMask(AllRegsExceptSP);
 
     // Pop resumePC into PC. Use a slot in Global Data to save the scratch.
     // Look at globalDataBytes()
     masm.ma_sw(ScratchRegister, Address(GlobalReg, sizeof(intptr_t)));
-    masm.ma_pop(ScratchRegister);
+    masm.pop(ScratchRegister);
+    // Use delay slot to restore scratch register.
     masm.as_jr(ScratchRegister);
     masm.ma_lw(ScratchRegister, Address(GlobalReg, sizeof(intptr_t)));
-#else
+#elif defined(JS_CODEGEN_ARM)
     masm.setFramePushed(0);         // set to zero so we can use masm.framePushed() below
     masm.PushRegsInMask(RegisterSet(GeneralRegisterSet(Registers::AllMask & ~(1<<Registers::sp)), FloatRegisterSet(uint32_t(0))));   // save all GP registers,excep sp
 
@@ -6930,6 +6985,8 @@ GenerateInterruptExit(ModuleCompiler &m, Label *throwLabel)
     masm.finishDataTransfer();
     masm.ret();
 
+#else
+# error "Unknown architecture!"
 #endif
 
     return !masm.oom();
