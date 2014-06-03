@@ -203,7 +203,7 @@ ConvertStringToResponseType(const nsAString& aString)
     }
   }
 
-  MOZ_ASSUME_UNREACHABLE("Don't know anything about this response type!");
+  MOZ_CRASH("Don't know anything about this response type!");
 }
 
 enum
@@ -410,6 +410,7 @@ class EventRunnable MOZ_FINAL : public MainThreadProxyRunnable
   nsTArray<nsCOMPtr<nsISupports> > mClonedObjects;
   JS::Heap<JS::Value> mResponse;
   nsString mResponseText;
+  nsString mResponseURL;
   nsCString mStatusText;
   uint64_t mLoaded;
   uint64_t mTotal;
@@ -529,7 +530,7 @@ public:
     AutoSyncLoopHolder syncLoop(mWorkerPrivate);
     mSyncLoopTarget = syncLoop.EventTarget();
 
-    if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
+    if (NS_FAILED(NS_DispatchToMainThread(this))) {
       JS_ReportError(aCx, "Failed to dispatch to main thread!");
       return false;
     }
@@ -563,6 +564,7 @@ private:
   MainThreadRun() MOZ_OVERRIDE
   {
     mProxy->Teardown();
+    MOZ_ASSERT(!mProxy->mSyncLoopTarget);
     return NS_OK;
   }
 };
@@ -952,6 +954,17 @@ Proxy::Teardown()
         NS_RUNTIMEABORT("We're going to hang at shutdown anyways.");
       }
 
+      if (mSyncLoopTarget) {
+        // We have an unclosed sync loop.  Fix that now.
+        nsRefPtr<MainThreadStopSyncLoopRunnable> runnable =
+          new MainThreadStopSyncLoopRunnable(mWorkerPrivate,
+                                             mSyncLoopTarget.forget(),
+                                             false);
+        if (!runnable->Dispatch(nullptr)) {
+          NS_RUNTIMEABORT("We're going to hang at shutdown anyways.");
+        }
+      }
+
       mWorkerPrivate = nullptr;
       mOutstandingSendCount = 0;
     }
@@ -959,6 +972,9 @@ Proxy::Teardown()
     mXHRUpload = nullptr;
     mXHR = nullptr;
   }
+
+  MOZ_ASSERT(!mWorkerPrivate);
+  MOZ_ASSERT(!mSyncLoopTarget);
 }
 
 bool
@@ -999,7 +1015,7 @@ Proxy::AddRemoveEventListeners(bool aUpload, bool aAdd)
   return true;
 }
 
-NS_IMPL_ISUPPORTS1(Proxy, nsIDOMEventListener)
+NS_IMPL_ISUPPORTS(Proxy, nsIDOMEventListener)
 
 NS_IMETHODIMP
 Proxy::HandleEvent(nsIDOMEvent* aEvent)
@@ -1082,8 +1098,8 @@ NS_IMPL_ISUPPORTS_INHERITED0(WorkerThreadProxySyncRunnable, nsRunnable)
 
 NS_IMPL_ISUPPORTS_INHERITED0(AsyncTeardownRunnable, nsRunnable)
 
-NS_IMPL_ISUPPORTS_INHERITED1(LoadStartDetectionRunnable, nsRunnable,
-                                                         nsIDOMEventListener)
+NS_IMPL_ISUPPORTS_INHERITED(LoadStartDetectionRunnable, nsRunnable,
+                                                        nsIDOMEventListener)
 
 NS_IMETHODIMP
 LoadStartDetectionRunnable::Run()
@@ -1105,6 +1121,7 @@ LoadStartDetectionRunnable::Run()
                                   mXMLHttpRequestPrivate, mChannelId);
       if (runnable->Dispatch(nullptr)) {
         mProxy->mWorkerPrivate = nullptr;
+        mProxy->mSyncLoopTarget = nullptr;
         mProxy->mOutstandingSendCount--;
       }
     }
@@ -1160,7 +1177,7 @@ EventRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
     JS::Rooted<JS::Value> response(aCx);
     mResponseResult = xhr->GetResponse(aCx, &response);
     if (NS_SUCCEEDED(mResponseResult)) {
-      if (JSVAL_IS_UNIVERSAL(response)) {
+      if (!response.isGCThing()) {
         mResponse = response;
       }
       else {
@@ -1188,6 +1205,8 @@ EventRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   xhr->GetStatusText(mStatusText);
 
   mReadyState = xhr->ReadyState();
+
+  xhr->GetResponseURL(mResponseURL);
 
   return true;
 }
@@ -1256,7 +1275,7 @@ EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   state->mResponseText = mResponseText;
 
   if (NS_SUCCEEDED(mResponseTextResult)) {
-    MOZ_ASSERT(JSVAL_IS_VOID(mResponse) || JSVAL_IS_NULL(mResponse));
+    MOZ_ASSERT(mResponse.isUndefined() || mResponse.isNull());
     state->mResponseResult = mResponseTextResult;
     state->mResponse = mResponse;
   }
@@ -1265,7 +1284,7 @@ EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
     if (NS_SUCCEEDED(mResponseResult)) {
       if (mResponseBuffer.data()) {
-        MOZ_ASSERT(JSVAL_IS_VOID(mResponse));
+        MOZ_ASSERT(mResponse.isUndefined());
 
         JSAutoStructuredCloneBuffer responseBuffer(Move(mResponseBuffer));
 
@@ -1296,6 +1315,8 @@ EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
   state->mStatusText = mStatusText;
 
   state->mReadyState = mReadyState;
+
+  state->mResponseURL = mResponseURL;
 
   XMLHttpRequest* xhr = mProxy->mXMLHttpRequestPrivate;
   xhr->UpdateState(*state);
@@ -2258,7 +2279,7 @@ jsval
 XMLHttpRequest::GetResponse(JSContext* /* unused */, ErrorResult& aRv)
 {
   if (NS_SUCCEEDED(mStateData.mResponseTextResult) &&
-      JSVAL_IS_VOID(mStateData.mResponse)) {
+      mStateData.mResponse.isUndefined()) {
     MOZ_ASSERT(mStateData.mResponseText.Length());
     MOZ_ASSERT(NS_SUCCEEDED(mStateData.mResponseResult));
 
@@ -2289,7 +2310,7 @@ void
 XMLHttpRequest::UpdateState(const StateData& aStateData)
 {
   mStateData = aStateData;
-  if (JSVAL_IS_GCTHING(mStateData.mResponse)) {
+  if (mStateData.mResponse.isGCThing()) {
     mozilla::HoldJSObjects(this);
   }
 }

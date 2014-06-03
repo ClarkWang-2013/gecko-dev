@@ -24,6 +24,7 @@
 #include "gfx2DGlue.h"
 #include "imgIEncoder.h"
 #include "nsLayoutUtils.h"
+#include "mozilla/EnumeratedArray.h"
 
 class nsGlobalWindow;
 class nsXULElement;
@@ -45,7 +46,7 @@ extern const mozilla::gfx::Float SIGMA_MAX;
 
 template<typename T> class Optional;
 
-class CanvasPath :
+class CanvasPath MOZ_FINAL :
   public nsWrapperCache
 {
 public:
@@ -87,8 +88,8 @@ public:
   mozilla::RefPtr<mozilla::gfx::Path> GetPath(const CanvasWindingRule& winding,
                                               const mozilla::RefPtr<mozilla::gfx::DrawTarget>& mTarget) const;
 
-  CanvasPath(nsCOMPtr<nsISupports> aParent);
-  CanvasPath(nsCOMPtr<nsISupports> aParent, RefPtr<gfx::PathBuilder> mPathBuilder);
+  explicit CanvasPath(nsISupports* aParent);
+  CanvasPath(nsISupports* aParent, RefPtr<gfx::PathBuilder> mPathBuilder);
   virtual ~CanvasPath() {}
 
 private:
@@ -158,22 +159,22 @@ public:
 
   void GetStrokeStyle(OwningStringOrCanvasGradientOrCanvasPattern& value)
   {
-    GetStyleAsUnion(value, STYLE_STROKE);
+    GetStyleAsUnion(value, Style::STROKE);
   }
 
   void SetStrokeStyle(const StringOrCanvasGradientOrCanvasPattern& value)
   {
-    SetStyleFromUnion(value, STYLE_STROKE);
+    SetStyleFromUnion(value, Style::STROKE);
   }
 
   void GetFillStyle(OwningStringOrCanvasGradientOrCanvasPattern& value)
   {
-    GetStyleAsUnion(value, STYLE_FILL);
+    GetStyleAsUnion(value, Style::FILL);
   }
 
   void SetFillStyle(const StringOrCanvasGradientOrCanvasPattern& value)
   {
-    SetStyleFromUnion(value, STYLE_FILL);
+    SetStyleFromUnion(value, Style::FILL);
   }
 
   already_AddRefed<CanvasGradient>
@@ -492,17 +493,17 @@ public:
 
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(CanvasRenderingContext2D)
 
-  enum CanvasMultiGetterType {
-    CMG_STYLE_STRING = 0,
-    CMG_STYLE_PATTERN = 1,
-    CMG_STYLE_GRADIENT = 2
-  };
+  MOZ_BEGIN_NESTED_ENUM_CLASS(CanvasMultiGetterType, uint8_t)
+    STRING = 0,
+    PATTERN = 1,
+    GRADIENT = 2
+  MOZ_END_NESTED_ENUM_CLASS(CanvasMultiGetterType)
 
-  enum Style {
-    STYLE_STROKE = 0,
-    STYLE_FILL,
-    STYLE_MAX
-  };
+  MOZ_BEGIN_NESTED_ENUM_CLASS(Style, uint8_t)
+    STROKE = 0,
+    FILL,
+    MAX
+  MOZ_END_NESTED_ENUM_CLASS(Style)
 
   nsINode* GetParentObject()
   {
@@ -536,13 +537,21 @@ public:
 
   virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat);
 
+
+  // Given a point, return hit region ID if it exists
+  nsString GetHitRegion(const mozilla::gfx::Point& aPoint);
+
+
+  // return true and fills in the bound rect if element has a hit region.
+  bool GetHitRegionRect(Element* aElement, nsRect& aRect);
+
 protected:
   nsresult GetImageDataArray(JSContext* aCx, int32_t aX, int32_t aY,
                              uint32_t aWidth, uint32_t aHeight,
                              JSObject** aRetval);
 
   nsresult PutImageData_explicit(int32_t x, int32_t y, uint32_t w, uint32_t h,
-                                 unsigned char *aData, uint32_t aDataLen,
+                                 dom::Uint8ClampedArray* aArray,
                                  bool hasDirtyRect, int32_t dirtyX, int32_t dirtyY,
                                  int32_t dirtyWidth, int32_t dirtyHeight);
 
@@ -752,25 +761,16 @@ protected:
   /**
     * State information for hit regions
     */
-
-  struct RegionInfo : public nsStringHashKey
+  struct RegionInfo
   {
-    RegionInfo(const nsAString& aKey) :
-      nsStringHashKey(&aKey)
-    {
-    }
-    RegionInfo(const nsAString *aKey) :
-      nsStringHashKey(aKey)
-    {
-    }
-
+    nsString          mId;
+    // fallback element for a11y
     nsRefPtr<Element> mElement;
+    // Path of the hit region in the 2d context coordinate space (not user space)
+    RefPtr<gfx::Path> mPath;
   };
 
-#ifdef ACCESSIBILITY
-  static PLDHashOperator RemoveHitRegionProperty(RegionInfo* aEntry, void* aData);
-#endif
-  nsTHashtable<RegionInfo> mHitRegionsOptions;
+  nsTArray<RegionInfo> mHitRegionsOptions;
 
   /**
     * Returns true if a shadow should be drawn along with a
@@ -810,30 +810,35 @@ protected:
   }
 
   // text
-  enum TextAlign {
-    TEXT_ALIGN_START,
-    TEXT_ALIGN_END,
-    TEXT_ALIGN_LEFT,
-    TEXT_ALIGN_RIGHT,
-    TEXT_ALIGN_CENTER
-  };
 
-  enum TextBaseline {
-    TEXT_BASELINE_TOP,
-    TEXT_BASELINE_HANGING,
-    TEXT_BASELINE_MIDDLE,
-    TEXT_BASELINE_ALPHABETIC,
-    TEXT_BASELINE_IDEOGRAPHIC,
-    TEXT_BASELINE_BOTTOM
-  };
+public: // These enums are public only to accomodate non-C++11 legacy path of
+        // MOZ_FINISH_NESTED_ENUM_CLASS. Can move back to protected as soon
+        // as that legacy path is dropped.
+  MOZ_BEGIN_NESTED_ENUM_CLASS(TextAlign, uint8_t)
+    START,
+    END,
+    LEFT,
+    RIGHT,
+    CENTER
+  MOZ_END_NESTED_ENUM_CLASS(TextAlign)
 
+  MOZ_BEGIN_NESTED_ENUM_CLASS(TextBaseline, uint8_t)
+    TOP,
+    HANGING,
+    MIDDLE,
+    ALPHABETIC,
+    IDEOGRAPHIC,
+    BOTTOM
+  MOZ_END_NESTED_ENUM_CLASS(TextBaseline)
+
+  MOZ_BEGIN_NESTED_ENUM_CLASS(TextDrawOperation, uint8_t)
+    FILL,
+    STROKE,
+    MEASURE
+  MOZ_END_NESTED_ENUM_CLASS(TextDrawOperation)
+
+protected:
   gfxFontGroup *GetCurrentFontStyle();
-
-  enum TextDrawOperation {
-    TEXT_DRAW_OPERATION_FILL,
-    TEXT_DRAW_OPERATION_STROKE,
-    TEXT_DRAW_OPERATION_MEASURE
-  };
 
   /*
     * Implementation of the fillText, strokeText, and measure functions with
@@ -846,11 +851,13 @@ protected:
                              TextDrawOperation op,
                              float* aWidth);
 
+  bool CheckSizeForSkiaGL(mozilla::gfx::IntSize size);
+
   // state stack handling
   class ContextState {
   public:
-    ContextState() : textAlign(TEXT_ALIGN_START),
-                     textBaseline(TEXT_BASELINE_ALPHABETIC),
+    ContextState() : textAlign(TextAlign::START),
+                     textBaseline(TextBaseline::ALPHABETIC),
                      lineWidth(1.0f),
                      miterLimit(10.0f),
                      globalAlpha(1.0f),
@@ -865,6 +872,9 @@ protected:
 
     ContextState(const ContextState& other)
         : fontGroup(other.fontGroup),
+          gradientStyles(other.gradientStyles),
+          patternStyles(other.patternStyles),
+          colorStyles(other.colorStyles),
           font(other.font),
           textAlign(other.textAlign),
           textBaseline(other.textBaseline),
@@ -882,13 +892,7 @@ protected:
           lineCap(other.lineCap),
           lineJoin(other.lineJoin),
           imageSmoothingEnabled(other.imageSmoothingEnabled)
-    {
-      for (int i = 0; i < STYLE_MAX; i++) {
-        colorStyles[i] = other.colorStyles[i];
-        gradientStyles[i] = other.gradientStyles[i];
-        patternStyles[i] = other.patternStyles[i];
-      }
-    }
+    { }
 
     void SetColorStyle(Style whichStyle, nscolor color)
     {
@@ -921,14 +925,14 @@ protected:
     std::vector<mozilla::RefPtr<mozilla::gfx::Path> > clipsPushed;
 
     nsRefPtr<gfxFontGroup> fontGroup;
-    nsRefPtr<CanvasGradient> gradientStyles[STYLE_MAX];
-    nsRefPtr<CanvasPattern> patternStyles[STYLE_MAX];
+    EnumeratedArray<Style, Style::MAX, nsRefPtr<CanvasGradient>> gradientStyles;
+    EnumeratedArray<Style, Style::MAX, nsRefPtr<CanvasPattern>> patternStyles;
+    EnumeratedArray<Style, Style::MAX, nscolor> colorStyles;
 
     nsString font;
     TextAlign textAlign;
     TextBaseline textBaseline;
 
-    nscolor colorStyles[STYLE_MAX];
     nscolor shadowColor;
 
     mozilla::gfx::Matrix transform;
@@ -986,6 +990,12 @@ protected:
 
   friend struct CanvasBidiProcessor;
 };
+
+MOZ_FINISH_NESTED_ENUM_CLASS(CanvasRenderingContext2D::CanvasMultiGetterType)
+MOZ_FINISH_NESTED_ENUM_CLASS(CanvasRenderingContext2D::Style)
+MOZ_FINISH_NESTED_ENUM_CLASS(CanvasRenderingContext2D::TextAlign)
+MOZ_FINISH_NESTED_ENUM_CLASS(CanvasRenderingContext2D::TextBaseline)
+MOZ_FINISH_NESTED_ENUM_CLASS(CanvasRenderingContext2D::TextDrawOperation)
 
 }
 }

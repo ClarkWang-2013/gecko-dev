@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <algorithm>
 #include "mozilla/Assertions.h"
+#include "MediaTrackConstraints.h"
 
 // scoped_ptr.h uses FF
 #ifdef FF
@@ -61,6 +62,7 @@ AudioOutputObserver::AudioOutputObserver()
 
 AudioOutputObserver::~AudioOutputObserver()
 {
+  Clear();
 }
 
 void
@@ -69,6 +71,7 @@ AudioOutputObserver::Clear()
   while (mPlayoutFifo->size() > 0) {
     (void) mPlayoutFifo->Pop();
   }
+  mSaved = nullptr;
 }
 
 FarEndAudioChunk *
@@ -142,6 +145,7 @@ AudioOutputObserver::InsertFarEnd(const AudioDataValue *aBuffer, uint32_t aSampl
 #endif
     aSamples -= to_copy;
     mSamplesSaved += to_copy;
+    aBuffer += to_copy * aChannels;
 
     if (mSamplesSaved >= mChunkSize) {
       int free_slots = mPlayoutFifo->capacity() - mPlayoutFifo->size();
@@ -241,7 +245,8 @@ MediaEngineWebRTCAudioSource::Config(bool aEchoOn, uint32_t aEcho,
 }
 
 nsresult
-MediaEngineWebRTCAudioSource::Allocate(const MediaEnginePrefs &aPrefs)
+MediaEngineWebRTCAudioSource::Allocate(const AudioTrackConstraintsN &aConstraints,
+                                       const MediaEnginePrefs &aPrefs)
 {
   if (mState == kReleased) {
     if (mInitDone) {

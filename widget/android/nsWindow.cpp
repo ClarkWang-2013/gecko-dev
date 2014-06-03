@@ -113,8 +113,8 @@ class ContentCreationNotifier MOZ_FINAL : public nsIObserver
     }
 };
 
-NS_IMPL_ISUPPORTS1(ContentCreationNotifier,
-                   nsIObserver)
+NS_IMPL_ISUPPORTS(ContentCreationNotifier,
+                  nsIObserver)
 
 static bool gMenu;
 static bool gMenuConsumed;
@@ -1548,6 +1548,23 @@ ConvertAndroidKeyCodeToKeyNameIndex(AndroidGeckoEvent& aAndroidGeckoEvent)
     }
 }
 
+static CodeNameIndex
+ConvertAndroidScanCodeToCodeNameIndex(AndroidGeckoEvent& aAndroidGeckoEvent)
+{
+    switch (aAndroidGeckoEvent.ScanCode()) {
+
+#define NS_NATIVE_KEY_TO_DOM_CODE_NAME_INDEX(aNativeKey, aCodeNameIndex) \
+        case aNativeKey: return aCodeNameIndex;
+
+#include "NativeKeyToDOMCodeName.h"
+
+#undef NS_NATIVE_KEY_TO_DOM_CODE_NAME_INDEX
+
+        default:
+          return CODE_NAME_INDEX_UNKNOWN;
+    }
+}
+
 static void InitPluginEvent(ANPEvent* pluginEvent, ANPKeyActions keyAction,
                             AndroidGeckoEvent& key)
 {
@@ -1581,6 +1598,7 @@ nsWindow::InitKeyEvent(WidgetKeyboardEvent& event, AndroidGeckoEvent& key,
             event.mKeyValue = static_cast<char16_t>(keyValue);
         }
     }
+    event.mCodeNameIndex = ConvertAndroidScanCodeToCodeNameIndex(key);
     uint32_t domKeyCode = ConvertAndroidKeyCodeToDOMKeyCode(key.KeyCode());
 
     if (event.message == NS_KEY_PRESS) {
@@ -2419,7 +2437,9 @@ nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect)
 void
 nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect)
 {
-    PROFILER_LABEL("nsWindow", "DrawWindowOverlay");
+    PROFILER_LABEL("nsWindow", "DrawWindowOverlay",
+        js::ProfileEntry::Category::GRAPHICS);
+
     JNIEnv *env = GetJNIForThread();
 
     AutoLocalJNIFrame jniFrame(env);

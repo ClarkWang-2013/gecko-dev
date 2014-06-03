@@ -102,8 +102,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGenericDOMDataNode)
   if (slots) {
     slots->Traverse(cb);
   }
-
-  tmp->OwnerDoc()->BindingManager()->Traverse(tmp, cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGenericDOMDataNode)
@@ -592,12 +590,6 @@ nsGenericDOMDataNode::GetChildren(uint32_t aFilter)
   return nullptr;
 }
 
-nsIAtom *
-nsGenericDOMDataNode::GetIDAttributeName() const
-{
-  return nullptr;
-}
-
 nsresult
 nsGenericDOMDataNode::SetAttr(int32_t aNameSpaceID, nsIAtom* aAttr,
                               nsIAtom* aPrefix, const nsAString& aValue,
@@ -687,6 +679,23 @@ nsGenericDOMDataNode::SetShadowRoot(ShadowRoot* aShadowRoot)
 {
 }
 
+nsTArray<nsIContent*>&
+nsGenericDOMDataNode::DestInsertionPoints()
+{
+  nsDataSlots *slots = DataSlots();
+  return slots->mDestInsertionPoints;
+}
+
+nsTArray<nsIContent*>*
+nsGenericDOMDataNode::GetExistingDestInsertionPoints() const
+{
+  nsDataSlots *slots = GetExistingDataSlots();
+  if (slots) {
+    return &slots->mDestInsertionPoints;
+  }
+  return nullptr;
+}
+
 nsXBLBinding *
 nsGenericDOMDataNode::GetXBLBinding() const
 {
@@ -715,11 +724,16 @@ nsGenericDOMDataNode::GetXBLInsertionParent() const
 void
 nsGenericDOMDataNode::SetXBLInsertionParent(nsIContent* aContent)
 {
-  nsDataSlots *slots = DataSlots();
   if (aContent) {
+    nsDataSlots *slots = DataSlots();
     SetFlags(NODE_MAY_BE_IN_BINDING_MNGR);
+    slots->mXBLInsertionParent = aContent;
+  } else {
+    nsDataSlots *slots = GetExistingDataSlots();
+    if (slots) {
+      slots->mXBLInsertionParent = nullptr;
+    }
   }
-  slots->mXBLInsertionParent = aContent;
 }
 
 CustomElementData *
@@ -993,6 +1007,11 @@ nsGenericDOMDataNode::TextIsOnlyWhitespace()
 bool
 nsGenericDOMDataNode::HasTextForTranslation()
 {
+  if (NodeType() != nsIDOMNode::TEXT_NODE &&
+      NodeType() != nsIDOMNode::CDATA_SECTION_NODE) {
+    return false;
+  }
+
   if (mText.Is2b()) {
     // The fragment contains non-8bit characters which means there
     // was at least one "interesting" character to trigger non-8bit.
@@ -1045,19 +1064,6 @@ nsGenericDOMDataNode::GetCurrentValueAtom()
   return NS_NewAtom(val);
 }
 
-nsIAtom*
-nsGenericDOMDataNode::DoGetID() const
-{
-  return nullptr;
-}
-
-const nsAttrValue*
-nsGenericDOMDataNode::DoGetClasses() const
-{
-  NS_NOTREACHED("Shouldn't ever be called");
-  return nullptr;
-}
-
 NS_IMETHODIMP
 nsGenericDOMDataNode::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
 {
@@ -1076,12 +1082,6 @@ nsGenericDOMDataNode::GetAttributeChangeHint(const nsIAtom* aAttribute,
 {
   NS_NOTREACHED("Shouldn't be calling this!");
   return nsChangeHint(0);
-}
-
-nsIAtom*
-nsGenericDOMDataNode::GetClassAttributeName() const
-{
-  return nullptr;
 }
 
 size_t

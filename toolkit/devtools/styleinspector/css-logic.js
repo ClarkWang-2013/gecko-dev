@@ -38,7 +38,9 @@
  * @constructor
  */
 
-const {Cc, Ci, Cu} = require("chrome");
+const { Cc, Ci, Cu } = require("chrome");
+const Services = require("Services");
+const DevToolsUtils = require("devtools/toolkit/DevToolsUtils");
 
 const RX_UNIVERSAL_SELECTOR = /\s*\*\s*/g;
 const RX_NOT = /:not\((.*?)\)/g;
@@ -48,8 +50,11 @@ const RX_ID = /\s*#\w+\s*/g;
 const RX_CLASS_OR_ATTRIBUTE = /\s*(?:\.\w+|\[.+?\])\s*/g;
 const RX_PSEUDO = /\s*:?:([\w-]+)(\(?\)?)\s*/g;
 
-Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+// This should be ok because none of the functions that use this should be used
+// on the worker thread, where Cu is not available.
+if (Cu) {
+  Cu.importGlobalProperties(['CSS']);
+}
 
 function CssLogic()
 {
@@ -662,7 +667,7 @@ CssLogic.getShortName = function CssLogic_getShortName(aElement)
   }
   let priorSiblings = 0;
   let temp = aElement;
-  while (temp = temp.previousElementSibling) {
+  while ((temp = temp.previousElementSibling)) {
     priorSiblings++;
   }
   return aElement.tagName + "[" + priorSiblings + "]";
@@ -729,8 +734,8 @@ CssLogic.getSelectors = function CssLogic_getSelectors(aDOMRule)
  */
 CssLogic.l10n = function(aName) CssLogic._strings.GetStringFromName(aName);
 
-XPCOMUtils.defineLazyGetter(CssLogic, "_strings", function() Services.strings
-        .createBundle("chrome://global/locale/devtools/styleinspector.properties"));
+DevToolsUtils.defineLazyGetter(CssLogic, "_strings", function() Services.strings
+             .createBundle("chrome://global/locale/devtools/styleinspector.properties"));
 
 /**
  * Is the given property sheet a content stylesheet?
@@ -865,12 +870,17 @@ function positionInNodeList(element, nodeList) {
  */
 CssLogic.findCssSelector = function CssLogic_findCssSelector(ele) {
   var document = ele.ownerDocument;
-  if (ele.id && document.getElementById(ele.id) === ele) {
-    return '#' + ele.id;
+  if (!document.contains(ele)) {
+    throw new Error('findCssSelector received element not inside document');
+  }
+
+  // document.querySelectorAll("#id") returns multiple if elements share an ID
+  if (ele.id && document.querySelectorAll('#' + CSS.escape(ele.id)).length === 1) {
+    return '#' + CSS.escape(ele.id);
   }
 
   // Inherently unique by tag name
-  var tagName = ele.tagName.toLowerCase();
+  var tagName = ele.localName;
   if (tagName === 'html') {
     return 'html';
   }
@@ -881,16 +891,12 @@ CssLogic.findCssSelector = function CssLogic_findCssSelector(ele) {
     return 'body';
   }
 
-  if (ele.parentNode == null) {
-    console.log('danger: ' + tagName);
-  }
-
   // We might be able to find a unique class name
   var selector, index, matches;
   if (ele.classList.length > 0) {
     for (var i = 0; i < ele.classList.length; i++) {
       // Is this className unique by itself?
-      selector = '.' + ele.classList.item(i);
+      selector = '.' + CSS.escape(ele.classList.item(i));
       matches = document.querySelectorAll(selector);
       if (matches.length === 1) {
         return selector;
@@ -1155,6 +1161,7 @@ CssSheet.prototype = {
           aDomRule.cssRules && this._cssLogic.mediaMatches(aDomRule)) {
         return Array.prototype.some.call(aDomRule.cssRules, _iterator, this);
       }
+      return false;
     }
     return Array.prototype.some.call(domRules, _iterator, this);
   },
@@ -1798,6 +1805,6 @@ CssSelectorInfo.prototype = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(this, "domUtils", function() {
+DevToolsUtils.defineLazyGetter(this, "domUtils", function() {
   return Cc["@mozilla.org/inspector/dom-utils;1"].getService(Ci.inIDOMUtils);
 });

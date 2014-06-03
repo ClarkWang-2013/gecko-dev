@@ -43,8 +43,11 @@ nsWindowMediator::GetDOMWindow(nsIXULWindow* inWindow,
 {
   nsCOMPtr<nsIDocShell> docShell;
 
+  outDOMWindow = nullptr;
   inWindow->GetDocShell(getter_AddRefs(docShell));
-  outDOMWindow = do_GetInterface(docShell);
+  NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
+
+  outDOMWindow = docShell->GetWindow();
   return outDOMWindow ? NS_OK : NS_ERROR_FAILURE;
 }
 
@@ -743,7 +746,7 @@ nsWindowMediator::SortZOrderBackToFront()
   mSortingZOrder = false;
 }
 
-NS_IMPL_ISUPPORTS3(nsWindowMediator,
+NS_IMPL_ISUPPORTS(nsWindowMediator,
   nsIWindowMediator,
   nsIObserver,
   nsISupportsWeakReference)

@@ -677,7 +677,7 @@ PatchJump(CodeLocationJump &jump_, CodeLocationLabel label);
 class Assembler;
 typedef js::jit::AssemblerBuffer<1024, Instruction> MIPSBuffer;
 
-class Assembler
+class Assembler : public AssemblerShared
 {
   public:
 
@@ -782,7 +782,6 @@ class Assembler
     js::Vector<CodeLabel, 0, SystemAllocPolicy> codeLabels_;
     js::Vector<RelativePatch, 8, SystemAllocPolicy> jumps_;
     js::Vector<uint32_t, 8, SystemAllocPolicy> longJumps_;
-    AsmJSAbsoluteLinkVector asmJSAbsoluteLinks_;
 
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
@@ -811,7 +810,7 @@ class Assembler
 
     // As opposed to x86/x64 version, the data relocation has to be executed
     // before to recover the pointer, and not after.
-    void writeDataRelocation(const ImmGCPtr &ptr) {
+    void writeDataRelocation(ImmGCPtr ptr) {
         if (ptr.value)
             dataRelocations_.writeUnsigned(nextOffset().getOffset());
     }
@@ -842,13 +841,6 @@ class Assembler
     }
     CodeLabel codeLabel(size_t i) {
         return codeLabels_[i];
-    }
-
-    size_t numAsmJSAbsoluteLinks() const {
-        return asmJSAbsoluteLinks_.length();
-    }
-    AsmJSAbsoluteLink asmJSAbsoluteLink(size_t i) const {
-        return asmJSAbsoluteLinks_[i];
     }
 
     // Size of the instruction stream, in bytes.
@@ -1116,6 +1108,9 @@ class Assembler
     static void patchDataWithValueCheck(CodeLocationLabel label, ImmPtr newValue,
                                         ImmPtr expectedValue);
     static void patchWrite_Imm32(CodeLocationLabel label, Imm32 imm);
+
+    static void patchInstructionImmediate(uint8_t *code, PatchedImmPtr imm);
+
     static uint32_t alignDoubleArg(uint32_t offset) {
         return (offset + 1U) &~ 1U;
     }
@@ -1129,6 +1124,7 @@ class Assembler
 
     static void updateBoundsCheck(uint32_t logHeapSize, Instruction *inst);
     void processCodeLabels(uint8_t *rawCode);
+    static int32_t extractCodeLabelOffset(uint8_t *code);
 
     bool bailed() {
         return m_buffer.bail();

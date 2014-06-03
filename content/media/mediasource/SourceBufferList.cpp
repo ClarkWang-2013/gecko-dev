@@ -111,6 +111,17 @@ SourceBufferList::Evict(double aStart, double aEnd)
   }
 }
 
+bool
+SourceBufferList::AllContainsTime(double aTime)
+{
+  for (uint32_t i = 0; i < mSourceBuffers.Length(); ++i) {
+    if (!mSourceBuffers[i]->ContainsTime(aTime)) {
+      return false;
+    }
+  }
+  return mSourceBuffers.Length() > 0;
+}
+
 void
 SourceBufferList::Ended()
 {
@@ -131,7 +142,7 @@ SourceBufferList::QueueAsyncSimpleEvent(const char* aName)
 {
   MSE_DEBUG("%p Queuing event %s to SourceBufferList", this, aName);
   nsCOMPtr<nsIRunnable> event = new AsyncEventRunner<SourceBufferList>(this, aName);
-  NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+  NS_DispatchToMainThread(event);
 }
 
 SourceBufferList::SourceBufferList(MediaSource* aMediaSource)
@@ -153,8 +164,8 @@ SourceBufferList::WrapObject(JSContext* aCx)
   return SourceBufferListBinding::Wrap(aCx, this);
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_2(SourceBufferList, DOMEventTargetHelper,
-                                     mMediaSource, mSourceBuffers)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(SourceBufferList, DOMEventTargetHelper,
+                                   mMediaSource, mSourceBuffers)
 
 NS_IMPL_ADDREF_INHERITED(SourceBufferList, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(SourceBufferList, DOMEventTargetHelper)

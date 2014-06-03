@@ -158,7 +158,7 @@ struct PropDesc {
     /* Or maybe this represents a property's absence, and it's undefined. */
     bool isUndefined_ : 1;
 
-    PropDesc(const Value &v)
+    explicit PropDesc(const Value &v)
       : pd_(UndefinedValue()),
         value_(v),
         get_(UndefinedValue()), set_(UndefinedValue()),
@@ -410,7 +410,7 @@ struct ShapeTable {
                                            object */
     js::Shape       **entries;          /* table of ptrs to shared tree nodes */
 
-    ShapeTable(uint32_t nentries)
+    explicit ShapeTable(uint32_t nentries)
       : hashShift(HASH_BITS - MIN_SIZE_LOG2),
         entryCount(nentries),
         removedCount(0),
@@ -525,8 +525,12 @@ static inline void
 GetterSetterWriteBarrierPost(JSRuntime *rt, JSObject **objp)
 {
 #ifdef JSGC_GENERATIONAL
-    JS::shadow::Runtime *shadowRuntime = JS::shadow::Runtime::asShadowRuntime(rt);
-    shadowRuntime->gcStoreBufferPtr()->putRelocatableCell(reinterpret_cast<gc::Cell **>(objp));
+    JS_ASSERT(objp);
+    JS_ASSERT(*objp);
+    gc::Cell **cellp = reinterpret_cast<gc::Cell **>(objp);
+    gc::StoreBuffer *storeBuffer = (*cellp)->storeBuffer();
+    if (storeBuffer)
+        storeBuffer->putRelocatableCellFromAnyThread(cellp);
 #endif
 }
 
@@ -535,7 +539,7 @@ GetterSetterWriteBarrierPostRemove(JSRuntime *rt, JSObject **objp)
 {
 #ifdef JSGC_GENERATIONAL
     JS::shadow::Runtime *shadowRuntime = JS::shadow::Runtime::asShadowRuntime(rt);
-    shadowRuntime->gcStoreBufferPtr()->removeRelocatableCell(reinterpret_cast<gc::Cell **>(objp));
+    shadowRuntime->gcStoreBufferPtr()->removeRelocatableCellFromAnyThread(reinterpret_cast<gc::Cell **>(objp));
 #endif
 }
 
@@ -602,7 +606,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
     };
 
     /* For owned BaseShapes, the canonical unowned BaseShape. */
-    HeapPtr<UnownedBaseShape> unowned_;
+    HeapPtrUnownedBaseShape unowned_;
 
     /* For owned BaseShapes, the shape's shape table. */
     ShapeTable       *table_;
@@ -647,7 +651,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
         this->compartment_ = comp;
     }
 
-    inline BaseShape(const StackBaseShape &base);
+    explicit inline BaseShape(const StackBaseShape &base);
 
     /* Not defined: BaseShapes must not be stack allocated. */
     ~BaseShape();
@@ -828,7 +832,7 @@ struct StackBaseShape
 
     inline StackBaseShape(ThreadSafeContext *cx, const Class *clasp,
                           JSObject *parent, JSObject *metadata, uint32_t objectFlags);
-    inline StackBaseShape(Shape *shape);
+    explicit inline StackBaseShape(Shape *shape);
 
     void updateGetterSetter(uint8_t attrs, PropertyOp rawGetter, StrictPropertyOp rawSetter) {
         flags &= ~(BaseShape::HAS_GETTER_OBJECT | BaseShape::HAS_SETTER_OBJECT);
@@ -870,7 +874,7 @@ BaseShape::BaseShape(const StackBaseShape &base)
     this->compartment_ = base.compartment;
 }
 
-typedef HashSet<ReadBarriered<UnownedBaseShape>,
+typedef HashSet<ReadBarrieredUnownedBaseShape,
                 StackBaseShape,
                 SystemAllocPolicy> BaseShapeSet;
 
@@ -889,7 +893,7 @@ class Shape : public gc::BarrieredCell<Shape>
 
   protected:
     HeapPtrBaseShape    base_;
-    EncapsulatedId      propid_;
+    PreBarrieredId      propid_;
 
     JS_ENUM_HEADER(SlotInfo, uint32_t)
     {
@@ -1011,7 +1015,7 @@ class Shape : public gc::BarrieredCell<Shape>
             JS_STATIC_ASSERT(allowGC == CanGC);
         }
 
-        Range(Shape *shape) : cursor((ExclusiveContext *) nullptr, shape) {
+        explicit Range(Shape *shape) : cursor((ExclusiveContext *) nullptr, shape) {
             JS_STATIC_ASSERT(allowGC == NoGC);
         }
 
@@ -1192,12 +1196,12 @@ class Shape : public gc::BarrieredCell<Shape>
         slotInfo = slotInfo | ((count + 1) << LINEAR_SEARCHES_SHIFT);
     }
 
-    const EncapsulatedId &propid() const {
+    const PreBarrieredId &propid() const {
         JS_ASSERT(!isEmptyShape());
         JS_ASSERT(!JSID_IS_VOID(propid_));
         return propid_;
     }
-    EncapsulatedId &propidRef() { JS_ASSERT(!JSID_IS_VOID(propid_)); return propid_; }
+    PreBarrieredId &propidRef() { JS_ASSERT(!JSID_IS_VOID(propid_)); return propid_; }
     jsid propidRaw() const {
         // Return the actual jsid, not an internal reference.
         return propid();
@@ -1385,7 +1389,7 @@ struct InitialShapeEntry
      * certain classes (e.g. String, RegExp) which may add certain baked-in
      * properties.
      */
-    ReadBarriered<Shape> shape;
+    ReadBarrieredShape shape;
 
     /*
      * Matching prototype for the entry. The shape of an object determines its
@@ -1433,7 +1437,7 @@ struct InitialShapeEntry
     };
 
     inline InitialShapeEntry();
-    inline InitialShapeEntry(const ReadBarriered<Shape> &shape, TaggedProto proto);
+    inline InitialShapeEntry(const ReadBarrieredShape &shape, TaggedProto proto);
 
     inline Lookup getLookup() const;
 
@@ -1466,7 +1470,7 @@ struct StackShape
         JS_ASSERT(slot <= SHAPE_INVALID_SLOT);
     }
 
-    StackShape(Shape *shape)
+    explicit StackShape(Shape *shape)
       : base(shape->base()->unowned()),
         propid(shape->propidRef()),
         slot_(shape->maybeSlot()),

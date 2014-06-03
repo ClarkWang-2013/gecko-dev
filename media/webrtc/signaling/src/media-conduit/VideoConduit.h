@@ -5,11 +5,14 @@
 #ifndef VIDEO_SESSION_H_
 #define VIDEO_SESSION_H_
 
+#include "nsAutoPtr.h"
 #include "mozilla/Attributes.h"
 
 #include "MediaConduitInterface.h"
 #include "MediaEngineWrapper.h"
 
+// conflicts with #include of scoped_ptr.h
+#undef FF
 // Video Engine Includes
 #include "webrtc/common_types.h"
 #ifdef FF
@@ -146,14 +149,14 @@ public:
    * Set an external encoder object |encoder| to the payload type |pltype|
    * for sender side codec.
    */
-  virtual MediaConduitErrorCode SetExternalSendCodec(int pltype,
+  virtual MediaConduitErrorCode SetExternalSendCodec(VideoCodecConfig* config,
                                                      VideoEncoder* encoder);
 
   /**
    * Set an external decoder object |decoder| to the payload type |pltype|
    * for receiver side codec.
    */
-  virtual MediaConduitErrorCode SetExternalRecvCodec(int pltype,
+  virtual MediaConduitErrorCode SetExternalRecvCodec(VideoCodecConfig* config,
                                                      VideoDecoder* decoder);
 
 
@@ -228,7 +231,14 @@ public:
                       mCapId(-1),
                       mCurSendCodecConfig(nullptr),
                       mSendingWidth(0),
-                      mSendingHeight(0)
+                      mSendingHeight(0),
+                      mReceivingWidth(640),
+                      mReceivingHeight(480),
+                      mVideoLatencyTestEnable(false),
+                      mVideoLatencyAvg(0),
+                      mMinBitrate(200),
+                      mStartBitrate(300),
+                      mMaxBitrate(2000)
   {
   }
 
@@ -253,6 +263,7 @@ public:
   bool GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
                            unsigned int* packetsSent,
                            uint64_t* bytesSent);
+  uint64_t MozVideoLatencyAvg();
 
 private:
 
@@ -280,6 +291,9 @@ private:
 
   //Utility function to dump recv codec database
   void DumpCodecDB() const;
+
+  // Video Latency Test averaging filter
+  void VideoLatencyUpdate(uint64_t new_sample);
 
   // The two sides of a send/receive pair of conduits each keep a pointer to the other.
   // They also share a single VideoEngine and mChannel.  Shutdown must be coordinated
@@ -314,8 +328,22 @@ private:
   VideoCodecConfig* mCurSendCodecConfig;
   unsigned short mSendingWidth;
   unsigned short mSendingHeight;
+  unsigned short mReceivingWidth;
+  unsigned short mReceivingHeight;
+  bool mVideoLatencyTestEnable;
+  uint64_t mVideoLatencyAvg;
+  uint32_t mMinBitrate;
+  uint32_t mStartBitrate;
+  uint32_t mMaxBitrate;
+
+  static const unsigned int sAlphaNum = 7;
+  static const unsigned int sAlphaDen = 8;
+  static const unsigned int sRoundingPadding = 1024;
 
   mozilla::RefPtr<WebrtcAudioConduit> mSyncedTo;
+
+  nsAutoPtr<VideoCodecConfig> mExternalSendCodec;
+  nsAutoPtr<VideoCodecConfig> mExternalRecvCodec;
 };
 
 } // end namespace

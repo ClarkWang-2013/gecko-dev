@@ -59,13 +59,13 @@ using namespace mozilla::gfx;
 namespace mozilla {
 namespace widget {
 
-NS_IMPL_ISUPPORTS1(myDownloadObserver, nsIDownloadObserver)
+NS_IMPL_ISUPPORTS(myDownloadObserver, nsIDownloadObserver)
 #ifdef MOZ_PLACES
-NS_IMPL_ISUPPORTS1(AsyncFaviconDataReady, nsIFaviconDataCallback)
+NS_IMPL_ISUPPORTS(AsyncFaviconDataReady, nsIFaviconDataCallback)
 #endif
-NS_IMPL_ISUPPORTS1(AsyncEncodeAndWriteIcon, nsIRunnable)
-NS_IMPL_ISUPPORTS1(AsyncDeleteIconFromDisk, nsIRunnable)
-NS_IMPL_ISUPPORTS1(AsyncDeleteAllFaviconsFromDisk, nsIRunnable)
+NS_IMPL_ISUPPORTS(AsyncEncodeAndWriteIcon, nsIRunnable)
+NS_IMPL_ISUPPORTS(AsyncDeleteIconFromDisk, nsIRunnable)
+NS_IMPL_ISUPPORTS(AsyncDeleteAllFaviconsFromDisk, nsIRunnable)
 
 
 const char FaviconHelper::kJumpListCacheDir[] = "jumpListCache";
@@ -208,6 +208,14 @@ WinUtils::LogToPhysFactor()
     HDC hdc = ::GetDC(nullptr);
     double result = ::GetDeviceCaps(hdc, LOGPIXELSY) / 96.0;
     ::ReleaseDC(nullptr, hdc);
+
+    if (result == 0) {
+      // Bug 1012487 - This can occur when the Screen DC is used off the
+      // main thread on windows. For now just assume a 100% DPI for this
+      // drawing call.
+      // XXX - fixme!
+      result = 1.0;
+    }
     return result;
   }
 }
@@ -268,6 +276,28 @@ WinUtils::GetMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
   }
 #endif // #ifdef NS_ENABLE_TSF
   return ::GetMessageW(aMsg, aWnd, aFirstMessage, aLastMessage);
+}
+
+/* static */
+void
+WinUtils::WaitForMessage()
+{
+  DWORD result = ::MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT,
+                                               MWMO_INPUTAVAILABLE);
+  NS_WARN_IF_FALSE(result != WAIT_FAILED, "Wait failed");
+
+  // This idiom is taken from the Chromium ipc code, see
+  // ipc/chromium/src/base/message+puimp_win.cpp:270.
+  // The intent is to avoid a busy wait when MsgWaitForMultipleObjectsEx
+  // returns quickly but PeekMessage would not return a message.
+  if (result == WAIT_OBJECT_0) {
+    MSG msg = {0};
+    DWORD queue_status = ::GetQueueStatus(QS_MOUSE);
+    if (HIWORD(queue_status) & QS_MOUSE &&
+        !PeekMessage(&msg, NULL, WM_MOUSEFIRST, WM_MOUSELAST, PM_NOREMOVE)) {
+      ::WaitMessage();
+    }
+  }
 }
 
 /* static */
@@ -1095,7 +1125,7 @@ nsresult FaviconHelper::GetOutputIconPath(nsCOMPtr<nsIURI> aFaviconPageURI,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Append the icon extension
-  inputURIHash.Append(".ico");
+  inputURIHash.AppendLiteral(".ico");
   rv = aICOFile->AppendNative(inputURIHash);
 
   return rv;

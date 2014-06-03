@@ -39,7 +39,7 @@ private:
   nsLoadFlags                 mLoadFlags;
 };
 
-NS_IMPL_ISUPPORTS3(DummyChannel, nsIRequest, nsIChannel, nsIJARChannel)
+NS_IMPL_ISUPPORTS(DummyChannel, nsIRequest, nsIChannel, nsIJARChannel)
 
 DummyChannel::DummyChannel() : mPending(false)
                              , mSuspendCount(0)
@@ -114,6 +114,11 @@ NS_IMETHODIMP DummyChannel::GetIsUnsafe(bool *aResult)
 }
 
 NS_IMETHODIMP DummyChannel::SetAppURI(nsIURI *aURI)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP DummyChannel::GetJarFile(nsIFile* *aFile)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -273,7 +278,7 @@ AppProtocolHandler::~AppProtocolHandler() {
   mAppInfoCache.Clear();
 }
 
-NS_IMPL_ISUPPORTS1(AppProtocolHandler, nsIProtocolHandler)
+NS_IMPL_ISUPPORTS(AppProtocolHandler, nsIProtocolHandler)
 
 /* static */
 nsresult

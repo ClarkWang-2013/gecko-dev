@@ -126,6 +126,9 @@ public:
   // Possible values at nsIDOMMouseEvent
   uint16_t inputSource;
 
+  // ID of the canvas HitRegion
+  nsString region;
+
   void AssignMouseEventBaseData(const WidgetMouseEventBase& aEvent,
                                 bool aCopyTargets)
   {
@@ -188,9 +191,6 @@ protected:
     reason(aReason), context(eNormal), exit(eChild), clickCount(0)
   {
     switch (aMessage) {
-      case NS_MOUSE_MOVE:
-        mFlags.mCancelable = false;
-        break;
       case NS_MOUSEENTER:
       case NS_MOUSELEAVE:
         mFlags.mBubbles = false;
@@ -211,9 +211,6 @@ public:
     reason(aReason), context(aContext), exit(eChild), clickCount(0)
   {
     switch (aMessage) {
-      case NS_MOUSE_MOVE:
-        mFlags.mCancelable = false;
-        break;
       case NS_MOUSEENTER:
       case NS_MOUSELEAVE:
         mFlags.mBubbles = false;

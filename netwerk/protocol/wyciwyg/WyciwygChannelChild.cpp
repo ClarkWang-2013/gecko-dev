@@ -24,11 +24,11 @@ using namespace mozilla::ipc;
 namespace mozilla {
 namespace net {
 
-NS_IMPL_ISUPPORTS4(WyciwygChannelChild,
-                   nsIRequest,
-                   nsIChannel,
-                   nsIWyciwygChannel,
-                   nsIPrivateBrowsingChannel)
+NS_IMPL_ISUPPORTS(WyciwygChannelChild,
+                  nsIRequest,
+                  nsIChannel,
+                  nsIWyciwygChannel,
+                  nsIPrivateBrowsingChannel)
 
 
 WyciwygChannelChild::WyciwygChannelChild()
@@ -513,7 +513,7 @@ WyciwygChannelChild::SetContentType(const nsACString & aContentType)
 NS_IMETHODIMP
 WyciwygChannelChild::GetContentCharset(nsACString & aContentCharset)
 {
-  aContentCharset.Assign("UTF-16");
+  aContentCharset.AssignLiteral("UTF-16");
   return NS_OK;
 }
 NS_IMETHODIMP

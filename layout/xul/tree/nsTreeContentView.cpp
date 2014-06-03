@@ -110,11 +110,11 @@ NS_NewTreeContentView(nsITreeView** aResult)
   return NS_OK;
 }
 
-NS_IMPL_CYCLE_COLLECTION_4(nsTreeContentView,
-                           mBoxObject,
-                           mSelection,
-                           mRoot,
-                           mBody)
+NS_IMPL_CYCLE_COLLECTION(nsTreeContentView,
+                         mBoxObject,
+                         mSelection,
+                         mRoot,
+                         mBody)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsTreeContentView)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsTreeContentView)
@@ -555,7 +555,7 @@ nsTreeContentView::CycleHeader(nsITreeColumn* aCol)
 
         nsAutoString hints;
         column->GetAttr(kNameSpaceID_None, nsGkAtoms::sorthints, hints);
-        sortdirection.AppendLiteral(" ");
+        sortdirection.Append(' ');
         sortdirection += hints;
 
         nsCOMPtr<nsIDOMNode> rootnode = do_QueryInterface(mRoot);

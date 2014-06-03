@@ -404,8 +404,8 @@ nsWindow::ReleaseGlobals()
   }
 }
 
-NS_IMPL_ISUPPORTS_INHERITED1(nsWindow, nsBaseWidget,
-                             nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS_INHERITED(nsWindow, nsBaseWidget,
+                            nsISupportsWeakReference)
 
 void
 nsWindow::CommonCreate(nsIWidget *aParent, bool aListenForResizes)
@@ -1507,8 +1507,9 @@ nsWindow::SetCursor(nsCursor aCursor)
     }
 
     // Only change cursor if it's actually been changed
-    if (aCursor != mCursor) {
+    if (aCursor != mCursor || mUpdateCursor) {
         GdkCursor *newCursor = nullptr;
+        mUpdateCursor = false;
 
         newCursor = get_gtk_cursor(aCursor);
 
@@ -2220,7 +2221,7 @@ nsWindow::OnExposeEvent(cairo_t *cr)
         }
     }
 #  ifdef MOZ_HAVE_SHMIMAGE
-    if (nsShmImage::UseShm() && MOZ_LIKELY(!mIsDestroyed)) {
+    if (mShmImage && MOZ_LIKELY(!mIsDestroyed)) {
 #if (MOZ_WIDGET_GTK == 2)
         mShmImage->Put(mGdkWindow, exposeRegion.mRects, exposeRegion.mRectsEnd);
 #else
@@ -2267,7 +2268,10 @@ nsWindow::UpdateAlpha(gfxPattern* aPattern, nsIntRect aBoundsRect)
                                 stride, SurfaceFormat::A8);
 
     if (drawTarget) {
-        drawTarget->FillRect(Rect(0, 0, aBoundsRect.width, aBoundsRect.height),
+        Matrix transform = Matrix::Translation(-aBoundsRect.x, -aBoundsRect.y);
+        drawTarget->SetTransform(transform);
+
+        drawTarget->FillRect(Rect(aBoundsRect.x, aBoundsRect.y, aBoundsRect.width, aBoundsRect.height),
                              *aPattern->GetPattern(drawTarget),
                              DrawOptions(1.0, CompositionOp::OP_SOURCE));
     }
@@ -3289,7 +3293,7 @@ GetBrandName(nsXPIDLString& brandName)
             getter_Copies(brandName));
 
     if (brandName.IsEmpty())
-        brandName.Assign(NS_LITERAL_STRING("Mozilla"));
+        brandName.AssignLiteral(MOZ_UTF16("Mozilla"));
 }
 
 static GdkWindow *

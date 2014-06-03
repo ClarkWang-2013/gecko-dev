@@ -18,14 +18,14 @@ intr protocol PJavaScript
 {
     manager PContent;
 
-child:
-    // The parent process no longer holds any references to the child object.
+both:
+    // Sent when a CPOW has been finalized and table entries can be freed up.
     async DropObject(uint64_t objId);
 
     // These roughly map to the ProxyHandler hooks that CPOWs need.
     rpc PreventExtensions(uint64_t objId) returns (ReturnStatus rs);
-    rpc GetPropertyDescriptor(uint64_t objId, nsString id, uint32_t flags) returns (ReturnStatus rs, PPropertyDescriptor result);
-    rpc GetOwnPropertyDescriptor(uint64_t objId, nsString id, uint32_t flags) returns (ReturnStatus rs, PPropertyDescriptor result);
+    rpc GetPropertyDescriptor(uint64_t objId, nsString id) returns (ReturnStatus rs, PPropertyDescriptor result);
+    rpc GetOwnPropertyDescriptor(uint64_t objId, nsString id) returns (ReturnStatus rs, PPropertyDescriptor result);
     rpc DefineProperty(uint64_t objId, nsString id, PPropertyDescriptor descriptor) returns (ReturnStatus rs);
     rpc Delete(uint64_t objId, nsString id) returns (ReturnStatus rs, bool successful);
 

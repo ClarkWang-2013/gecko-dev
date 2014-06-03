@@ -22,8 +22,10 @@
 #include "nsMimeTypes.h"
 #include "nsPresContext.h"
 #include "nsRect.h"
+#include "nsString.h"
 #include "nsStubDocumentObserver.h"
 #include "nsSVGEffects.h" // for nsSVGRenderingObserver
+#include "nsWindowMemoryReporter.h"
 #include "Orientation.h"
 #include "SVGDocumentWrapper.h"
 #include "nsIDOMEventListener.h"
@@ -159,7 +161,7 @@ private:
   VectorImage* const mImage; // Raw pointer to owner.
 };
 
-NS_IMPL_ISUPPORTS1(SVGParseCompleteListener, nsIDocumentObserver)
+NS_IMPL_ISUPPORTS(SVGParseCompleteListener, nsIDocumentObserver)
 
 class SVGLoadEventListener MOZ_FINAL : public nsIDOMEventListener {
 public:
@@ -228,7 +230,7 @@ private:
   VectorImage* const mImage; // Raw pointer to owner.
 };
 
-NS_IMPL_ISUPPORTS1(SVGLoadEventListener, nsIDOMEventListener)
+NS_IMPL_ISUPPORTS(SVGLoadEventListener, nsIDOMEventListener)
 
 // Helper-class: SVGDrawingCallback
 class SVGDrawingCallback : public gfxDrawingCallback {
@@ -302,10 +304,10 @@ SVGDrawingCallback::operator()(gfxContext* aContext,
 }
 
 // Implement VectorImage's nsISupports-inherited methods
-NS_IMPL_ISUPPORTS3(VectorImage,
-                   imgIContainer,
-                   nsIStreamListener,
-                   nsIRequestObserver)
+NS_IMPL_ISUPPORTS(VectorImage,
+                  imgIContainer,
+                  nsIStreamListener,
+                  nsIRequestObserver)
 
 //------------------------------------------------------------------------------
 // Constructor / Destructor
@@ -359,26 +361,59 @@ VectorImage::HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocS
   // We're not storing the source data -- we just feed that directly to
   // our helper SVG document as we receive it, for it to parse.
   // So 0 is an appropriate return value here.
+  // If implementing this, we'll need to restructure our callers to make sure
+  // any amount we return is attributed to the vector images measure (i.e.
+  // "explicit/images/{content,chrome}/vector/{used,unused}/...")
   return 0;
 }
 
 size_t
 VectorImage::HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const
 {
-  // XXXdholbert TODO: return num bytes used by helper SVG doc. (bug 590790)
+  // If implementing this, we'll need to restructure our callers to make sure
+  // any amount we return is attributed to the vector images measure (i.e.
+  // "explicit/images/{content,chrome}/vector/{used,unused}/...")
   return 0;
 }
 
 size_t
 VectorImage::NonHeapSizeOfDecoded() const
 {
+  // If implementing this, we'll need to restructure our callers to make sure
+  // any amount we return is attributed to the vector images measure (i.e.
+  // "explicit/images/{content,chrome}/vector/{used,unused}/...")
   return 0;
 }
 
 size_t
 VectorImage::OutOfProcessSizeOfDecoded() const
 {
+  // If implementing this, we'll need to restructure our callers to make sure
+  // any amount we return is attributed to the vector images measure (i.e.
+  // "explicit/images/{content,chrome}/vector/{used,unused}/...")
   return 0;
+}
+
+MOZ_DEFINE_MALLOC_SIZE_OF(WindowsMallocSizeOf);
+
+size_t
+VectorImage::HeapSizeOfVectorImageDocument(nsACString* aDocURL) const
+{
+  nsIDocument* doc = mSVGDocumentWrapper->GetDocument();
+  if (!doc) {
+    if (aDocURL) {
+      mURI->GetSpec(*aDocURL);
+    }
+    return 0; // No document, so no memory used for the document
+  }
+
+  if (aDocURL) {
+    doc->GetDocumentURI()->GetSpec(*aDocURL);
+  }
+
+  nsWindowSizes windowSizes(WindowsMallocSizeOf);
+  doc->DocAddSizeOfIncludingThis(&windowSizes);
+  return windowSizes.getTotalSize();
 }
 
 nsresult
@@ -492,8 +527,13 @@ VectorImage::GetWidth(int32_t* aWidth)
 NS_IMETHODIMP_(void)
 VectorImage::RequestRefresh(const mozilla::TimeStamp& aTime)
 {
-  // TODO: Implement for b666446.
+  if (HadRecentRefresh(aTime)) {
+    return;
+  }
+
   EvaluateAnimation();
+
+  mSVGDocumentWrapper->TickRefreshDriver();
 
   if (mHasPendingInvalidation) {
     SendInvalidationNotifications();
@@ -680,6 +720,11 @@ VectorImage::GetFrame(uint32_t aWhichFrame,
     CreateOffscreenContentDrawTarget(IntSize(imageIntSize.width,
                                              imageIntSize.height),
                                      SurfaceFormat::B8G8R8A8);
+  if (!dt) {
+    NS_ERROR("Could not create a DrawTarget");
+    return nullptr;
+  }
+
   nsRefPtr<gfxContext> context = new gfxContext(dt);
 
   nsresult rv = Draw(context, GraphicsFilter::FILTER_NEAREST, gfxMatrix(),

@@ -67,43 +67,13 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
   "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Deprecated",
   "resource://gre/modules/Deprecated.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "AsyncShutdown",
+  "resource://gre/modules/AsyncShutdown.jsm");
 
 /**
  * Utilities for dealing with promises and Task.jsm
  */
 const TaskUtils = {
-  /**
-   * Add logging to a promise.
-   *
-   * @param {Promise} promise
-   * @return {Promise} A promise behaving as |promise|, but with additional
-   * logging in case of uncaught error.
-   */
-  captureErrors: function captureErrors(promise) {
-    return promise.then(
-      null,
-      function onError(reason) {
-        Cu.reportError("Uncaught asynchronous error: " + reason + " at\n"
-          + reason.stack + "\n");
-        throw reason;
-      }
-    );
-  },
-
-  /**
-   * Spawn a new Task from a generator.
-   *
-   * This function behaves as |Task.spawn|, with the exception that it
-   * adds logging in case of uncaught error. For more information, see
-   * the documentation of |Task.jsm|.
-   *
-   * @param {generator} gen Some generator.
-   * @return {Promise} A promise built from |gen|, with the same semantics
-   * as |Task.spawn(gen)|.
-   */
-  spawn: function spawn(gen) {
-    return this.captureErrors(Task.spawn(gen));
-  },
   /**
    * Read the bytes from a blob, asynchronously.
    *
@@ -298,7 +268,7 @@ this.PageThumbs = {
     // see if this was an error response.
     let wasError = this._isChannelErrorResponse(channel);
 
-    TaskUtils.spawn((function task() {
+    Task.spawn((function task() {
       let isSuccess = true;
       try {
         let blob = yield this.captureToBlob(aBrowser.contentWindow);
@@ -353,7 +323,7 @@ this.PageThumbs = {
    * @return {Promise}
    */
   _store: function PageThumbs__store(aOriginalURL, aFinalURL, aData, aNoOverwrite) {
-    return TaskUtils.spawn(function () {
+    return Task.spawn(function () {
       let telemetryStoreTime = new Date();
       yield PageThumbsStorage.writeData(aFinalURL, aData, aNoOverwrite);
       Services.telemetry.getHistogramById("FX_THUMBNAILS_STORE_TIME_MS")
@@ -605,9 +575,44 @@ this.PageThumbsStorage = {
    *
    * @return {Promise}
    */
-  wipe: function Storage_wipe() {
-    return PageThumbsWorker.post("wipe", [this.path]);
-  },
+  wipe: Task.async(function* Storage_wipe() {
+    //
+    // This operation may be launched during shutdown, so we need to
+    // take a few precautions to ensure that:
+    //
+    // 1. it is not interrupted by shutdown, in which case we
+    //    could be leaving privacy-sensitive files on disk;
+    // 2. it is not launched too late during shutdown, in which
+    //    case this could cause shutdown freezes (see bug 1005487,
+    //    which will eventually be fixed by bug 965309)
+    //
+
+    let blocker = () => promise;
+
+    // The following operation will rise an error if we have already
+    // reached profileBeforeChange, in which case it is too late
+    // to clear the thumbnail wipe.
+    AsyncShutdown.profileBeforeChange.addBlocker(
+      "PageThumbs: removing all thumbnails",
+      blocker);
+
+    // Start the work only now that `profileBeforeChange` has had
+    // a chance to throw an error.
+
+    let promise = PageThumbsWorker.post("wipe", [this.path]);
+    try {
+      yield promise;
+    }  finally {
+       // Generally, we will be done much before profileBeforeChange,
+       // so let's not hoard blockers.
+       if ("removeBlocker" in AsyncShutdown.profileBeforeChange) {
+         // `removeBlocker` was added with bug 985655. In the interest
+         // of backporting, let's degrade gracefully if `removeBlocker`
+         // doesn't exist.
+         AsyncShutdown.profileBeforeChange.removeBlocker(blocker);
+       }
+    }
+  }),
 
   fileExistsForURL: function Storage_fileExistsForURL(aURL) {
     return PageThumbsWorker.post("exists", [this.getFilePathForURL(aURL)]);

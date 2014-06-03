@@ -132,7 +132,7 @@ nsListScrollSmoother::Stop()
   }
 }
 
-NS_IMPL_ISUPPORTS1(nsListScrollSmoother, nsITimerCallback)
+NS_IMPL_ISUPPORTS(nsListScrollSmoother, nsITimerCallback)
 
 /////////////// nsListBoxBodyFrame //////////////////
 
@@ -179,9 +179,9 @@ NS_QUERYFRAME_TAIL_INHERITING(nsBoxFrame)
 ////////// nsIFrame /////////////////
 
 void
-nsListBoxBodyFrame::Init(nsIContent*     aContent,
-                         nsIFrame*       aParent, 
-                         nsIFrame*       aPrevInFlow)
+nsListBoxBodyFrame::Init(nsIContent*       aContent,
+                         nsContainerFrame* aParent, 
+                         nsIFrame*         aPrevInFlow)
 {
   nsBoxFrame::Init(aContent, aParent, aPrevInFlow);
   nsIScrollableFrame* scrollFrame = nsLayoutUtils::GetScrollableFrameFor(this);

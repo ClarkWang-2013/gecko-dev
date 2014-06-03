@@ -144,6 +144,12 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   // XP topcrash with F-Secure, bug 970362
   { "fs_ccf_ni_umh32.dll", MAKE_VERSION(1, 42, 101, 0), DllBlockInfo::BLOCK_XP_ONLY },
 
+  // Topcrash with V-bates, bug 1002748
+  { "libinject.dll", UNVERSIONED },
+
+  // Crashes with RoboForm2Go written against old SDK, bug 988311
+  { "rf-firefox-22.dll", ALL_VERSIONS },
+
   { nullptr, 0 }
 };
 
@@ -448,6 +454,7 @@ patched_LdrLoadDll (PWCHAR filePath, PULONG flags, PUNICODE_STRING moduleFileNam
 #define DLLNAME_MAX 128
   char dllName[DLLNAME_MAX+1];
   wchar_t *dll_part;
+  char *dot;
   DllBlockInfo *info;
 
   int len = moduleFileName->Length / 2;
@@ -511,6 +518,17 @@ patched_LdrLoadDll (PWCHAR filePath, PULONG flags, PUNICODE_STRING moduleFileNam
 #ifdef DEBUG_very_verbose
   printf_stderr("LdrLoadDll: dll name '%s'\n", dllName);
 #endif
+
+  // Block a suspicious binary that uses various 12-digit hex strings
+  // e.g. MovieMode.48CA2AEFA22D.dll (bug 973138)
+  dot = strchr(dllName, '.');
+  if (dot && (strchr(dot+1, '.') == dot+13)) {
+    char * end = nullptr;
+    _strtoui64(dot+1, &end, 16);
+    if (end == dot+13) {
+      return STATUS_DLL_NOT_FOUND;
+    }
+  }
 
   // then compare to everything on the blocklist
   info = &sWindowsDllBlocklist[0];

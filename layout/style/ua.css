@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@import url(resource://gre-resources/html.css);
-@import url(chrome://global/content/xul.css);
-
 @namespace parsererror url(http://www.mozilla.org/newlayout/xml/parsererror.xml);
 @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 
@@ -80,9 +77,6 @@
 *|*::-moz-list-bullet, *|*::-moz-list-number {
   display: inline;
   vertical-align: baseline;
-  /* Note that this padding is suppressed for some CJK numbering styles;
-   * see bug 934072 */
-  -moz-padding-end: 0.5em;
 }
 
 /* Links */
@@ -181,9 +175,10 @@
   height: 100%;
 }
 
-*|*::-moz-anonymous-flex-item {
-  /* Anonymous blocks that wrap contiguous runs of inline non-replaced
-   * content inside of a flex container. */
+*|*::-moz-anonymous-flex-item,
+*|*::-moz-anonymous-grid-item {
+  /* Anonymous blocks that wrap contiguous runs of text
+   * inside of a flex or grid container. */
   display: block;
 }
 

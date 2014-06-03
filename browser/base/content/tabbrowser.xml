@@ -34,7 +34,7 @@
             <xul:hbox flex="1" class="browserSidebarContainer">
               <xul:vbox flex="1" class="browserContainer">
                 <xul:stack flex="1" class="browserStack" anonid="browserStack">
-                  <xul:browser anonid="initialBrowser" type="content-primary" message="true"
+                  <xul:browser anonid="initialBrowser" type="content-primary" message="true" messagemanagergroup="browsers"
                                xbl:inherits="tooltip=contenttooltip,contextmenu=contentcontextmenu,autocompletepopup,selectpopup"/>
                 </xul:stack>
               </xul:vbox>
@@ -1529,6 +1529,7 @@
                                              "browser");
             b.setAttribute("type", "content-targetable");
             b.setAttribute("message", "true");
+            b.setAttribute("messagemanagergroup", "browsers");
             b.setAttribute("contextmenu", this.getAttribute("contentcontextmenu"));
             b.setAttribute("tooltip", this.getAttribute("contenttooltip"));
 
@@ -1913,7 +1914,7 @@
             if (this.tabs.length - this._removingTabs.length == 1) {
               closeWindow = aCloseWindowWithLastTab != null ? aCloseWindowWithLastTab :
                             !window.toolbar.visible ||
-                              this.tabContainer._closeWindowWithLastTab;
+                              Services.prefs.getBoolPref("browser.tabs.closeWindowWithLastTab");
 
               // Closing the tab and replacing it with a blank one is notably slower
               // than closing the window right away. If the caller opts in, take
@@ -2519,6 +2520,19 @@
           ]]>
         </body>
       </method>
+
+#ifdef E10S_TESTING_ONLY
+      <!-- Opens a given tab to a non-remote window. -->
+      <method name="openNonRemoteWindow">
+        <parameter name="aTab"/>
+        <body>
+          <![CDATA[
+            let url = aTab.linkedBrowser.currentURI.spec;
+            return window.openDialog("chrome://browser/content/", "_blank", "chrome,all,dialog=no,non-remote", url);
+          ]]>
+        </body>
+      </method>
+#endif
 
       <method name="moveTabTo">
         <parameter name="aTab"/>
@@ -3323,11 +3337,8 @@
       <handler event="overflow"><![CDATA[
         if (event.detail == 0)
           return; // Ignore vertical events
-        var tabs = document.getBindingParent(this);
-        var numberOfTabs = tabs.tabbrowser.visibleTabs.length;
-        if (numberOfTabs == 1)
-          return;
 
+        var tabs = document.getBindingParent(this);
         tabs.setAttribute("overflow", "true");
         tabs._positionPinnedTabs();
         tabs._handleTabSelect(false);
@@ -3358,11 +3369,12 @@
 # button, necessary due to the previous hack.
         <children/>
         <xul:toolbarbutton class="tabs-newtab-button"
+                           anonid="tabs-newtab-button"
                            command="cmd_newNavigatorTab"
                            onclick="checkForMiddleClick(this, event);"
                            onmouseover="document.getBindingParent(this)._enterNewTab();"
                            onmouseout="document.getBindingParent(this)._leaveNewTab();"
-                           tooltiptext="&newTabButton.tooltip;"/>
+                           tooltip="dynamic-shortcut-tooltip"/>
         <xul:spacer class="closing-tabs-spacer" anonid="closing-tabs-spacer"
                     style="width: 0;"/>
       </xul:arrowscrollbox>
@@ -3372,16 +3384,12 @@
       <constructor>
         <![CDATA[
           this.mTabClipWidth = Services.prefs.getIntPref("browser.tabs.tabClipWidth");
-          this.mCloseButtons = Services.prefs.getIntPref("browser.tabs.closeButtons");
-          this._closeWindowWithLastTab = Services.prefs.getBoolPref("browser.tabs.closeWindowWithLastTab");
 
           var tab = this.firstChild;
           tab.label = this.tabbrowser.mStringBundle.getString("tabs.emptyTabTitle");
           tab.setAttribute("crop", "end");
           tab.setAttribute("onerror", "this.removeAttribute('image');");
-          this.adjustTabstrip();
 
-          Services.prefs.addObserver("browser.tabs.", this._prefObserver, false);
           window.addEventListener("resize", this, false);
           window.addEventListener("load", this, false);
 
@@ -3393,12 +3401,6 @@
           this._browserNewtabpageEnabled = Services.prefs.getBoolPref("browser.newtabpage.enabled");
         ]]>
       </constructor>
-
-      <destructor>
-        <![CDATA[
-          Services.prefs.removeObserver("browser.tabs.", this._prefObserver);
-        ]]>
-      </destructor>
 
       <field name="tabbrowser" readonly="true">
         document.getElementById(this.getAttribute("tabbrowser"));
@@ -3471,22 +3473,6 @@
         ]]></body>
       </method>
 
-      <field name="_prefObserver"><![CDATA[({
-        tabContainer: this,
-
-        observe: function (subject, topic, data) {
-          switch (data) {
-            case "browser.tabs.closeButtons":
-              this.tabContainer.mCloseButtons = Services.prefs.getIntPref(data);
-              this.tabContainer.adjustTabstrip();
-              break;
-            case "browser.tabs.closeWindowWithLastTab":
-              this.tabContainer._closeWindowWithLastTab = Services.prefs.getBoolPref(data);
-              this.tabContainer.adjustTabstrip();
-              break;
-          }
-        }
-      });]]></field>
       <field name="_blockDblClick">false</field>
 
       <field name="_tabDropIndicator">
@@ -3563,42 +3549,23 @@
         <body><![CDATA[
           let numTabs = this.childNodes.length -
                         this.tabbrowser._removingTabs.length;
-          // modes for tabstrip
-          // 0 - button on active tab only
-          // 1 - close buttons on all tabs
-          // 2 - no close buttons at all
-          // 3 - close button at the end of the tabstrip
-          switch (this.mCloseButtons) {
-          case 0:
-            this.setAttribute("closebuttons", "activetab");
-            break;
-          case 1:
-            if (numTabs <= 2) {
-              // This is an optimization to avoid layout flushes by calling
-              // getBoundingClientRect() when we just opened a second tab. In
-              // this case it's highly unlikely that the tab width is smaller
-              // than mTabClipWidth and the tab close button obscures too much
-              // of the tab's label. In the edge case of the window being too
-              // narrow (or if tabClipWidth has been set to a way higher value),
-              // we'll correct the 'closebuttons' attribute after the tabopen
-              // animation has finished.
-              this.setAttribute("closebuttons", "alltabs");
-            } else {
-              let tab = this.tabbrowser.visibleTabs[this.tabbrowser._numPinnedTabs];
-              if (tab && tab.getBoundingClientRect().width > this.mTabClipWidth)
-                this.setAttribute("closebuttons", "alltabs");
-              else
-                this.setAttribute("closebuttons", "activetab");
+          if (numTabs > 2) {
+            // This is an optimization to avoid layout flushes by calling
+            // getBoundingClientRect() when we just opened a second tab. In
+            // this case it's highly unlikely that the tab width is smaller
+            // than mTabClipWidth and the tab close button obscures too much
+            // of the tab's label. In the edge case of the window being too
+            // narrow (or if tabClipWidth has been set to a way higher value),
+            // we'll correct the 'closebuttons' attribute after the tabopen
+            // animation has finished.
+
+            let tab = this.tabbrowser.visibleTabs[this.tabbrowser._numPinnedTabs];
+            if (tab && tab.getBoundingClientRect().width <= this.mTabClipWidth) {
+              this.setAttribute("closebuttons", "activetab");
+              return;
             }
-            break;
-          case 2:
-          case 3:
-            this.setAttribute("closebuttons", "never");
-            break;
           }
-          var tabstripClosebutton = document.getElementById("tabs-closebutton");
-          if (tabstripClosebutton && tabstripClosebutton.parentNode == this._container)
-            tabstripClosebutton.collapsed = this.mCloseButtons != 3;
+          this.removeAttribute("closebuttons");
         ]]></body>
       </method>
 
@@ -3891,14 +3858,12 @@
 
               TabsInTitlebar.updateAppearance();
 
-              if (this.tabbrowser.visibleTabs.length > 1) {
-                var width = this.mTabstrip.boxObject.width;
-                if (width != this.mTabstripWidth) {
-                  this.adjustTabstrip();
-                  this._fillTrailingGap();
-                  this._handleTabSelect();
-                  this.mTabstripWidth = width;
-                }
+              var width = this.mTabstrip.boxObject.width;
+              if (width != this.mTabstripWidth) {
+                this.adjustTabstrip();
+                this._fillTrailingGap();
+                this._handleTabSelect();
+                this.mTabstripWidth = width;
               }
 
               this.tabbrowser.updateWindowResizers();
@@ -4272,8 +4237,7 @@
           return;
 
         if (event.target.localName == "tab") {
-          if (this.childNodes.length > 1 || !this._closeWindowWithLastTab)
-            this.tabbrowser.removeTab(event.target, {animate: true, byMouse: true});
+          this.tabbrowser.removeTab(event.target, {animate: true, byMouse: true});
         } else if (event.originalTarget.localName == "box") {
           BrowserOpenTab();
         } else {
@@ -4687,8 +4651,7 @@
                   class="tab-content" align="center">
           <xul:image xbl:inherits="fadein,pinned,busy,progress,selected"
                      class="tab-throbber"
-                     role="presentation"
-                     layer="true" />
+                     role="presentation"/>
           <xul:image xbl:inherits="src=image,fadein,pinned,selected"
                      anonid="tab-icon-image"
                      class="tab-icon-image"

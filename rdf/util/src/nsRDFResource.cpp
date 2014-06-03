@@ -42,7 +42,7 @@ nsRDFResource::~nsRDFResource(void)
         NS_RELEASE(gRDFService);
 }
 
-NS_IMPL_ISUPPORTS2(nsRDFResource, nsIRDFResource, nsIRDFNode)
+NS_IMPL_ISUPPORTS(nsRDFResource, nsIRDFResource, nsIRDFNode)
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsIRDFNode methods:
@@ -155,7 +155,7 @@ nsRDFResource::GetDelegate(const char* aKey, REFNSIID aIID, void** aResult)
     // Construct a ContractID of the form "@mozilla.org/rdf/delegate/[key]/[scheme];1
     nsAutoCString contractID(NS_RDF_DELEGATEFACTORY_CONTRACTID_PREFIX);
     contractID.Append(aKey);
-    contractID.Append("&scheme=");
+    contractID.AppendLiteral("&scheme=");
 
     int32_t i = mURI.FindChar(':');
     contractID += StringHead(mURI, i);

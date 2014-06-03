@@ -24,8 +24,8 @@
     _(TableSwitchV)                 \
     _(Goto)                         \
     _(NewArray)                     \
+    _(ArraySplice)                  \
     _(NewObject)                    \
-    _(NewSlots)                     \
     _(NewDeclEnvObject)             \
     _(NewCallObject)                \
     _(NewSingletonCallObject)       \
@@ -147,7 +147,7 @@
     _(BooleanToString)              \
     _(IntToString)                  \
     _(DoubleToString)               \
-    _(PrimitiveToString)            \
+    _(ValueToString)                \
     _(Start)                        \
     _(OsrEntry)                     \
     _(OsrValue)                     \
@@ -163,7 +163,6 @@
     _(LambdaArrow)                  \
     _(LambdaForSingleton)           \
     _(LambdaPar)                    \
-    _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \
     _(ConvertElementsToDoubles)     \
@@ -173,6 +172,7 @@
     _(StoreSlotV)                   \
     _(StoreSlotT)                   \
     _(GuardShape)                   \
+    _(GuardShapePolymorphic)        \
     _(GuardObjectType)              \
     _(GuardObjectIdentity)          \
     _(GuardClass)                   \
@@ -233,7 +233,7 @@
     _(CallInitElementArray)         \
     _(CallSetProperty)              \
     _(CallDeleteProperty)           \
-    _(CallDeleteElement)           \
+    _(CallDeleteElement)            \
     _(SetPropertyCacheV)            \
     _(SetPropertyCacheT)            \
     _(SetElementCacheV)             \
@@ -264,6 +264,8 @@
     _(ToIdV)                        \
     _(Floor)                        \
     _(FloorF)                       \
+    _(Ceil)                         \
+    _(CeilF)                        \
     _(Round)                        \
     _(RoundF)                       \
     _(In)                           \
@@ -280,7 +282,7 @@
     _(CallDOMNative)                \
     _(IsCallable)                   \
     _(HaveSameClass)                \
-    _(HasClass)                      \
+    _(HasClass)                     \
     _(AsmJSLoadHeap)                \
     _(AsmJSStoreHeap)               \
     _(AsmJSLoadGlobalVar)           \
@@ -291,7 +293,6 @@
     _(AsmJSVoidReturn)              \
     _(AsmJSPassStackArg)            \
     _(AsmJSCall)                    \
-    _(AsmJSCheckOverRecursed)       \
     _(InterruptCheckPar)            \
     _(RecompileCheck)               \
     _(AssertRangeI)                 \

@@ -43,8 +43,8 @@ nsStreamLoader::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)
   return rv;
 }
 
-NS_IMPL_ISUPPORTS3(nsStreamLoader, nsIStreamLoader,
-                   nsIRequestObserver, nsIStreamListener)
+NS_IMPL_ISUPPORTS(nsStreamLoader, nsIStreamLoader,
+                  nsIRequestObserver, nsIStreamListener)
 
 NS_IMETHODIMP 
 nsStreamLoader::GetNumBytesRead(uint32_t* aNumBytes)
@@ -91,7 +91,9 @@ NS_IMETHODIMP
 nsStreamLoader::OnStopRequest(nsIRequest* request, nsISupports *ctxt,
                               nsresult aStatus)
 {
-  PROFILER_LABEL("network", "nsStreamLoader::OnStopRequest");
+  PROFILER_LABEL("nsStreamLoader", "OnStopRequest",
+    js::ProfileEntry::Category::NETWORK);
+
   if (mObserver) {
     // provide nsIStreamLoader::request during call to OnStreamComplete
     mRequest = request;

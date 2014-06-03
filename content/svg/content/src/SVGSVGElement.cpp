@@ -11,6 +11,7 @@
 
 #include "nsGkAtoms.h"
 #include "nsLayoutUtils.h"
+#include "nsLayoutStylesheetCache.h"
 #include "DOMSVGNumber.h"
 #include "DOMSVGLength.h"
 #include "nsSVGAngle.h"
@@ -55,8 +56,8 @@ SVGSVGElement::WrapNode(JSContext *aCx)
   return SVGSVGElementBinding::Wrap(aCx, this);
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(DOMSVGTranslatePoint, nsISVGPoint,
-                                     mElement)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(DOMSVGTranslatePoint, nsISVGPoint,
+                                   mElement)
 
 NS_IMPL_ADDREF_INHERITED(DOMSVGTranslatePoint, nsISVGPoint)
 NS_IMPL_RELEASE_INHERITED(DOMSVGTranslatePoint, nsISVGPoint)
@@ -149,8 +150,8 @@ NS_IMPL_ADDREF_INHERITED(SVGSVGElement,SVGSVGElementBase)
 NS_IMPL_RELEASE_INHERITED(SVGSVGElement,SVGSVGElementBase)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(SVGSVGElement)
-  NS_INTERFACE_TABLE_INHERITED3(SVGSVGElement, nsIDOMNode, nsIDOMElement,
-                                nsIDOMSVGElement)
+  NS_INTERFACE_TABLE_INHERITED(SVGSVGElement, nsIDOMNode, nsIDOMElement,
+                               nsIDOMSVGElement)
 NS_INTERFACE_TABLE_TAIL_INHERITING(SVGSVGElementBase)
 
 //----------------------------------------------------------------------
@@ -380,10 +381,10 @@ SVGSVGElement::DeselectAll()
   }
 }
 
-already_AddRefed<nsIDOMSVGNumber>
+already_AddRefed<DOMSVGNumber>
 SVGSVGElement::CreateSVGNumber()
 {
-  nsCOMPtr<nsIDOMSVGNumber> number = new DOMSVGNumber();
+  nsRefPtr<DOMSVGNumber> number = new DOMSVGNumber(ToSupports(this));
   return number.forget();
 }
 
@@ -722,8 +723,6 @@ SVGSVGElement::BindToTree(nsIDocument* aDocument,
                           nsIContent* aBindingParent,
                           bool aCompileEventHandlers)
 {
-  static const char kSVGStyleSheetURI[] = "resource://gre/res/svg.css";
-
   nsSMILAnimationController* smilController = nullptr;
 
   if (aDocument) {
@@ -754,7 +753,8 @@ SVGSVGElement::BindToTree(nsIDocument* aDocument,
     // Setup the style sheet during binding, not element construction,
     // because we could move the root SVG element from the document
     // that created it to another document.
-    aDocument->EnsureCatalogStyleSheet(kSVGStyleSheetURI);
+    aDocument->
+      EnsureOnDemandBuiltInUASheet(nsLayoutStylesheetCache::SVGSheet());
   }
 
   if (mTimedDocumentRoot && smilController) {

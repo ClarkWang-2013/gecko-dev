@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/XPathEvaluator.h"
+#include "mozilla/Move.h"
 #include "nsCOMPtr.h"
 #include "nsIAtom.h"
 #include "nsXPathExpression.h"
@@ -58,7 +59,7 @@ private:
     bool mIsCaseSensitive;
 };
 
-NS_IMPL_ISUPPORTS1(XPathEvaluator, nsIDOMXPathEvaluator)
+NS_IMPL_ISUPPORTS(XPathEvaluator, nsIDOMXPathEvaluator)
 
 XPathEvaluator::XPathEvaluator(nsIDocument* aDocument)
     : mDocument(do_GetWeakReference(aDocument))
@@ -129,7 +130,7 @@ XPathEvaluator::CreateExpression(const nsAString & aExpression,
 
     nsCOMPtr<nsIDOMDocument> document = do_QueryReferent(mDocument);
 
-    *aResult = new nsXPathExpression(expression, mRecycler, document);
+    *aResult = new nsXPathExpression(Move(expression), mRecycler, document);
     if (!*aResult) {
         return NS_ERROR_OUT_OF_MEMORY;
     }

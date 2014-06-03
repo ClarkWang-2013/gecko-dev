@@ -101,14 +101,14 @@ AnnotatedResult::GetAnnotationValue(nsIVariant** _annotationValue)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS1(AnnotatedResult, mozIAnnotatedResult)
+NS_IMPL_ISUPPORTS(AnnotatedResult, mozIAnnotatedResult)
 
 } // namespace places
 } // namespace mozilla
 
 PLACES_FACTORY_SINGLETON_IMPLEMENTATION(nsAnnotationService, gAnnotationService)
 
-NS_IMPL_ISUPPORTS3(nsAnnotationService
+NS_IMPL_ISUPPORTS(nsAnnotationService
 , nsIAnnotationService
 , nsIObserver
 , nsISupportsWeakReference
@@ -259,7 +259,9 @@ nsAnnotationService::SetItemAnnotation(int64_t aItemId,
                                        int32_t aFlags,
                                        uint16_t aExpiration)
 {
-  PROFILER_LABEL("AnnotationService", "SetItemAnnotation");
+  PROFILER_LABEL("AnnotationService", "SetItemAnnotation",
+    js::ProfileEntry::Category::OTHER);
+
   NS_ENSURE_ARG_MIN(aItemId, 1);
   NS_ENSURE_ARG(aValue);
 

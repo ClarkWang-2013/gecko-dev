@@ -18,12 +18,14 @@ namespace mozilla {
 
 namespace layout {
 class RenderFrameChild;
+class ShadowLayerForwarder;
 }
 
 namespace layers {
 
 class LayerTransactionChild : public PLayerTransactionChild
 {
+  typedef InfallibleTArray<AsyncParentMessageData> AsyncParentMessageArray;
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(LayerTransactionChild)
   /**
@@ -37,18 +39,22 @@ public:
 
   bool IPCOpen() const { return mIPCOpen; }
 
+  void SetHasNoCompositor() { mHasNoCompositor = true; }
+  bool HasNoCompositor() { return mHasNoCompositor; }
+
+  void SetForwarder(ShadowLayerForwarder* aForwarder)
+  {
+    mForwarder = aForwarder;
+  }
+
 protected:
   LayerTransactionChild()
-    : mIPCOpen(false)
+    : mForwarder(nullptr)
+    , mIPCOpen(false)
+    , mDestroyed(false)
+    , mHasNoCompositor(false)
   {}
   ~LayerTransactionChild() { }
-
-  virtual PGrallocBufferChild*
-  AllocPGrallocBufferChild(const IntSize&,
-                           const uint32_t&, const uint32_t&,
-                           MaybeMagicGrallocBufferHandle*) MOZ_OVERRIDE;
-  virtual bool
-  DeallocPGrallocBufferChild(PGrallocBufferChild* actor) MOZ_OVERRIDE;
 
   virtual PLayerChild* AllocPLayerChild() MOZ_OVERRIDE;
   virtual bool DeallocPLayerChild(PLayerChild* actor) MOZ_OVERRIDE;
@@ -59,6 +65,9 @@ protected:
   virtual PTextureChild* AllocPTextureChild(const SurfaceDescriptor& aSharedData,
                                             const TextureFlags& aFlags) MOZ_OVERRIDE;
   virtual bool DeallocPTextureChild(PTextureChild* actor) MOZ_OVERRIDE;
+
+  virtual bool
+  RecvParentAsyncMessage(const InfallibleTArray<AsyncParentMessageData>& aMessages) MOZ_OVERRIDE;
 
   virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
@@ -75,7 +84,10 @@ protected:
   friend class CompositorChild;
   friend class layout::RenderFrameChild;
 
+  ShadowLayerForwarder* mForwarder;
   bool mIPCOpen;
+  bool mDestroyed;
+  bool mHasNoCompositor;
 };
 
 } // namespace layers

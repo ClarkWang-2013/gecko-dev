@@ -600,12 +600,12 @@ js::Int32ToString(ThreadSafeContext *cx, int32_t si)
     if (!str)
         return nullptr;
 
-    jschar buffer[JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1];
+    jschar buffer[JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1];
     size_t length;
     jschar *start = BackfillInt32InBuffer(si, buffer,
-                                          JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1, &length);
+                                          JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1, &length);
 
-    PodCopy(str->init(length), start, length + 1);
+    PodCopy(str->initTwoByte(length), start, length + 1);
 
     CacheNumber(cx, si, str);
     return str;
@@ -623,9 +623,9 @@ js::Int32ToAtom(ExclusiveContext *cx, int32_t si)
     if (JSFlatString *str = LookupInt32ToString(cx, si))
         return js::AtomizeString(cx, str);
 
-    char buffer[JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1];
+    char buffer[JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1];
     size_t length;
-    char *start = BackfillInt32InBuffer(si, buffer, JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1, &length);
+    char *start = BackfillInt32InBuffer(si, buffer, JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1, &length);
 
     JSAtom *atom = Atomize(cx, start, length);
     if (!atom)
@@ -1069,6 +1069,7 @@ static const JSFunctionSpec number_static_methods[] = {
     /* ES6 additions. */
     JS_FN("parseFloat", num_parseFloat, 1, 0),
     JS_FN("parseInt", num_parseInt, 2, 0),
+    JS_SELF_HOSTED_FN("isSafeInteger", "Number_isSafeInteger", 1,0),
     JS_FS_END
 };
 
@@ -1080,6 +1081,8 @@ enum nc_slot {
     NC_NEGATIVE_INFINITY,
     NC_MAX_VALUE,
     NC_MIN_VALUE,
+    NC_MAX_SAFE_INTEGER,
+    NC_MIN_SAFE_INTEGER,
     NC_EPSILON,
     NC_LIMIT
 };
@@ -1095,6 +1098,10 @@ static JSConstDoubleSpec number_constants[] = {
     {0,                         "NEGATIVE_INFINITY", 0,{0,0,0}},
     {1.7976931348623157E+308,   "MAX_VALUE",         0,{0,0,0}},
     {0,                         "MIN_VALUE",         0,{0,0,0}},
+    /* ES6 (April 2014 draft) 20.1.2.6 */
+    {9007199254740991,          "MAX_SAFE_INTEGER",  0,{0,0,0}},
+    /* ES6 (April 2014 draft) 20.1.2.10 */
+    {-9007199254740991,         "MIN_SAFE_INTEGER",  0,{0,0,0}},
     /* ES6 (May 2013 draft) 15.7.3.7 */
     {2.2204460492503130808472633361816e-16, "EPSILON", 0,{0,0,0}},
     {0,0,0,{0,0,0}}
@@ -1243,10 +1250,10 @@ js_InitNumberClass(JSContext *cx, HandleObject obj)
     /* ES5 15.1.1.1, 15.1.1.2 */
     if (!DefineNativeProperty(cx, global, cx->names().NaN, valueNaN,
                               JS_PropertyStub, JS_StrictPropertyStub,
-                              JSPROP_PERMANENT | JSPROP_READONLY, 0) ||
+                              JSPROP_PERMANENT | JSPROP_READONLY) ||
         !DefineNativeProperty(cx, global, cx->names().Infinity, valueInfinity,
                               JS_PropertyStub, JS_StrictPropertyStub,
-                              JSPROP_PERMANENT | JSPROP_READONLY, 0))
+                              JSPROP_PERMANENT | JSPROP_READONLY))
     {
         return nullptr;
     }
@@ -1424,13 +1431,13 @@ js::IndexToString(JSContext *cx, uint32_t index)
     if (!str)
         return nullptr;
 
-    jschar buffer[JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1];
-    RangedPtr<jschar> end(buffer + JSFatInlineString::MAX_FAT_INLINE_LENGTH,
-                          buffer, JSFatInlineString::MAX_FAT_INLINE_LENGTH + 1);
+    jschar buffer[JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1];
+    RangedPtr<jschar> end(buffer + JSFatInlineString::MAX_LENGTH_TWO_BYTE,
+                          buffer, JSFatInlineString::MAX_LENGTH_TWO_BYTE + 1);
     *end = '\0';
     RangedPtr<jschar> start = BackfillIndexInCharBuffer(index, end);
 
-    jschar *dst = str->init(end - start);
+    jschar *dst = str->initTwoByte(end - start);
     PodCopy(dst, start.get(), end - start + 1);
 
     c->dtoaCache.cache(10, index, str);
@@ -1526,11 +1533,12 @@ CharsToNumber(ThreadSafeContext *cx, const jschar *chars, size_t length, double 
 bool
 js::StringToNumber(ThreadSafeContext *cx, JSString *str, double *result)
 {
+    AutoCheckCannotGC nogc;
     ScopedThreadSafeStringInspector inspector(str);
-    if (!inspector.ensureChars(cx))
+    if (!inspector.ensureChars(cx, nogc))
         return false;
 
-    return CharsToNumber(cx, inspector.chars(), str->length(), result);
+    return CharsToNumber(cx, inspector.twoByteChars(), str->length(), result);
 }
 
 bool

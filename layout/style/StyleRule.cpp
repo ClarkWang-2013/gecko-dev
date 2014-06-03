@@ -933,7 +933,7 @@ ImportantRule::~ImportantRule()
 {
 }
 
-NS_IMPL_ISUPPORTS1(ImportantRule, nsIStyleRule)
+NS_IMPL_ISUPPORTS(ImportantRule, nsIStyleRule)
 
 /* virtual */ void
 ImportantRule::MapRuleInfoInto(nsRuleData* aRuleData)
@@ -1456,7 +1456,7 @@ StyleRule::List(FILE* out, int32_t aIndent) const
   if (mSelector)
     mSelector->ToString(buffer, GetStyleSheet());
 
-  buffer.AppendLiteral(" ");
+  buffer.Append(' ');
   fputs(NS_LossyConvertUTF16toASCII(buffer).get(), out);
   if (nullptr != mDeclaration) {
     mDeclaration->List(out);

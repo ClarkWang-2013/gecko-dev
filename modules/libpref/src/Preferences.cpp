@@ -154,7 +154,7 @@ public:
   nsTArray<void*> mClosures;
 };
 
-NS_IMPL_ISUPPORTS1(ValueObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(ValueObserver, nsIObserver)
 
 NS_IMETHODIMP
 ValueObserver::Observe(nsISupports     *aSubject,
@@ -240,7 +240,7 @@ protected:
                                         void* aClosure);
 };
 
-NS_IMPL_ISUPPORTS1(PreferenceServiceReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(PreferenceServiceReporter, nsIMemoryReporter)
 
 struct PreferencesReferentCount {
   PreferencesReferentCount() : numStrong(0), numWeakAlive(0), numWeakDead(0) {}
@@ -1161,7 +1161,7 @@ static nsresult pref_LoadPrefsInDirList(const char *listId)
     path->GetNativeLeafName(leaf);
 
     // Do we care if a file provided by this process fails to load?
-    if (Substring(leaf, leaf.Length() - 4).Equals(NS_LITERAL_CSTRING(".xpi")))
+    if (Substring(leaf, leaf.Length() - 4).EqualsLiteral(".xpi"))
       ReadExtensionPrefs(path);
     else
       pref_LoadPrefsInDir(path, nullptr, 0);

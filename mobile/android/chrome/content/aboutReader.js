@@ -7,6 +7,9 @@ let Ci = Components.interfaces, Cc = Components.classes, Cu = Components.utils;
 Cu.import("resource://gre/modules/Services.jsm")
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry",
+                                  "resource://gre/modules/UITelemetry.jsm");
+
 XPCOMUtils.defineLazyGetter(window, "gChromeWin", function ()
   window.QueryInterface(Ci.nsIInterfaceRequestor)
     .getInterface(Ci.nsIWebNavigation)
@@ -287,11 +290,15 @@ AboutReader.prototype = {
     this._updateToggleButton();
 
     if (this._isReadingListItem == 1) {
+      let uptime = UITelemetry.uptimeMillis();
       gChromeWin.Reader.storeArticleInCache(this._article, function(success) {
         dump("Reader:Add (in reader) success=" + success);
 
-        let result = (success ? gChromeWin.Reader.READER_ADD_SUCCESS :
-            gChromeWin.Reader.READER_ADD_FAILED);
+        let result = gChromeWin.Reader.READER_ADD_FAILED;
+        if (success) {
+          result = gChromeWin.Reader.READER_ADD_SUCCESS;
+          UITelemetry.addEvent("save.1", "button", uptime, "reader");
+        }
 
         let json = JSON.stringify({ fromAboutReader: true, url: this._article.url });
         Services.obs.notifyObservers(null, "Reader:Add", json);
@@ -310,6 +317,8 @@ AboutReader.prototype = {
       // browser.js), sending this message will cause the toggle button to be
       // updated (handled in this file).
       Services.obs.notifyObservers(null, "Reader:Remove", this._article.url);
+
+      UITelemetry.addEvent("unsave.1", "button", null, "reader");
     }
   },
 
@@ -322,6 +331,8 @@ AboutReader.prototype = {
       url: this._article.url,
       title: this._article.title
     });
+
+    UITelemetry.addEvent("share.1", "list", null);
   },
 
   _setFontSize: function Reader_setFontSize(newFontSize) {
@@ -688,6 +699,10 @@ AboutReader.prototype = {
           return;
 
         aEvent.stopPropagation();
+
+        // Just pass the ID of the button as an extra and hope the ID doesn't change
+        // unless the context changes
+        UITelemetry.addEvent("action.1", "button", null, id);
 
         let items = segmentedButton.children;
         for (let j = items.length - 1; j >= 0; j--) {

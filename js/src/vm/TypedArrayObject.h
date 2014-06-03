@@ -36,6 +36,9 @@ class TypedArrayObject : public ArrayBufferViewObject
     static const size_t RESERVED_SLOTS = JS_TYPEDOBJ_SLOTS;
     static const size_t DATA_SLOT      = JS_TYPEDOBJ_SLOT_DATA;
 
+    static_assert(js::detail::TypedArrayLengthSlot == LENGTH_SLOT,
+                  "bad inlined constant in jsfriendapi.h");
+
   public:
     static const Class classes[ScalarTypeDescr::TYPE_MAX];
     static const Class protoClasses[ScalarTypeDescr::TYPE_MAX];
@@ -51,8 +54,9 @@ class TypedArrayObject : public ArrayBufferViewObject
     AllocKindForLazyBuffer(size_t nbytes)
     {
         JS_ASSERT(nbytes <= INLINE_BUFFER_LIMIT);
-        int dataSlots = (nbytes - 1) / sizeof(Value) + 1;
-        JS_ASSERT(int(nbytes) <= dataSlots * int(sizeof(Value)));
+        /* For GGC we need at least one slot in which to store a forwarding pointer. */
+        size_t dataSlots = Max(size_t(1), AlignBytes(nbytes, sizeof(Value)) / sizeof(Value));
+        JS_ASSERT(nbytes <= dataSlots * sizeof(Value));
         return gc::GetGCObjectKind(FIXED_DATA_START + dataSlots);
     }
 
@@ -95,6 +99,7 @@ class TypedArrayObject : public ArrayBufferViewObject
         return getFixedSlot(TYPE_SLOT).toInt32();
     }
     void *viewData() const {
+        // Keep synced with js::Get<Type>ArrayLengthAndData in jsfriendapi.h!
         return static_cast<void*>(getPrivate(DATA_SLOT));
     }
 
@@ -222,6 +227,10 @@ class DataViewObject : public ArrayBufferViewObject
         return v.isObject() && v.toObject().hasClass(&class_);
     }
 
+    template <typename NativeType>
+    static uint8_t *
+    getDataPointer(JSContext *cx, Handle<DataViewObject*> obj, uint32_t offset);
+
     template<Value ValueGetter(DataViewObject *view)>
     static bool
     getterImpl(JSContext *cx, CallArgs args);
@@ -328,8 +337,6 @@ class DataViewObject : public ArrayBufferViewObject
 
     static bool initClass(JSContext *cx);
     static void neuter(JSObject *view);
-    static bool getDataPointer(JSContext *cx, Handle<DataViewObject*> obj,
-                               CallArgs args, size_t typeSize, uint8_t **data);
     template<typename NativeType>
     static bool read(JSContext *cx, Handle<DataViewObject*> obj,
                      CallArgs &args, NativeType *val, const char *method);
@@ -366,8 +373,7 @@ template <>
 inline bool
 JSObject::is<js::ArrayBufferViewObject>() const
 {
-    return is<js::DataViewObject>() || is<js::TypedArrayObject>() ||
-           IsTypedObjectClass(getClass());
+    return is<js::DataViewObject>() || is<js::TypedArrayObject>();
 }
 
 #endif /* vm_TypedArrayObject_h */

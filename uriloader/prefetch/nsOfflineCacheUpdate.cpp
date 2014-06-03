@@ -108,7 +108,7 @@ LogToConsole(const char * message, nsOfflineCacheUpdateItem * item = nullptr)
             nsAutoCString uriSpec;
             item->mURI->GetSpec(uriSpec);
 
-            messageUTF16.Append(NS_LITERAL_STRING(", URL="));
+            messageUTF16.AppendLiteral(", URL=");
             messageUTF16.Append(NS_ConvertUTF8toUTF16(uriSpec));
         }
         consoleService->LogStringMessage(messageUTF16.get());
@@ -161,11 +161,11 @@ private:
 //-----------------------------------------------------------------------------
 // nsManifestCheck::nsISupports
 //-----------------------------------------------------------------------------
-NS_IMPL_ISUPPORTS4(nsManifestCheck,
-                   nsIRequestObserver,
-                   nsIStreamListener,
-                   nsIChannelEventSink,
-                   nsIInterfaceRequestor)
+NS_IMPL_ISUPPORTS(nsManifestCheck,
+                  nsIRequestObserver,
+                  nsIStreamListener,
+                  nsIChannelEventSink,
+                  nsIInterfaceRequestor)
 
 //-----------------------------------------------------------------------------
 // nsManifestCheck <public>
@@ -309,12 +309,12 @@ nsManifestCheck::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
 // nsOfflineCacheUpdateItem::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS5(nsOfflineCacheUpdateItem,
-                   nsIRequestObserver,
-                   nsIStreamListener,
-                   nsIRunnable,
-                   nsIInterfaceRequestor,
-                   nsIChannelEventSink)
+NS_IMPL_ISUPPORTS(nsOfflineCacheUpdateItem,
+                  nsIRequestObserver,
+                  nsIStreamListener,
+                  nsIRunnable,
+                  nsIInterfaceRequestor,
+                  nsIChannelEventSink)
 
 //-----------------------------------------------------------------------------
 // nsOfflineCacheUpdateItem <public>
@@ -1146,10 +1146,10 @@ nsOfflineManifestItem::OnStopRequest(nsIRequest *aRequest,
 // nsOfflineCacheUpdate::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS3(nsOfflineCacheUpdate,
-                   nsIOfflineCacheUpdateObserver,
-                   nsIOfflineCacheUpdate,
-                   nsIRunnable)
+NS_IMPL_ISUPPORTS(nsOfflineCacheUpdate,
+                  nsIOfflineCacheUpdateObserver,
+                  nsIOfflineCacheUpdate,
+                  nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // nsOfflineCacheUpdate <public>

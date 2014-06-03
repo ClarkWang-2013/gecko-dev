@@ -136,9 +136,9 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 // XPConnect interface list for HTMLFormControlsCollection
 NS_INTERFACE_TABLE_HEAD(HTMLFormControlsCollection)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_TABLE2(HTMLFormControlsCollection,
-                      nsIHTMLCollection,
-                      nsIDOMHTMLCollection)
+  NS_INTERFACE_TABLE(HTMLFormControlsCollection,
+                     nsIHTMLCollection,
+                     nsIDOMHTMLCollection)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(HTMLFormControlsCollection)
 NS_INTERFACE_MAP_END
 
@@ -361,7 +361,8 @@ HTMLFormControlsCollection::GetFirstNamedElement(const nsAString& aName, bool& a
     nsINodeList& nodelist = result.GetAsNodeList();
     return nodelist.Item(0)->AsElement();
   }
-  MOZ_ASSUME_UNREACHABLE("Should only have Elements and NodeLists here.");
+  MOZ_ASSERT_UNREACHABLE("Should only have Elements and NodeLists here.");
+  return nullptr;
 }
 
 void
@@ -383,7 +384,7 @@ HTMLFormControlsCollection::NamedGetter(const nsAString& aName,
     aResult.SetValue().SetAsNodeList() = nodelist;
     return;
   }
-  MOZ_ASSERT(false, "Should only have Elements and NodeLists here.");
+  MOZ_ASSERT_UNREACHABLE("Should only have Elements and NodeLists here.");
 }
 
 static PLDHashOperator

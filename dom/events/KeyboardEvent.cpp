@@ -130,6 +130,12 @@ KeyboardEvent::GetKey(nsAString& aKeyName)
   return NS_OK;
 }
 
+void
+KeyboardEvent::GetCode(nsAString& aCodeName)
+{
+  mEvent->AsKeyboardEvent()->GetDOMCodeName(aCodeName);
+}
+
 NS_IMETHODIMP
 KeyboardEvent::GetCharCode(uint32_t* aCharCode)
 {
@@ -249,6 +255,8 @@ KeyboardEvent::Constructor(const GlobalObject& aGlobal,
   internalEvent->mIsComposing = aParam.mIsComposing;
   internalEvent->mKeyNameIndex = KEY_NAME_INDEX_USE_STRING;
   internalEvent->mKeyValue = aParam.mKey;
+  internalEvent->mCodeNameIndex = CODE_NAME_INDEX_USE_STRING;
+  internalEvent->mCodeValue = aParam.mCode;
 
   return newEvent.forget();
 }
@@ -274,28 +282,6 @@ KeyboardEvent::InitKeyEvent(const nsAString& aType,
   keyEvent->charCode = aCharCode;
 
   return NS_OK;
-}
-
-void
-KeyboardEvent::InitKeyboardEvent(const nsAString& aType,
-                                 bool aCanBubble,
-                                 bool aCancelable,
-                                 nsIDOMWindow* aView,
-                                 uint32_t aDetail,
-                                 const nsAString& aKey,
-                                 uint32_t aLocation,
-                                 const nsAString& aModifiersList,
-                                 bool aRepeat,
-                                 ErrorResult& aRv)
-{
-  aRv = UIEvent::InitUIEvent(aType, aCanBubble, aCancelable, aView, aDetail);
-
-  WidgetKeyboardEvent* keyEvent = mEvent->AsKeyboardEvent();
-  keyEvent->modifiers = UIEvent::ComputeModifierState(aModifiersList);
-  keyEvent->location = aLocation;
-  keyEvent->mIsRepeat = aRepeat;
-  keyEvent->mKeyNameIndex = KEY_NAME_INDEX_USE_STRING;
-  keyEvent->mKeyValue = aKey;
 }
 
 } // namespace dom

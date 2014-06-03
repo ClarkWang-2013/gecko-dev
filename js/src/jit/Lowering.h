@@ -68,7 +68,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitCallee(MCallee *callee);
     bool visitGoto(MGoto *ins);
     bool visitTableSwitch(MTableSwitch *tableswitch);
-    bool visitNewSlots(MNewSlots *ins);
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
     bool visitNewDeclEnvObject(MNewDeclEnvObject *ins);
@@ -100,6 +99,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitLoadArrowThis(MLoadArrowThis *ins);
     bool visitCall(MCall *call);
     bool visitApplyArgs(MApplyArgs *apply);
+    bool visitArraySplice(MArraySplice *splice);
     bool visitBail(MBail *bail);
     bool visitAssertFloat32(MAssertFloat32 *ins);
     bool visitGetDynamicName(MGetDynamicName *ins);
@@ -119,6 +119,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitRsh(MRsh *ins);
     bool visitUrsh(MUrsh *ins);
     bool visitFloor(MFloor *ins);
+    bool visitCeil(MCeil *ins);
     bool visitRound(MRound *ins);
     bool visitMinMax(MMinMax *ins);
     bool visitAbs(MAbs *ins);
@@ -141,6 +142,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitStart(MStart *start);
     bool visitOsrEntry(MOsrEntry *entry);
     bool visitNop(MNop *nop);
+    bool visitLimitedTruncate(MLimitedTruncate *nop);
     bool visitOsrValue(MOsrValue *value);
     bool visitOsrScopeChain(MOsrScopeChain *object);
     bool visitOsrReturnValue(MOsrReturnValue *value);
@@ -158,7 +160,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitLambda(MLambda *ins);
     bool visitLambdaArrow(MLambdaArrow *ins);
     bool visitLambdaPar(MLambdaPar *ins);
-    bool visitImplicitThis(MImplicitThis *ins);
     bool visitSlots(MSlots *ins);
     bool visitElements(MElements *ins);
     bool visitConstantElements(MConstantElements *ins);
@@ -212,6 +213,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitGuardClass(MGuardClass *ins);
     bool visitGuardObject(MGuardObject *ins);
     bool visitGuardString(MGuardString *ins);
+    bool visitGuardShapePolymorphic(MGuardShapePolymorphic *ins);
     bool visitAssertRange(MAssertRange *ins);
     bool visitCallGetProperty(MCallGetProperty *ins);
     bool visitDeleteProperty(MDeleteProperty *ins);
@@ -253,7 +255,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitAsmJSVoidReturn(MAsmJSVoidReturn *ins);
     bool visitAsmJSPassStackArg(MAsmJSPassStackArg *ins);
     bool visitAsmJSCall(MAsmJSCall *ins);
-    bool visitAsmJSCheckOverRecursed(MAsmJSCheckOverRecursed *ins);
     bool visitSetDOMProperty(MSetDOMProperty *ins);
     bool visitGetDOMProperty(MGetDOMProperty *ins);
     bool visitGetDOMMember(MGetDOMMember *ins);

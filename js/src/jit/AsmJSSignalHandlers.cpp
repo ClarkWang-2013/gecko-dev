@@ -8,10 +8,7 @@
 
 #include "mozilla/BinarySearch.h"
 
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
 #include "assembler/assembler/MacroAssembler.h"
-#endif
-
 #include "jit/AsmJSModule.h"
 
 using namespace js;
@@ -183,7 +180,7 @@ class AutoSetHandlingSignal
     JSRuntime *rt;
 
   public:
-    AutoSetHandlingSignal(JSRuntime *rt)
+    explicit AutoSetHandlingSignal(JSRuntime *rt)
       : rt(rt)
     {
         JS_ASSERT(!rt->handlingSignal);
@@ -383,7 +380,7 @@ HandleSimulatorInterrupt(JSRuntime *rt, AsmJSActivation *activation, void *fault
     if (module.containsPC((void *)rt->mainThread.simulator()->get_pc()) &&
         module.containsPC(faultingAddress))
     {
-        activation->setResumePC(nullptr);
+        activation->setInterrupted(nullptr);
         int32_t nextpc = int32_t(module.interruptExit());
         rt->mainThread.simulator()->set_resume_pc(nextpc);
         return true;
@@ -396,13 +393,7 @@ HandleSimulatorInterrupt(JSRuntime *rt, AsmJSActivation *activation, void *fault
 static uint8_t **
 ContextToPC(CONTEXT *context)
 {
-#ifndef JS_CPU_MIPS
-    JS_STATIC_ASSERT(sizeof(PC_sig(context)) == sizeof(void*));
     return reinterpret_cast<uint8_t**>(&PC_sig(context));
-#else
-    JS_STATIC_ASSERT(sizeof(PC_sig(context)) == 2*sizeof(void*));
-    return reinterpret_cast<uint8_t**>(&PC_sig(context));
-#endif
 }
 
 # if defined(JS_CODEGEN_X64)
@@ -498,7 +489,7 @@ HandleException(PEXCEPTION_POINTERS exception)
     // The trampoline will jump to activation->resumePC if execution isn't
     // interrupted.
     if (module.containsPC(faultingAddress)) {
-        activation->setResumePC(pc);
+        activation->setInterrupted(pc);
         *ppc = module.interruptExit();
 
         JSRuntime::AutoLockForInterrupt lock(rt);
@@ -701,7 +692,7 @@ HandleMachException(JSRuntime *rt, const ExceptionRequest &request)
     // The trampoline will jump to activation->resumePC if execution isn't
     // interrupted.
     if (module.containsPC(faultingAddress)) {
-        activation->setResumePC(pc);
+        activation->setInterrupted(pc);
         *ppc = module.interruptExit();
 
         JSRuntime::AutoLockForInterrupt lock(rt);
@@ -951,7 +942,7 @@ HandleSignal(int signum, siginfo_t *info, void *ctx)
     // The trampoline will jump to activation->resumePC if execution isn't
     // interrupted.
     if (module.containsPC(faultingAddress)) {
-        activation->setResumePC(pc);
+        activation->setInterrupted(pc);
         *ppc = module.interruptExit();
 
         JSRuntime::AutoLockForInterrupt lock(rt);

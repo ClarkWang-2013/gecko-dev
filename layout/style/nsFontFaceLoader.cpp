@@ -156,7 +156,7 @@ nsFontFaceLoader::LoadTimerCallback(nsITimer* aTimer, void* aClosure)
   }
 }
 
-NS_IMPL_ISUPPORTS1(nsFontFaceLoader, nsIStreamLoaderObserver)
+NS_IMPL_ISUPPORTS(nsFontFaceLoader, nsIStreamLoaderObserver)
 
 NS_IMETHODIMP
 nsFontFaceLoader::OnStreamComplete(nsIStreamLoader* aLoader,
@@ -804,21 +804,21 @@ nsUserFontSet::LogMessage(gfxMixedFontFamily* aFamily,
         aProxy->mSrcIndex);
 
   if (NS_FAILED(aStatus)) {
-    message.Append(": ");
+    message.AppendLiteral(": ");
     switch (aStatus) {
     case NS_ERROR_DOM_BAD_URI:
-      message.Append("bad URI or cross-site access not allowed");
+      message.AppendLiteral("bad URI or cross-site access not allowed");
       break;
     case NS_ERROR_CONTENT_BLOCKED:
-      message.Append("content blocked");
+      message.AppendLiteral("content blocked");
       break;
     default:
-      message.Append("status=");
+      message.AppendLiteral("status=");
       message.AppendInt(static_cast<uint32_t>(aStatus));
       break;
     }
   }
-  message.Append("\nsource: ");
+  message.AppendLiteral("\nsource: ");
   message.Append(fontURI);
 
 #ifdef PR_LOGGING
@@ -1014,5 +1014,12 @@ nsUserFontSet::GetPrivateBrowsing()
 void
 nsUserFontSet::DoRebuildUserFontSet()
 {
+  if (!mPresContext) {
+    // AFAICS, this can only happen if someone has already called Destroy() on
+    // this font-set, which means it is in the process of being torn down --
+    // so there's no point trying to update its rules.
+    return;
+  }
+
   mPresContext->RebuildUserFontSet();
 }

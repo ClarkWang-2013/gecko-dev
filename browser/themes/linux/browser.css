@@ -52,7 +52,9 @@
 }
 
 #TabsToolbar:not([collapsed="true"]) + #nav-bar {
-  margin-top: -@tabToolbarNavbarOverlap@; /* Move up into the TabsToolbar */
+  border-top: 1px solid hsla(0,0%,0%,.3) !important;
+  background-clip: padding-box;
+  margin-top: -1px; /* Move up into the TabsToolbar for the inner highlight at the top of the nav-bar */
   /* Position the toolbar above the bottom of background tabs */
   position: relative;
   z-index: 1;
@@ -438,22 +440,9 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
   list-style-image: url("moz-icon://stock/gtk-preferences?size=menu");
 }
 
-#context-stop {
-  list-style-image: url("moz-icon://stock/gtk-stop?size=menu");
-}
-
-#context-stop[disabled] {
-  list-style-image: url("moz-icon://stock/gtk-stop?size=menu&state=disabled");
-}
-
 #placesContext_reload,
-#context-reload,
 #context-reloadframe {
   list-style-image: url("moz-icon://stock/gtk-refresh?size=menu");
-}
-
-#context-reload[disabled] {
-  list-style-image: url("moz-icon://stock/gtk-refresh?size=menu&state=disabled");
 }
 
 #menu_zoomEnlarge {
@@ -466,38 +455,6 @@ menuitem:not([type]):not(.menuitem-tooltip):not(.menuitem-iconic-tooltip) {
 
 #menu_zoomReset {
   list-style-image: url("moz-icon://stock/gtk-zoom-100?size=menu");
-}
-
-#context-back {
-  list-style-image: url("moz-icon://stock/gtk-go-back-ltr?size=menu");
-}
-
-#context-back[disabled] {
-  list-style-image: url("moz-icon://stock/gtk-go-back-ltr?size=menu&state=disabled");
-}
-
-#context-back:-moz-locale-dir(rtl) {
-  list-style-image: url("moz-icon://stock/gtk-go-back-rtl?size=menu");
-}
-
-#context-back[disabled]:-moz-locale-dir(rtl) {
-  list-style-image: url("moz-icon://stock/gtk-go-back-rtl?size=menu&state=disabled");
-}
-
-#context-forward {
-  list-style-image: url("moz-icon://stock/gtk-go-forward-ltr?size=menu");
-}
-
-#context-forward[disabled] {
-  list-style-image: url("moz-icon://stock/gtk-go-forward-ltr?size=menu&state=disabled");
-}
-
-#context-forward:-moz-locale-dir(rtl) {
-  list-style-image: url("moz-icon://stock/gtk-go-forward-rtl?size=menu");
-}
-
-#context-forward[disabled]:-moz-locale-dir(rtl) {
-  list-style-image: url("moz-icon://stock/gtk-go-forward-rtl?size=menu&state=disabled");
 }
 
 #menu_showAllHistory {
@@ -740,6 +697,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 }
 
 #forward-button {
+  -moz-box-align: stretch; /* let the button shape grow vertically with the location bar */
   padding: 0;
 }
 
@@ -878,7 +836,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   padding: 1px;
   border: 1px solid ThreeDShadow;
   border-radius: 2px;
-  margin: 1px 3px;
+  margin: 0 3px;
 }
 
 #urlbar[focused],
@@ -1265,7 +1223,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   position: relative;
   background-color: #fff;
   background-clip: padding-box;
-  padding-left: 4px;
+  padding-left: 3px;
   border-radius: 2.5px 0 0 2.5px;
   border-width: 0 8px 0 0;
   border-style: solid;
@@ -1273,6 +1231,10 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   -moz-margin-end: -8px;
   margin-top: -1px;
   margin-bottom: -1px;
+}
+
+@conditionalForwardWithUrlbar@ > #forward-button[disabled] + #urlbar > #notification-popup-box {
+  padding-left: 7px;
 }
 
 #notification-popup-box:not([hidden]) + #identity-box {
@@ -1408,6 +1370,80 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 }
 #pointerLock-cancel {
   margin: 0px;
+}
+
+/* Translation infobar */
+
+%include ../shared/translation/infobar.inc.css
+
+notification[value="translation"] {
+  min-height: 40px;
+}
+
+notification[value="translation"],
+notification[value="translation"] button,
+notification[value="translation"] menulist {
+  min-height: 30px;
+  color: #5A5959;
+}
+
+notification[value="translation"] {
+  background-color: #F2F1F0;
+}
+
+notification[value="translation"] button,
+notification[value="translation"] menulist {
+  -moz-padding-end: 1ch;
+}
+
+notification[value="translation"] menulist {
+  border: 1px solid #C1C1C1;
+  background-color: #FFF;
+}
+
+notification[value="translation"] button {
+  border: 1px solid #C1C1C1;
+  background-color: #F2F1F0;
+}
+
+notification[value="translation"] button,
+notification[value="translation"] menulist,
+notification[value="translation"] menulist > .menulist-label-box {
+  -moz-margin-start: 1ch;
+  -moz-margin-end: 1ch;
+}
+
+notification[value="translation"] button:hover,
+notification[value="translation"] button:active,
+notification[value="translation"] menulist:hover,
+notification[value="translation"] menulist:active {
+  background-color: #E2E1E0;
+}
+
+notification[value="translation"] button[anonid="translate"] {
+  color: #FFF;
+  background-image: linear-gradient(#9FB938, #8DA726);
+  box-shadow: none;
+  border: 1px solid #829C1C;
+}
+
+notification[value="translation"] button[anonid="translate"]:hover,
+notification[value="translation"] button[anonid="translate"]:active {
+  background-image: linear-gradient(#8DA726, #8DA726);
+}
+
+notification[value="translation"] button > .button-box,
+notification[value="translation"] button[type="menu"] > .button-box > .button-menu-dropmarker {
+  padding: 0;
+  -moz-margin-start: 3ch;
+}
+
+notification[value="translation"] button:not([type="menu"]) > .button-box {
+  -moz-margin-end: 3ch;
+}
+
+notification[value="translation"] menulist > .menulist-dropmarker {
+  display: block;
 }
 
 .translate-notification-icon,
@@ -1715,20 +1751,7 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
 #TabsToolbar {
   min-height: 0;
   padding: 0;
-  position: relative;
-}
-
-/*
- * Draw the bottom border of the tabstrip:
- */
-#TabsToolbar::after {
-  content: "";
-  position: absolute;
-  bottom: @tabToolbarNavbarOverlap@;
-  left: 0;
-  right: 0;
-  z-index: 0;
-  border-bottom: 1px solid hsla(0,0%,0%,.3);
+  margin-bottom: -@tabToolbarNavbarOverlap@;
 }
 
 #TabsToolbar:not(:-moz-lwtheme) {
@@ -1772,32 +1795,15 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
   z-index: 3;
 }
 
-/* In-tab close button */
-.tab-close-button > .toolbarbutton-icon {
-  /* XXX Buttons have padding in widget/ that we don't want here but can't override with good CSS, so we must
-     use evil CSS to give the impression of smaller content */
-  margin: -4px;
-}
-
-/* Tabstrip close button */
-.tabs-closebutton,
-.tab-close-button {
-  -moz-appearance: none;
-  height: 16px;
-  width: 16px;
-}
-
-.tabs-closebutton:not([selected]):not(:hover),
+/* Tab close button */
 .tab-close-button:not([selected]):not(:hover) {
   background-image: -moz-image-rect(url("chrome://global/skin/icons/close.svg"), 0, 64, 16, 48);
 }
 
-.tabs-closebutton:not([selected]):not(:hover):-moz-lwtheme-brighttext,
 .tab-close-button:not([selected]):not(:hover):-moz-lwtheme-brighttext {
   background-image: -moz-image-rect(url("chrome://global/skin/icons/close.svg"), 0, 80, 16, 64);
 }
 
-.tabs-closebutton:not([selected]):not(:hover):-moz-lwtheme-darktext,
 .tab-close-button:not([selected]):not(:hover):-moz-lwtheme-darktext {
   background-image: -moz-image-rect(url("chrome://global/skin/icons/close.svg"), 0, 96, 16, 80);
 }
@@ -1808,23 +1814,6 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
 #TabsToolbar > #wrapper-new-tab-button > #new-tab-button {
   list-style-image: url("moz-icon://stock/gtk-add?size=menu");
   -moz-image-region: auto;
-}
-
-.customization-tipPanel-closeBox > .close-icon {
-  -moz-appearance: none;
-  width: 16px;
-  height: 16px;
-}
-
-/* The :hover:active style from toolkit doesn't seem to work in this panel so just use :active. */
-.customization-tipPanel-closeBox > .close-icon:active {
-  background-image: -moz-image-rect(url("chrome://global/skin/icons/close.svg"), 0, 48, 16, 32);
-}
-
-.tabs-closebutton > .toolbarbutton-icon {
-  /* XXX Buttons have padding in widget/ that we don't want here but can't override with good CSS, so we must
-     use evil CSS to give the impression of smaller content */
-  margin: -2px;
 }
 
 /* Tabbrowser arrowscrollbox arrows */
@@ -1903,11 +1892,6 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
 }
 
 /* Sidebar */
-#sidebar-header > .tabs-closebutton {
-  margin-bottom: 0px !important;
-  padding: 0px 2px 0px 2px !important;
-}
-
 #sidebar-throbber[loading="true"] {
   list-style-image: url("chrome://global/skin/icons/loading_16.png");
   -moz-margin-end: 4px;
@@ -2235,6 +2219,11 @@ chatbox {
   border-left: 3px solid transparent;
 }
 
+/* The :hover:active style from toolkit doesn't seem to work in this panel so just use :active. */
+.customization-tipPanel-closeBox > .close-icon:active {
+  background-image: -moz-image-rect(url("chrome://global/skin/icons/close.svg"), 0, 48, 16, 32);
+}
+
 /* End customization mode */
 
 
@@ -2270,4 +2259,24 @@ chatbox {
 
 #UITourTooltipButtons {
   margin-bottom: -10px;
+}
+
+%include ../shared/contextmenu.inc.css
+
+#context-navigation {
+  background-color: -moz-dialog;
+  padding-bottom: 2px;
+  margin-bottom: 2px;
+  -moz-appearance: menuitem;
+}
+
+#context-navigation > .menuitem-iconic > .menu-iconic-left {
+  visibility: visible;
+  /* override toolkit/themes/linux/global/menu.css */
+  -moz-padding-end: 0 !important;
+  -moz-margin-end: 0 !important;
+}
+
+#context-sep-navigation {
+  margin-top: -4px;
 }

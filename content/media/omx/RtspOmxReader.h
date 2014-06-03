@@ -28,6 +28,7 @@ class RtspOmxReader : public MediaOmxReader
 protected:
   // Provide a Rtsp extractor.
   nsresult InitOmxDecoder() MOZ_FINAL MOZ_OVERRIDE;
+  virtual void EnsureActive() MOZ_OVERRIDE;
 
 public:
   RtspOmxReader(AbstractMediaDecoder* aDecoder)
@@ -43,9 +44,6 @@ public:
   virtual ~RtspOmxReader() MOZ_OVERRIDE {
     MOZ_COUNT_DTOR(RtspOmxReader);
   }
-
-  virtual nsresult ReadMetadata(MediaInfo* aInfo,
-                                MetadataTags** aTags) MOZ_OVERRIDE;
 
   // Implement a time-based seek instead of byte-based..
   virtual nsresult Seek(int64_t aTime, int64_t aStartTime, int64_t aEndTime,
@@ -65,17 +63,7 @@ public:
     return NS_OK;
   }
 
-  // Override FindStartTime() to return null pointer.
-  // For Rtsp, we don't have the first video frame in DECODING_METADATA state.
-  // It will be available until player request Play() and media decoder enters
-  // DECODING state.
-  virtual VideoData* FindStartTime(int64_t& aOutStartTime)
-    MOZ_FINAL MOZ_OVERRIDE {
-    return nullptr;
-  }
-
   virtual void SetIdle() MOZ_OVERRIDE;
-  virtual void SetActive() MOZ_OVERRIDE;
 
 private:
   // A pointer to RtspMediaResource for calling the Rtsp specific function.

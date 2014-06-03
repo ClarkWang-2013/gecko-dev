@@ -104,7 +104,6 @@ public:
   NS_DECL_NSIDOMHTMLDOCUMENT
 
   mozilla::dom::HTMLAllCollection* All();
-  JSObject* GetAll(JSContext* aCx, mozilla::ErrorResult& aRv);
 
   nsISupports* ResolveName(const nsAString& aName, nsWrapperCache **aCache);
 
@@ -112,7 +111,10 @@ public:
   virtual void RemovedForm() MOZ_OVERRIDE;
   virtual int32_t GetNumFormsSynchronous() MOZ_OVERRIDE;
   virtual void TearingDownEditor(nsIEditor *aEditor) MOZ_OVERRIDE;
-  virtual void SetIsXHTML(bool aXHTML) MOZ_OVERRIDE { mIsRegularHTML = !aXHTML; }
+  virtual void SetIsXHTML(bool aXHTML) MOZ_OVERRIDE
+  {
+    mType = (aXHTML ? eXHTML : eHTML);
+  }
   virtual void SetDocWriteDisabled(bool aDisabled) MOZ_OVERRIDE
   {
     mDisableDocWrite = aDisabled;
@@ -234,7 +236,7 @@ public:
   {
     // Deprecated
   }
-  mozilla::Selection* GetSelection(mozilla::ErrorResult& aRv);
+  mozilla::dom::Selection* GetSelection(mozilla::ErrorResult& aRv);
   // The XPCOM CaptureEvents works fine for us.
   // The XPCOM ReleaseEvents works fine for us.
   // We're picking up GetLocation from Document

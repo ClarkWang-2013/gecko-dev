@@ -7,9 +7,11 @@
 #define FORCE_PR_LOG /* Allow logging in the release build */
 #endif
 
+#include "mozilla/layers/AsyncTransactionTracker.h" // for AsyncTransactionTracker
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layers/ImageBridgeChild.h"
+#include "mozilla/layers/SharedBufferManagerChild.h"
 #include "mozilla/layers/ISurfaceAllocator.h"     // for GfxMemoryImageReporter
 
 #include "prlog.h"
@@ -137,12 +139,10 @@ public:
     NS_DECL_NSIOBSERVER
 };
 
-NS_IMPL_ISUPPORTS2(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
 
 #define GFX_DOWNLOADABLE_FONTS_ENABLED "gfx.downloadable_fonts.enabled"
 
-#define GFX_PREF_HARFBUZZ_SCRIPTS "gfx.font_rendering.harfbuzz.scripts"
-#define HARFBUZZ_SCRIPTS_DEFAULT  mozilla::unicode::SHAPING_DEFAULT
 #define GFX_PREF_FALLBACK_USE_CMAPS  "gfx.font_rendering.fallback.always_use_cmaps"
 
 #define GFX_PREF_OPENTYPE_SVG "gfx.font_rendering.opentype_svg.enabled"
@@ -182,7 +182,7 @@ public:
     NS_DECL_NSIOBSERVER
 };
 
-NS_IMPL_ISUPPORTS1(FontPrefsObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(FontPrefsObserver, nsIObserver)
 
 NS_IMETHODIMP
 FontPrefsObserver::Observe(nsISupports *aSubject,
@@ -206,7 +206,7 @@ public:
     NS_DECL_NSIOBSERVER
 };
 
-NS_IMPL_ISUPPORTS1(MemoryPressureObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(MemoryPressureObserver, nsIObserver)
 
 NS_IMETHODIMP
 MemoryPressureObserver::Observe(nsISupports *aSubject,
@@ -260,7 +260,6 @@ gfxPlatform::gfxPlatform()
   : mAzureCanvasBackendCollector(MOZ_THIS_IN_INITIALIZER_LIST(),
                                  &gfxPlatform::GetAzureBackendInfo)
 {
-    mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
     mAllowDownloadableFonts = UNINITIALIZED_VALUE;
     mFallbackUsesCmaps = UNINITIALIZED_VALUE;
 
@@ -334,6 +333,8 @@ gfxPlatform::Init()
 
     gGfxPlatformPrefsLock = new Mutex("gfxPlatform::gGfxPlatformPrefsLock");
 
+    AsyncTransactionTrackersHolder::Initialize();
+
     /* Initialize the GfxInfo service.
      * Note: we can't call functions on GfxInfo that depend
      * on gPlatform until after it has been initialized
@@ -375,6 +376,9 @@ gfxPlatform::Init()
         if (gfxPrefs::AsyncVideoEnabled()) {
             ImageBridgeChild::StartUp();
         }
+#ifdef MOZ_WIDGET_GONK
+        SharedBufferManagerChild::StartUp();
+#endif
     }
 
     nsresult rv;
@@ -492,12 +496,6 @@ gfxPlatform::Shutdown()
     // WebGL on Optimus.
     mozilla::gl::GLContextProviderEGL::Shutdown();
 #endif
-
-    // This will block this thread untill the ImageBridge protocol is completely
-    // deleted.
-    ImageBridgeChild::ShutDown();
-
-    CompositorParent::ShutDown();
 
     delete gGfxPlatformPrefsLock;
 
@@ -728,6 +726,7 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     surf.mFormat = format;
     surf.mType = NativeSurfaceType::D3D10_TEXTURE;
     surf.mSurface = static_cast<gfxD2DSurface*>(aSurface)->GetTexture();
+    surf.mSize = ToIntSize(aSurface->GetSize());
     mozilla::gfx::DrawTarget *dt = static_cast<mozilla::gfx::DrawTarget*>(aSurface->GetData(&kDrawTarget));
     if (dt) {
       dt->Flush();
@@ -742,6 +741,7 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     surf.mFormat = format;
     surf.mType = NativeSurfaceType::CAIRO_SURFACE;
     surf.mSurface = aSurface->CairoSurface();
+    surf.mSize = ToIntSize(aSurface->GetSize());
     srcBuffer = aTarget->CreateSourceSurfaceFromNativeSurface(surf);
 
     if (srcBuffer) {
@@ -754,76 +754,26 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
   if (!srcBuffer) {
     nsRefPtr<gfxImageSurface> imgSurface = aSurface->GetAsImageSurface();
 
-    RefPtr<DataSourceSurface> copy;
-    if (!imgSurface) {
-      copy = CopySurface(aSurface);
+    RefPtr<DataSourceSurface> dataSurf;
 
-      if (!copy) {
-        return nullptr;
-      }
-
-      DataSourceSurface::MappedSurface map;
-      DebugOnly<bool> result = copy->Map(DataSourceSurface::WRITE, &map);
-      MOZ_ASSERT(result, "Should always succeed mapping raw data surfaces!");
-
-      imgSurface = new gfxImageSurface(map.mData, aSurface->GetSize(), map.mStride,
-                                       SurfaceFormatToImageFormat(copy->GetFormat()));
+    if (imgSurface) {
+      dataSurf = GetWrappedDataSourceSurface(aSurface);
+    } else {
+      dataSurf = CopySurface(aSurface);
     }
 
-    gfxImageFormat cairoFormat = imgSurface->Format();
-    switch(cairoFormat) {
-      case gfxImageFormat::ARGB32:
-        format = SurfaceFormat::B8G8R8A8;
-        break;
-      case gfxImageFormat::RGB24:
-        format = SurfaceFormat::B8G8R8X8;
-        break;
-      case gfxImageFormat::A8:
-        format = SurfaceFormat::A8;
-        break;
-      case gfxImageFormat::RGB16_565:
-        format = SurfaceFormat::R5G6B5;
-        break;
-      default:
-        NS_RUNTIMEABORT("Invalid surface format!");
-    }
-
-    IntSize size = IntSize(imgSurface->GetSize().width, imgSurface->GetSize().height);
-    srcBuffer = aTarget->CreateSourceSurfaceFromData(imgSurface->Data(),
-                                                     size,
-                                                     imgSurface->Stride(),
-                                                     format);
-
-    if (copy) {
-      copy->Unmap();
-    }
-
-    if (!srcBuffer) {
-      // If we had to make a copy, then just return that. Otherwise aSurface
-      // must have supported GetAsImageSurface, so we can just wrap that data.
-      if (copy) {
-        srcBuffer = copy;
-      } else {
-        return GetWrappedDataSourceSurface(aSurface);
-      }
-    }
-
-    if (!srcBuffer) {
+    if (!dataSurf) {
       return nullptr;
     }
 
-#if MOZ_TREE_CAIRO
-    cairo_surface_t *nullSurf =
-    cairo_null_surface_create(CAIRO_CONTENT_COLOR_ALPHA);
-    cairo_surface_set_user_data(nullSurf,
-                                &kSourceSurface,
-                                imgSurface,
-                                nullptr);
-    cairo_surface_attach_snapshot(imgSurface->CairoSurface(), nullSurf, SourceSnapshotDetached);
-    cairo_surface_destroy(nullSurf);
-#else
-    cairo_surface_set_mime_data(imgSurface->CairoSurface(), "mozilla/magic", (const unsigned char*) "data", 4, SourceSnapshotDetached, imgSurface.get());
-#endif
+    srcBuffer = aTarget->OptimizeSourceSurface(dataSurf);
+
+    if (imgSurface && srcBuffer == dataSurf) {
+      // Our wrapping surface will hold a reference to its image surface. We cause
+      // a reference cycle if we add it to the cache. And caching it is pretty
+      // pointless since we'll just wrap it again next use.
+     return srcBuffer;
+    }
   }
 
   // Add user data to aSurface so we can cache lookups in the future.
@@ -1170,18 +1120,6 @@ gfxPlatform::UseGraphiteShaping()
     return mGraphiteShapingEnabled;
 }
 
-bool
-gfxPlatform::UseHarfBuzzForScript(int32_t aScriptCode)
-{
-    if (mUseHarfBuzzScripts == UNINITIALIZED_VALUE) {
-        mUseHarfBuzzScripts = Preferences::GetInt(GFX_PREF_HARFBUZZ_SCRIPTS, HARFBUZZ_SCRIPTS_DEFAULT);
-    }
-
-    int32_t shapingType = mozilla::unicode::ScriptShapingType(aScriptCode);
-
-    return (mUseHarfBuzzScripts & shapingType) != 0;
-}
-
 gfxFontEntry*
 gfxPlatform::MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
                               const uint8_t *aFontData,
@@ -1216,7 +1154,7 @@ AppendGenericFontFromPref(nsString& aFonts, nsIAtom *aLangGroup, const char *aGe
         genericDotLang = Preferences::GetCString(prefName.get());
     }
 
-    genericDotLang.AppendLiteral(".");
+    genericDotLang.Append('.');
     genericDotLang.Append(langGroupString);
 
     // fetch font.name.xxx value
@@ -1266,7 +1204,7 @@ bool gfxPlatform::ForEachPrefFont(eFontPrefLang aLangArray[], uint32_t aLangArra
         prefName.Append(langGroup);
         nsAdoptingCString genericDotLang = Preferences::GetCString(prefName.get());
 
-        genericDotLang.AppendLiteral(".");
+        genericDotLang.Append('.');
         genericDotLang.Append(langGroup);
 
         // fetch font.name.xxx value
@@ -1396,18 +1334,18 @@ gfxPlatform::IsLangCJK(eFontPrefLang aLang)
 mozilla::layers::DiagnosticTypes
 gfxPlatform::GetLayerDiagnosticTypes()
 {
-  mozilla::layers::DiagnosticTypes type = DIAGNOSTIC_NONE;
+  mozilla::layers::DiagnosticTypes type = DiagnosticTypes::NO_DIAGNOSTIC;
   if (gfxPrefs::DrawLayerBorders()) {
-    type |= mozilla::layers::DIAGNOSTIC_LAYER_BORDERS;
+    type |= mozilla::layers::DiagnosticTypes::LAYER_BORDERS;
   }
   if (gfxPrefs::DrawTileBorders()) {
-    type |= mozilla::layers::DIAGNOSTIC_TILE_BORDERS;
+    type |= mozilla::layers::DiagnosticTypes::TILE_BORDERS;
   }
   if (gfxPrefs::DrawBigImageBorders()) {
-    type |= mozilla::layers::DIAGNOSTIC_BIGIMAGE_BORDERS;
+    type |= mozilla::layers::DiagnosticTypes::BIGIMAGE_BORDERS;
   }
   if (gfxPrefs::FlashLayerBorders()) {
-    type |= mozilla::layers::DIAGNOSTIC_FLASH_BORDERS;
+    type |= mozilla::layers::DiagnosticTypes::FLASH_BORDERS;
   }
   return type;
 }
@@ -1915,9 +1853,6 @@ gfxPlatform::FontsPrefsChanged(const char *aPref)
     } else if (!strcmp(GFX_PREF_GRAPHITE_SHAPING, aPref)) {
         mGraphiteShapingEnabled = UNINITIALIZED_VALUE;
         FlushFontAndWordCaches();
-    } else if (!strcmp(GFX_PREF_HARFBUZZ_SCRIPTS, aPref)) {
-        mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
-        FlushFontAndWordCaches();
     } else if (!strcmp(BIDI_NUMERAL_PREF, aPref)) {
         mBidiNumeralOption = UNINITIALIZED_VALUE;
     } else if (!strcmp(GFX_PREF_OPENTYPE_SVG, aPref)) {
@@ -2035,6 +1970,7 @@ gfxPlatform::OptimalFormatForContent(gfxContentType aContent)
  * not have any effect until we restart.
  */
 static bool sLayersSupportsD3D9 = false;
+static bool sLayersSupportsD3D11 = false;
 static bool sBufferRotationCheckPref = true;
 static bool sPrefBrowserTabsRemoteAutostart = false;
 
@@ -2056,6 +1992,7 @@ InitLayersAccelerationPrefs()
 #ifdef XP_WIN
     if (gfxPrefs::LayersAccelerationForceEnabled()) {
       sLayersSupportsD3D9 = true;
+      sLayersSupportsD3D11 = true;
     } else {
       nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
       if (gfxInfo) {
@@ -2063,6 +2000,11 @@ InitLayersAccelerationPrefs()
         if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS, &status))) {
           if (status == nsIGfxInfo::FEATURE_NO_INFO) {
             sLayersSupportsD3D9 = true;
+          }
+        }
+        if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_11_LAYERS, &status))) {
+          if (status == nsIGfxInfo::FEATURE_NO_INFO) {
+            sLayersSupportsD3D11 = true;
           }
         }
       }
@@ -2101,6 +2043,15 @@ gfxPlatform::CanUseDirect3D9()
   // safe to init the prefs etc. from here.
   MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
   return sLayersSupportsD3D9;
+}
+
+bool
+gfxPlatform::CanUseDirect3D11()
+{
+  // this function is called from the compositor thread, so it is not
+  // safe to init the prefs etc. from here.
+  MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
+  return sLayersSupportsD3D11;
 }
 
 bool

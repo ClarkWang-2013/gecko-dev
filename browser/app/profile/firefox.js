@@ -278,7 +278,7 @@ pref("browser.startup.page",                1);
 pref("browser.startup.homepage",            "chrome://branding/locale/browserconfig.properties");
 
 pref("browser.slowStartup.notificationDisabled", false);
-pref("browser.slowStartup.timeThreshold", 60000);
+pref("browser.slowStartup.timeThreshold", 45000);
 pref("browser.slowStartup.maxSamples", 5);
 
 // This url, if changed, MUST continue to point to an https url. Pulling arbitrary content to inject into
@@ -456,13 +456,6 @@ pref("browser.tabs.drawInTitlebar", false);
 #else
 pref("browser.tabs.drawInTitlebar", true);
 #endif
-
-// Where to show tab close buttons:
-// 0  on active tab only
-// 1  on all tabs until tabClipWidth is reached, then active tab only
-// 2  no close buttons at all
-// 3  at the end of the tabstrip
-pref("browser.tabs.closeButtons", 1);
 
 // When tabs opened by links in other tabs via a combination of 
 // browser.link.open_newwindow being set to 3 and target="_blank" etc are
@@ -791,14 +784,34 @@ pref("plugin.state.npvidyoweb", 2);
 pref("plugin.state.vidyoweb", 2);
 #endif
 
+// McAfee Virtual Technician, bug 981503
+#ifdef XP_WIN
+pref("plugin.state.npmvtplugin", 2);
+#endif
+
+// Verimatrix ViewRightWeb, bug 989872
+#ifdef XP_WIN
+pref("plugin.state.npviewright", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.viewrightwebplayer", 2);
+#endif
+
+// McAfee SiteAdvisor Enterprise, bug 987057
+#ifdef XP_WIN
+pref("plugin.state.npmcffplg", 2);
+#endif
+
+// F5 Networks SSLVPN plugin, bug 985640
+#ifdef XP_MACOSX
+pref("plugin.state.f5 ssl vpn plugin", 2);
+pref("plugin.state.f5 sam inspection host plugin", 2);
+#endif
+
 // display door hanger if flash not installed
 pref("plugins.notifyMissingFlash", true);
 
-#ifdef XP_WIN
-pref("browser.preferences.instantApply", false);
-#else
 pref("browser.preferences.instantApply", true);
-#endif
 #ifdef XP_MACOSX
 pref("browser.preferences.animateFadeIn", true);
 #else
@@ -806,7 +819,7 @@ pref("browser.preferences.animateFadeIn", false);
 #endif
 
 // Toggles between the two Preferences implementations, pop-up window and in-content
-pref("browser.preferences.inContent", false);
+pref("browser.preferences.inContent", true);
 
 pref("browser.download.show_plugins_in_list", true);
 pref("browser.download.hide_plugins_without_extensions", true);
@@ -1001,6 +1014,8 @@ pref("browser.sessionstore.restore_pinned_tabs_on_demand", false);
 pref("browser.sessionstore.upgradeBackup.latestBuildID", "");
 // End-users should not run sessionstore in debug mode
 pref("browser.sessionstore.debug", false);
+// Forget closed windows/tabs after two weeks
+pref("browser.sessionstore.cleanup.forget_closed_after", 1209600000);
 
 // allow META refresh by default
 pref("accessibility.blockautorefresh", false);
@@ -1163,7 +1178,6 @@ pref("services.sync.prefs.sync.browser.search.update", true);
 pref("services.sync.prefs.sync.browser.sessionstore.restore_on_demand", true);
 pref("services.sync.prefs.sync.browser.startup.homepage", true);
 pref("services.sync.prefs.sync.browser.startup.page", true);
-pref("services.sync.prefs.sync.browser.tabs.closeButtons", true);
 pref("services.sync.prefs.sync.browser.tabs.loadInBackground", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnClose", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnOpen", true);
@@ -1223,12 +1237,19 @@ pref("devtools.appmanager.enabled", true);
 pref("devtools.appmanager.lastTab", "help");
 pref("devtools.appmanager.manifestEditor.enabled", true);
 
+// Enable devtools webide
+#ifdef MOZ_DEVTOOLS_WEBIDE
+pref("devtools.webide.enabled", true);
+#else
+pref("devtools.webide.enabled", false);
+#endif
+
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
 pref("devtools.toolbox.sidebar.width", 500);
 pref("devtools.toolbox.host", "bottom");
 pref("devtools.toolbox.selectedTool", "webconsole");
-pref("devtools.toolbox.toolbarSpec", '["splitconsole", "paintflashing toggle","tilt toggle","scratchpad","resize toggle"]');
+pref("devtools.toolbox.toolbarSpec", '["splitconsole", "paintflashing toggle","tilt toggle","scratchpad","resize toggle","eyedropper","screenshot --fullpage"]');
 pref("devtools.toolbox.sideEnabled", true);
 pref("devtools.toolbox.zoomValue", "1");
 
@@ -1239,6 +1260,8 @@ pref("devtools.command-button-paintflashing.enabled", false);
 pref("devtools.command-button-tilt.enabled", false);
 pref("devtools.command-button-scratchpad.enabled", false);
 pref("devtools.command-button-responsive.enabled", true);
+pref("devtools.command-button-eyedropper.enabled", false);
+pref("devtools.command-button-screenshot.enabled", false);
 
 // Inspector preferences
 // Enable the Inspector
@@ -1252,6 +1275,8 @@ pref("devtools.inspector.remote", false);
 pref("devtools.inspector.show_pseudo_elements", true);
 // The default size for image preview tooltips in the rule-view/computed-view/markup-view
 pref("devtools.inspector.imagePreviewTooltipSize", 300);
+// Enable user agent style inspection in rule-view
+pref("devtools.inspector.showUserAgentStyles", false);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "hex");
@@ -1308,14 +1333,17 @@ pref("devtools.tilt.outro_transition", true);
 //                  'Open Recent'-menu.
 // - showTrailingSpace: Whether to highlight trailing space or not.
 // - enableCodeFolding: Whether to enable code folding or not.
+// - enableAutocompletion: Whether to enable JavaScript autocompletion.
 pref("devtools.scratchpad.recentFilesMax", 10);
 pref("devtools.scratchpad.showTrailingSpace", false);
 pref("devtools.scratchpad.enableCodeFolding", true);
+pref("devtools.scratchpad.enableAutocompletion", true);
 
 // Enable the Style Editor.
 pref("devtools.styleeditor.enabled", true);
 pref("devtools.styleeditor.source-maps-enabled", false);
 pref("devtools.styleeditor.autocompletion-enabled", true);
+pref("devtools.styleeditor.showMediaSidebar", false);
 
 // Enable the Shader Editor.
 pref("devtools.shadereditor.enabled", false);
@@ -1371,6 +1399,10 @@ pref("devtools.browserconsole.filter.secwarn", true);
 
 // Text size in the Web Console. Use 0 for the system default size.
 pref("devtools.webconsole.fontSize", 0);
+
+// Number of usages of the web console or scratchpad.
+// If this is less than 10, then pasting code into the web console or scratchpad is disabled
+pref("devtools.selfxss.count", 0);
 
 // Persistent logging: |true| if you want the Web Console to keep all of the
 // logged messages after reloading the page, |false| if you want the output to
@@ -1435,7 +1467,7 @@ pref("browser.newtabpage.rows", 3);
 // number of columns of newtab grid
 pref("browser.newtabpage.columns", 3);
 
-pref("browser.newtabpage.directorySource", "data:application/json,{}");
+pref("browser.newtabpage.directorySource", "chrome://global/content/directoryLinks.json");
 
 // Enable the DOM fullscreen API.
 pref("full-screen-api.enabled", true);
@@ -1484,8 +1516,6 @@ pref("security.csp.speccompliant", true);
 
 // Block insecure active content on https pages
 pref("security.mixed_content.block_active_content", true);
-
-pref("security.use_mozillapkix_verification", true);
 
 // Override the Gecko-default value of false for Firefox.
 pref("plain_text.wrap_long_lines", true);
@@ -1541,6 +1571,9 @@ pref("browser.cache.auto_delete_cache_version", 1);
 pref("browser.cache.frecency_experiment", 0);
 
 pref("browser.translation.detectLanguage", false);
+pref("browser.translation.neverForLanguages", "");
+// Show the translation UI bits, like the info bar, notification icon and preferences.
+pref("browser.translation.ui.show", false);
 
 // Telemetry experiments settings.
 pref("experiments.enabled", true);

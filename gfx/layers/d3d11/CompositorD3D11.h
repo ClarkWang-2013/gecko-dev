@@ -7,6 +7,7 @@
 #define MOZILLA_GFX_COMPOSITORD3D11_H
 
 #include "mozilla/gfx/2D.h"
+#include "gfx2DGlue.h"
 #include "mozilla/layers/Compositor.h"
 #include "TextureD3D11.h"
 #include <d3d11.h>
@@ -49,15 +50,10 @@ public:
     GetTextureFactoryIdentifier() MOZ_OVERRIDE;
 
   virtual TemporaryRef<DataTextureSource>
-    CreateDataTextureSource(TextureFlags aFlags = 0) MOZ_OVERRIDE;
+    CreateDataTextureSource(TextureFlags aFlags = TextureFlags::NO_FLAGS) MOZ_OVERRIDE;
 
   virtual bool CanUseCanvasLayerForSize(const gfx::IntSize& aSize) MOZ_OVERRIDE;
   virtual int32_t GetMaxTextureSize() const MOZ_FINAL;
-
-  virtual void SetTargetContext(gfx::DrawTarget* aTarget)  MOZ_OVERRIDE
-  {
-    mTarget = aTarget;
-  }
 
   virtual void MakeCurrent(MakeCurrentFlags aFlags = 0)  MOZ_OVERRIDE {}
 
@@ -157,6 +153,8 @@ private:
   void SetPSForEffect(Effect *aEffect, MaskType aMaskType, gfx::SurfaceFormat aFormat);
   void PaintToTarget();
 
+  virtual gfx::IntSize GetWidgetSize() const MOZ_OVERRIDE { return gfx::ToIntSize(mSize); }
+
   RefPtr<ID3D11DeviceContext> mContext;
   RefPtr<ID3D11Device> mDevice;
   RefPtr<IDXGISwapChain> mSwapChain;
@@ -164,8 +162,6 @@ private:
   RefPtr<CompositingRenderTargetD3D11> mCurrentRT;
 
   DeviceAttachmentsD3D11* mAttachments;
-
-  RefPtr<gfx::DrawTarget> mTarget;
 
   nsIWidget* mWidget;
 

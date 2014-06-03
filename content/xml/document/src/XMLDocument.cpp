@@ -219,6 +219,8 @@ XMLDocument::XMLDocument(const char* aContentType)
 {
   // NOTE! nsDocument::operator new() zeroes out all members, so don't
   // bother initializing members to 0.
+
+  mType = eGenericXML;
 }
 
 XMLDocument::~XMLDocument()
@@ -228,7 +230,7 @@ XMLDocument::~XMLDocument()
 }
 
 // QueryInterface implementation for XMLDocument
-NS_IMPL_ISUPPORTS_INHERITED1(XMLDocument, nsDocument, nsIDOMXMLDocument)
+NS_IMPL_ISUPPORTS_INHERITED(XMLDocument, nsDocument, nsIDOMXMLDocument)
 
 nsresult
 XMLDocument::Init()

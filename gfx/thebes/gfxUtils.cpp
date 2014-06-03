@@ -15,6 +15,7 @@
 #include "GeckoProfiler.h"
 #include "ImageContainer.h"
 #include "gfx2DGlue.h"
+#include "gfxPrefs.h"
 
 #ifdef XP_WIN
 #include "gfxWindowsPlatform.h"
@@ -35,34 +36,24 @@ static const uint8_t UnpremultiplyValue(uint8_t a, uint8_t v) {
 }
 
 void
-gfxUtils::PremultiplyImageSurface(gfxImageSurface *aSourceSurface,
-                                  gfxImageSurface *aDestSurface)
+gfxUtils::PremultiplyDataSurface(DataSourceSurface *aSurface)
 {
-    if (!aDestSurface)
-        aDestSurface = aSourceSurface;
-
-    MOZ_ASSERT(aSourceSurface->Format() == aDestSurface->Format() &&
-               aSourceSurface->Width()  == aDestSurface->Width() &&
-               aSourceSurface->Height() == aDestSurface->Height() &&
-               aSourceSurface->Stride() == aDestSurface->Stride(),
-               "Source and destination surfaces don't have identical characteristics");
-
-    MOZ_ASSERT(aSourceSurface->Stride() == aSourceSurface->Width() * 4,
-               "Source surface stride isn't tightly packed");
-
     // Only premultiply ARGB32
-    if (aSourceSurface->Format() != gfxImageFormat::ARGB32) {
-        if (aDestSurface != aSourceSurface) {
-            memcpy(aDestSurface->Data(), aSourceSurface->Data(),
-                   aSourceSurface->Stride() * aSourceSurface->Height());
-        }
+    if (aSurface->GetFormat() != SurfaceFormat::B8G8R8A8) {
         return;
     }
 
-    uint8_t *src = aSourceSurface->Data();
-    uint8_t *dst = aDestSurface->Data();
+    DataSourceSurface::MappedSurface map;
+    if (!aSurface->Map(DataSourceSurface::MapType::READ_WRITE, &map)) {
+        return;
+    }
+    MOZ_ASSERT(map.mStride == aSurface->GetSize().width * 4,
+               "Source surface stride isn't tightly packed");
 
-    uint32_t dim = aSourceSurface->Width() * aSourceSurface->Height();
+    uint8_t *src = map.mData;
+    uint8_t *dst = map.mData;
+
+    uint32_t dim = aSurface->GetSize().width * aSurface->GetSize().height;
     for (uint32_t i = 0; i < dim; ++i) {
 #ifdef IS_LITTLE_ENDIAN
         uint8_t b = *src++;
@@ -86,59 +77,8 @@ gfxUtils::PremultiplyImageSurface(gfxImageSurface *aSourceSurface,
         *dst++ = PremultiplyValue(a, b);
 #endif
     }
-}
 
-void
-gfxUtils::UnpremultiplyImageSurface(gfxImageSurface *aSourceSurface,
-                                    gfxImageSurface *aDestSurface)
-{
-    if (!aDestSurface)
-        aDestSurface = aSourceSurface;
-
-    MOZ_ASSERT(aSourceSurface->Format() == aDestSurface->Format() &&
-               aSourceSurface->Width()  == aDestSurface->Width() &&
-               aSourceSurface->Height() == aDestSurface->Height(),
-               "Source and destination surfaces don't have identical characteristics");
-
-    // Only premultiply ARGB32
-    if (aSourceSurface->Format() != gfxImageFormat::ARGB32) {
-        if (aDestSurface != aSourceSurface) {
-            aDestSurface->CopyFrom(aSourceSurface);
-        }
-        return;
-    }
-
-    uint8_t *src = aSourceSurface->Data();
-    uint8_t *dst = aDestSurface->Data();
-
-    for (int32_t i = 0; i < aSourceSurface->Height(); ++i) {
-        uint8_t *srcRow = src + (i * aSourceSurface->Stride());
-        uint8_t *dstRow = dst + (i * aDestSurface->Stride());
-
-        for (int32_t j = 0; j < aSourceSurface->Width(); ++j) {
-#ifdef IS_LITTLE_ENDIAN
-          uint8_t b = *srcRow++;
-          uint8_t g = *srcRow++;
-          uint8_t r = *srcRow++;
-          uint8_t a = *srcRow++;
-
-          *dstRow++ = UnpremultiplyValue(a, b);
-          *dstRow++ = UnpremultiplyValue(a, g);
-          *dstRow++ = UnpremultiplyValue(a, r);
-          *dstRow++ = a;
-#else
-          uint8_t a = *srcRow++;
-          uint8_t r = *srcRow++;
-          uint8_t g = *srcRow++;
-          uint8_t b = *srcRow++;
-
-          *dstRow++ = a;
-          *dstRow++ = UnpremultiplyValue(a, r);
-          *dstRow++ = UnpremultiplyValue(a, g);
-          *dstRow++ = UnpremultiplyValue(a, b);
-#endif
-        }
-    }
+    aSurface->Unmap();
 }
 
 TemporaryRef<DataSourceSurface>
@@ -302,7 +242,9 @@ CreateSamplingRestrictedDrawable(gfxDrawable* aDrawable,
                                  const gfxRect& aSubimage,
                                  const gfxImageFormat aFormat)
 {
-    PROFILER_LABEL("gfxUtils", "CreateSamplingRestricedDrawable");
+    PROFILER_LABEL("gfxUtils", "CreateSamplingRestricedDrawable",
+      js::ProfileEntry::Category::GRAPHICS);
+
     gfxRect userSpaceClipExtents = aContext->GetClipExtents();
     // This isn't optimal --- if aContext has a rotation then GetClipExtents
     // will have to do a bounding-box computation, and TransformBounds might
@@ -508,7 +450,9 @@ gfxUtils::DrawPixelSnapped(gfxContext*      aContext,
                            GraphicsFilter aFilter,
                            uint32_t         aImageFlags)
 {
-    PROFILER_LABEL("gfxUtils", "DrawPixelSnapped");
+    PROFILER_LABEL("gfxUtils", "DrawPixelSnapped",
+      js::ProfileEntry::Category::GRAPHICS);
+
     bool doTile = !aImageRect.Contains(aSourceRect) &&
                   !(aImageFlags & imgIContainer::FLAG_CLAMP);
 
@@ -998,6 +942,31 @@ gfxUtils::CopySurfaceToDataSourceSurfaceWithFormat(SourceSurface* aSurface,
   return dataSurface.forget();
 }
 
+const uint32_t gfxUtils::sNumFrameColors = 8;
+
+/* static */ const gfx::Color&
+gfxUtils::GetColorForFrameNumber(uint64_t aFrameNumber)
+{
+    static bool initialized = false;
+    static gfx::Color colors[sNumFrameColors];
+
+    if (!initialized) {
+        uint32_t i = 0;
+        colors[i++] = gfx::Color::FromABGR(0xffff0000);
+        colors[i++] = gfx::Color::FromABGR(0xffcc00ff);
+        colors[i++] = gfx::Color::FromABGR(0xff0066cc);
+        colors[i++] = gfx::Color::FromABGR(0xff00ff00);
+        colors[i++] = gfx::Color::FromABGR(0xff33ffff);
+        colors[i++] = gfx::Color::FromABGR(0xffff0099);
+        colors[i++] = gfx::Color::FromABGR(0xff0000ff);
+        colors[i++] = gfx::Color::FromABGR(0xff999999);
+        MOZ_ASSERT(i == sNumFrameColors);
+        initialized = true;
+    }
+
+    return colors[aFrameNumber % sNumFrameColors];
+}
+
 #ifdef MOZ_DUMP_PAINTING
 /* static */ void
 gfxUtils::WriteAsPNG(DrawTarget* aDT, const char* aFile)
@@ -1075,7 +1044,13 @@ gfxUtils::CopyAsDataURL(RefPtr<gfx::SourceSurface> aSourceSurface)
   gfxUtils::CopyAsDataURL(dt.get());
 }
 
-bool gfxUtils::sDumpPaintList = getenv("MOZ_DUMP_PAINT_LIST") != 0;
+static bool sDumpPaintList = getenv("MOZ_DUMP_PAINT_LIST") != 0;
+
+/* static */ bool
+gfxUtils::DumpPaintList() {
+  return sDumpPaintList || gfxPrefs::LayoutDumpDisplayList();
+}
+
 bool gfxUtils::sDumpPainting = getenv("MOZ_DUMP_PAINT") != 0;
 bool gfxUtils::sDumpPaintingToFile = getenv("MOZ_DUMP_PAINT_TO_FILE") != 0;
 FILE *gfxUtils::sDumpPaintFile = nullptr;

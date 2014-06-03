@@ -213,6 +213,13 @@ extern bool
 StringHasPattern(const jschar *text, uint32_t textlen,
                  const jschar *pat, uint32_t patlen);
 
+extern int
+StringFindPattern(const jschar *text, uint32_t textlen,
+                  const jschar *pat, uint32_t patlen);
+
+extern bool
+StringHasRegExpMetaChars(const jschar *chars, size_t length);
+
 } /* namespace js */
 
 extern size_t
@@ -249,10 +256,17 @@ InflateString(ThreadSafeContext *cx, const char *bytes, size_t *length);
  * enough for 'srclen' jschars. The buffer is NOT null-terminated.
  */
 inline void
-InflateStringToBuffer(const char *src, size_t srclen, jschar *dst)
+CopyAndInflateChars(jschar *dst, const char *src, size_t srclen)
 {
     for (size_t i = 0; i < srclen; i++)
         dst[i] = (unsigned char) src[i];
+}
+
+inline void
+CopyAndInflateChars(jschar *dst, const JS::Latin1Char *src, size_t srclen)
+{
+    for (size_t i = 0; i < srclen; i++)
+        dst[i] = src[i];
 }
 
 /*
@@ -355,8 +369,7 @@ JSObject *
 str_split_string(JSContext *cx, HandleTypeObject type, HandleString str, HandleString sep);
 
 bool
-str_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-            MutableHandleObject objp);
+str_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObject objp);
 
 bool
 str_replace_regexp_raw(JSContext *cx, HandleString string, HandleObject regexp,

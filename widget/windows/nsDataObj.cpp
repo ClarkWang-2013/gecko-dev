@@ -41,7 +41,7 @@ using namespace mozilla::widget;
 
 #define DEFAULT_THREAD_TIMEOUT_MS 30000
 
-NS_IMPL_ISUPPORTS1(nsDataObj::CStream, nsIStreamListener)
+NS_IMPL_ISUPPORTS(nsDataObj::CStream, nsIStreamListener)
 
 //-----------------------------------------------------------------------------
 // CStream implementation
@@ -1240,7 +1240,7 @@ HRESULT nsDataObj::GetText(const nsACString & aDataFlavor, FORMATETC& aFE, STGME
   // if someone asks for text/plain, look up text/unicode instead in the transferable.
   const char* flavorStr;
   const nsPromiseFlatCString& flat = PromiseFlatCString(aDataFlavor);
-  if ( aDataFlavor.Equals("text/plain") )
+  if (aDataFlavor.EqualsLiteral("text/plain"))
     flavorStr = kUnicodeMime;
   else
     flavorStr = flat.get();

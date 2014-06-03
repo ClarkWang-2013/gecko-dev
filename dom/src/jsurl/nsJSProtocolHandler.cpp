@@ -77,7 +77,7 @@ protected:
 //
 // nsISupports implementation...
 //
-NS_IMPL_ISUPPORTS1(nsJSThunk, nsIInputStream)
+NS_IMPL_ISUPPORTS(nsJSThunk, nsIInputStream)
 
 
 nsJSThunk::nsJSThunk()
@@ -251,7 +251,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
     if (!useSandbox) {
         //-- Don't outside a sandbox unless the script principal subsumes the
         //   principal of the context.
-        nsIPrincipal* objectPrincipal = nsContentUtils::GetObjectPrincipal(globalJSObject);
+        nsIPrincipal* objectPrincipal = nsContentUtils::ObjectPrincipal(globalJSObject);
 
         bool subsumes;
         rv = principal->Subsumes(objectPrincipal, &subsumes);
@@ -501,9 +501,9 @@ nsresult nsJSChannel::Init(nsIURI *aURI)
 // nsISupports implementation...
 //
 
-NS_IMPL_ISUPPORTS7(nsJSChannel, nsIChannel, nsIRequest, nsIRequestObserver,
-                   nsIStreamListener, nsIScriptChannel, nsIPropertyBag,
-                   nsIPropertyBag2)
+NS_IMPL_ISUPPORTS(nsJSChannel, nsIChannel, nsIRequest, nsIRequestObserver,
+                  nsIStreamListener, nsIScriptChannel, nsIPropertyBag,
+                  nsIPropertyBag2)
 
 //
 // nsIRequest implementation...
@@ -1131,7 +1131,7 @@ nsJSProtocolHandler::~nsJSProtocolHandler()
 {
 }
 
-NS_IMPL_ISUPPORTS1(nsJSProtocolHandler, nsIProtocolHandler)
+NS_IMPL_ISUPPORTS(nsJSProtocolHandler, nsIProtocolHandler)
 
 nsresult
 nsJSProtocolHandler::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)

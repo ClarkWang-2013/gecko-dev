@@ -104,8 +104,8 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 // QueryInterface implementation for Attr
 NS_INTERFACE_TABLE_HEAD(Attr)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_TABLE6(Attr, nsINode, nsIDOMAttr, nsIAttribute, nsIDOMNode,
-                      nsIDOMEventTarget, EventTarget)
+  NS_INTERFACE_TABLE(Attr, nsINode, nsIDOMAttr, nsIAttribute, nsIDOMNode,
+                     nsIDOMEventTarget, EventTarget)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(Attr)
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsISupportsWeakReference,
                                  new nsNodeSupportsWeakRefTearoff(this))
@@ -226,7 +226,6 @@ Attr::SetValue(const nsAString& aValue)
 bool
 Attr::Specified() const
 {
-  OwnerDoc()->WarnOnceAbout(nsIDocument::eSpecified);
   return true;
 }
 
@@ -322,19 +321,7 @@ Attr::SetTextContentInternal(const nsAString& aTextContent,
 NS_IMETHODIMP
 Attr::GetIsId(bool* aReturn)
 {
-  Element* element = GetElement();
-  if (!element) {
-    *aReturn = false;
-    return NS_OK;
-  }
-
-  nsIAtom* idAtom = element->GetIDAttributeName();
-  if (!idAtom) {
-    *aReturn = false;
-    return NS_OK;
-  }
-
-  *aReturn = mNodeInfo->Equals(idAtom, kNameSpaceID_None);
+  *aReturn = mNodeInfo->Equals(nsGkAtoms::id, kNameSpaceID_None);
   return NS_OK;
 }
 

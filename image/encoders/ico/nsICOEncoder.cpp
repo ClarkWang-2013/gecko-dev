@@ -15,7 +15,7 @@
 using namespace mozilla;
 using namespace mozilla::image;
 
-NS_IMPL_ISUPPORTS3(nsICOEncoder, imgIEncoder, nsIInputStream, nsIAsyncInputStream)
+NS_IMPL_ISUPPORTS(nsICOEncoder, imgIEncoder, nsIInputStream, nsIAsyncInputStream)
 
 nsICOEncoder::nsICOEncoder() : mImageBufferStart(nullptr),
                                mImageBufferCurr(0),
@@ -305,10 +305,10 @@ nsICOEncoder::ParseOptions(const nsAString& aOptions, uint32_t* bpp,
 
     // Parse the bpp portion of the string format=<png|bmp>;bpp=<bpp_value>
     if (nameValuePair[0].Equals("bpp", nsCaseInsensitiveCStringComparator())) {
-      if (nameValuePair[1].Equals("24")) {
+      if (nameValuePair[1].EqualsLiteral("24")) {
         *bpp = 24;
       }
-      else if (nameValuePair[1].Equals("32")) {
+      else if (nameValuePair[1].EqualsLiteral("32")) {
         *bpp = 32;
       }
       else {

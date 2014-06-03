@@ -193,7 +193,7 @@ private:
     nsDiskCacheDevice* mDevice;
 };
 
-NS_IMPL_ISUPPORTS1(nsDiskCacheDeviceInfo, nsICacheDeviceInfo)
+NS_IMPL_ISUPPORTS(nsDiskCacheDeviceInfo, nsICacheDeviceInfo)
 
 /* readonly attribute string description; */
 NS_IMETHODIMP nsDiskCacheDeviceInfo::GetDescription(char ** aDescription)
@@ -393,8 +393,6 @@ nsDiskCacheDevice::Init()
     rv = mBindery.Init();
     if (NS_FAILED(rv))
         return rv;
-
-    nsDeleteDir::RemoveOldTrashes(mCacheDirectory);
 
     // Open Disk Cache
     rv = OpenDiskCache();

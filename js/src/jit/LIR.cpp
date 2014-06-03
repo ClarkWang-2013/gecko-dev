@@ -63,6 +63,21 @@ LIRGraph::removeBlock(size_t i)
     blocks_.erase(blocks_.begin() + i);
 }
 
+void
+LIRGraph::dump(FILE *fp) const
+{
+    for (size_t i = 0; i < numBlocks(); i++) {
+        getBlock(i)->dump(fp);
+        fprintf(fp, "\n");
+    }
+}
+
+void
+LIRGraph::dump() const
+{
+    dump(stderr);
+}
+
 uint32_t
 LBlock::firstId()
 {
@@ -110,12 +125,33 @@ LBlock::getExitMoveGroup(TempAllocator &alloc)
     return exitMoveGroup_;
 }
 
-static size_t
-TotalOperandCount(MResumePoint *mir)
+void
+LBlock::dump(FILE *fp)
 {
-    size_t accum = mir->numOperands();
-    while ((mir = mir->caller()))
-        accum += mir->numOperands();
+    fprintf(fp, "block%u:\n", mir()->id());
+    for (LInstructionIterator iter = begin(); iter != end(); iter++) {
+        iter->dump(fp);
+        fprintf(fp, "\n");
+    }
+}
+
+void
+LBlock::dump()
+{
+    dump(stderr);
+}
+
+static size_t
+TotalOperandCount(LRecoverInfo *recoverInfo)
+{
+    LRecoverInfo::OperandIter it(recoverInfo->begin());
+    LRecoverInfo::OperandIter end(recoverInfo->end());
+    size_t accum = 0;
+
+    for (; it != end; ++it) {
+        if (!it->isRecoveredOnBailout())
+            accum++;
+    }
     return accum;
 }
 
@@ -138,27 +174,70 @@ LRecoverInfo::New(MIRGenerator *gen, MResumePoint *mir)
 }
 
 bool
+LRecoverInfo::appendOperands(MNode *ins)
+{
+    for (size_t i = 0, end = ins->numOperands(); i < end; i++) {
+        MDefinition *def = ins->getOperand(i);
+
+        // As there is no cycle in the data-flow (without MPhi), checking for
+        // isInWorkList implies that the definition is already in the
+        // instruction vector, and not processed by a caller of the current
+        // function.
+        if (def->isRecoveredOnBailout() && !def->isInWorklist()) {
+            if (!appendDefinition(def))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+LRecoverInfo::appendDefinition(MDefinition *def)
+{
+    MOZ_ASSERT(def->isRecoveredOnBailout());
+    def->setInWorklist();
+    if (!appendOperands(def))
+        return false;
+    return instructions_.append(def);
+}
+
+bool
+LRecoverInfo::appendResumePoint(MResumePoint *rp)
+{
+    if (rp->caller() && !appendResumePoint(rp->caller()))
+        return false;
+
+    if (!appendOperands(rp))
+        return false;
+
+    return instructions_.append(rp);
+}
+
+bool
 LRecoverInfo::init(MResumePoint *rp)
 {
-    MResumePoint *it = rp;
-
     // Sort operations in the order in which we need to restore the stack. This
     // implies that outer frames, as well as operations needed to recover the
     // current frame, are located before the current frame. The inner-most
     // resume point should be the last element in the list.
-    do {
-        if (!instructions_.append(it))
-            return false;
-        it = it->caller();
-    } while (it);
+    if (!appendResumePoint(rp))
+        return false;
 
-    Reverse(instructions_.begin(), instructions_.end());
+    // Remove temporary flags from all definitions.
+    for (MNode **it = begin(); it != end(); it++) {
+        if (!(*it)->isDefinition())
+            continue;
+
+        (*it)->toDefinition()->setNotInWorklist();
+    }
+
     MOZ_ASSERT(mir() == rp);
     return true;
 }
 
 LSnapshot::LSnapshot(LRecoverInfo *recoverInfo, BailoutKind kind)
-  : numSlots_(TotalOperandCount(recoverInfo->mir()) * BOX_PIECES),
+  : numSlots_(TotalOperandCount(recoverInfo) * BOX_PIECES),
     slots_(nullptr),
     recoverInfo_(recoverInfo),
     snapshotOffset_(INVALID_SNAPSHOT_OFFSET),
@@ -368,8 +447,6 @@ LInstruction::dump(FILE *fp)
     fprintf(fp, "} <- ");
 
     printName(fp);
-
-
     printInfo(fp);
 
     if (numTemps()) {
@@ -381,13 +458,23 @@ LInstruction::dump(FILE *fp)
         }
         fprintf(fp, ")");
     }
-    fprintf(fp, "\n");
+
+    if (numSuccessors()) {
+        fprintf(fp, " s=(");
+        for (size_t i = 0; i < numSuccessors(); i++) {
+            fprintf(fp, "block%u", getSuccessor(i)->id());
+            if (i != numSuccessors() - 1)
+                fprintf(fp, ", ");
+        }
+        fprintf(fp, ")");
+    }
 }
 
 void
 LInstruction::dump()
 {
-    return dump(stderr);
+    dump(stderr);
+    fprintf(stderr, "\n");
 }
 
 void

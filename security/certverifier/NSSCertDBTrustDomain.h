@@ -57,7 +57,9 @@ public:
     LocalOnlyOCSPForEV = 4,
   };
   NSSCertDBTrustDomain(SECTrustType certDBTrustType, OCSPFetching ocspFetching,
-                       OCSPCache& ocspCache, void* pinArg);
+                       OCSPCache& ocspCache, void* pinArg,
+                       CertVerifier::ocsp_get_config ocspGETConfig,
+                       CERTChainVerifyCallback* checkChainCallback = nullptr);
 
   virtual SECStatus FindPotentialIssuers(
                         const SECItem* encodedIssuerName,
@@ -65,9 +67,9 @@ public:
                 /*out*/ mozilla::pkix::ScopedCERTCertList& results);
 
   virtual SECStatus GetCertTrust(mozilla::pkix::EndEntityOrCA endEntityOrCA,
-                                 SECOidTag policy,
+                                 const mozilla::pkix::CertPolicyId& policy,
                                  const CERTCertificate* candidateCert,
-                         /*out*/ TrustLevel* trustLevel);
+                         /*out*/ mozilla::pkix::TrustLevel* trustLevel);
 
   virtual SECStatus VerifySignedData(const CERTSignedData* signedData,
                                      const CERTCertificate* cert);
@@ -78,15 +80,25 @@ public:
                                     PRTime time,
                        /*optional*/ const SECItem* stapledOCSPResponse);
 
+  virtual SECStatus IsChainValid(const CERTCertList* certChain);
+
 private:
+  enum EncodedResponseSource {
+    ResponseIsFromNetwork = 1,
+    ResponseWasStapled = 2
+  };
+  static const PRTime ServerFailureDelay = 5 * 60 * PR_USEC_PER_SEC;
   SECStatus VerifyAndMaybeCacheEncodedOCSPResponse(
     const CERTCertificate* cert, CERTCertificate* issuerCert, PRTime time,
-    const SECItem* encodedResponse);
+    uint16_t maxLifetimeInDays, const SECItem* encodedResponse,
+    EncodedResponseSource responseSource);
 
   const SECTrustType mCertDBTrustType;
   const OCSPFetching mOCSPFetching;
   OCSPCache& mOCSPCache; // non-owning!
   void* mPinArg; // non-owning!
+  const CertVerifier::ocsp_get_config mOCSPGetConfig;
+  CERTChainVerifyCallback* mCheckChainCallback; // non-owning!
 };
 
 } } // namespace mozilla::psm

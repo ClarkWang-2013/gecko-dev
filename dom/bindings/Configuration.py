@@ -233,6 +233,15 @@ class Descriptor(DescriptorProvider):
                 nativeTypeDefault = "mozilla::dom::" + ifaceName
 
         self.nativeType = desc.get('nativeType', nativeTypeDefault)
+        # Now create a version of nativeType that doesn't have extra
+        # mozilla::dom:: at the beginning.
+        prettyNativeType = self.nativeType.split("::")
+        if prettyNativeType[0] == "mozilla":
+            prettyNativeType.pop(0)
+            if prettyNativeType[0] == "dom":
+                prettyNativeType.pop(0)
+        self.prettyNativeType = "::".join(prettyNativeType)
+
         self.jsImplParent = desc.get('jsImplParent', self.nativeType)
 
         # Do something sane for JSObject
@@ -411,6 +420,34 @@ class Descriptor(DescriptorProvider):
         if '__stringifier' not in self.binaryNames:
             self.binaryNames["__stringifier"] = "Stringify"
 
+
+        if not self.interface.isExternal():
+            self.permissions = dict()
+
+            # Adds a permission list to this descriptor and returns the index to use.
+            def addPermissions(ifaceOrMember):
+                checkPermissions = ifaceOrMember.getExtendedAttribute("CheckPermissions")
+                if checkPermissions is None:
+                    return None
+
+                # It's a list of whitespace-separated strings
+                assert(len(checkPermissions) is 1)
+                assert(checkPermissions[0] is not None)
+                checkPermissions = checkPermissions[0]
+                permissionsList = checkPermissions.split()
+                if len(permissionsList) == 0:
+                    raise TypeError("Need at least one permission name for CheckPermissions")
+
+                permissionsList = tuple(sorted(set(permissionsList)))
+                return self.permissions.setdefault(permissionsList, len(self.permissions))
+
+            self.checkPermissionsIndex = addPermissions(self.interface)
+            self.checkPermissionsIndicesForMembers = dict()
+            for m in self.interface.members:
+                permissionsIndex = addPermissions(m)
+                if permissionsIndex is not None:
+                    self.checkPermissionsIndicesForMembers[m.identifier.name] = permissionsIndex
+
         # Build the prototype chain.
         self.prototypeChain = []
         parent = interface
@@ -487,7 +524,8 @@ class Descriptor(DescriptorProvider):
         return (self.interface.getExtendedAttribute("Pref") or
                 self.interface.getExtendedAttribute("ChromeOnly") or
                 self.interface.getExtendedAttribute("Func") or
-                self.interface.getExtendedAttribute("AvailableIn"))
+                self.interface.getExtendedAttribute("AvailableIn") or
+                self.interface.getExtendedAttribute("CheckPermissions"))
 
     def needsXrayResolveHooks(self):
         """

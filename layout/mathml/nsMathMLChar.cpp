@@ -34,13 +34,15 @@ using namespace mozilla;
 
 //#define NOISY_SEARCH 1
 
+// BUG 848725 Drawing failure with stretchy horizontal parenthesis when no fonts
+// are installed. "kMaxScaleFactor" is required to limit the scale for the
+// vertical and horizontal stretchy operators.
+static const float kMaxScaleFactor = 20.0;
 static const float kLargeOpFactor = float(M_SQRT2);
 static const float kIntegralFactor = 2.0;
 
 // -----------------------------------------------------------------------------
 static const nsGlyphCode kNullGlyph = {{{0, 0}}, 0};
-typedef enum {eExtension_base, eExtension_variants, eExtension_parts}
-  nsMathfontPrefExtension;
 
 // -----------------------------------------------------------------------------
 // nsGlyphTable is a class that provides an interface for accessing glyphs
@@ -602,7 +604,7 @@ private:
   nsTArray<nsPropertiesTable> mPropertiesTableList;
 };
 
-NS_IMPL_ISUPPORTS1(nsGlyphTableList, nsIObserver)
+NS_IMPL_ISUPPORTS(nsGlyphTableList, nsIObserver)
 
 // -----------------------------------------------------------------------------
 // Here is the global list of applicable glyph tables that we will be using
@@ -681,77 +683,6 @@ nsGlyphTableList::GetGlyphTableFor(const nsAString& aFamily)
 
 // -----------------------------------------------------------------------------
 
-// Lookup the preferences:
-// "font.mathfont-family.\uNNNN.base"     -- fonts for the base size
-// "font.mathfont-family.\uNNNN.variants" -- fonts for larger glyphs
-// "font.mathfont-family.\uNNNN.parts"    -- fonts for partial glyphs
-// Given the char code and mode of stretch, retrieve the preferred extension
-// font families.
-static bool
-GetFontExtensionPref(char16_t aChar,
-                     nsMathfontPrefExtension aExtension, nsString& aValue)
-{
-  // initialize OUT param
-  aValue.Truncate();
-
-  // We are going to try two keys because some users specify their pref as 
-  // user_pref("font.mathfont-family.\uNNNN.base", "...") rather than
-  // user_pref("font.mathfont-family.\\uNNNN.base", "...").
-  // The \uNNNN in the former is interpreted as an UTF16 escape sequence by
-  // JavaScript and is converted to the internal UTF8 string that JavaScript
-  // uses. 
-  // But clueless users who are not savvy of JavaScript have no idea as to what 
-  // is going on and are baffled as to why their pref setting is not working.
-  // So to save countless explanations, we are going to support both keys.
-
-  static const char* kMathFontPrefix = "font.mathfont-family.";
-
-  nsAutoCString extension;
-  switch (aExtension)
-  {
-    case eExtension_base:
-      extension.AssignLiteral(".base");
-      break;
-    case eExtension_variants:
-      extension.AssignLiteral(".variants");
-      break;
-    case eExtension_parts:
-      extension.AssignLiteral(".parts");
-      break;
-    default:
-      return false;
-  }
-
-  // .\\uNNNN key
-  nsAutoCString key;
-  key.AssignASCII(kMathFontPrefix);
-  char ustr[10];
-  PR_snprintf(ustr, sizeof(ustr), "\\u%04X", aChar);
-  key.Append(ustr);
-  key.Append(extension);
-  // .\uNNNN key
-  nsAutoCString alternateKey;
-  alternateKey.AssignASCII(kMathFontPrefix);
-  NS_ConvertUTF16toUTF8 tmp(&aChar, 1);
-  alternateKey.Append(tmp);
-  alternateKey.Append(extension);
-
-  aValue = Preferences::GetString(key.get());
-  if (aValue.IsEmpty()) {
-    aValue = Preferences::GetString(alternateKey.get());
-  }
-  return !aValue.IsEmpty();
-}
-
-
-static bool
-MathFontEnumCallback(const nsString& aFamily, bool aGeneric, void *aData)
-{
-  if (!gGlyphTableList->AddGlyphTable(aFamily))
-    return false; // stop in low-memory situations
-  return true; // don't stop
-}
-
 static nsresult
 InitGlobals(nsPresContext* aPresContext)
 {
@@ -769,38 +700,20 @@ InitGlobals(nsPresContext* aPresContext)
     gGlyphTableList = nullptr;
     return rv;
   }
-  /*
-  else
-    The gGlyphTableList has been successfully registered as a shutdown observer.
-    It will be deleted at shutdown, even if a failure happens below.
-  */
+  // The gGlyphTableList has been successfully registered as a shutdown
+  // observer and will be deleted at shutdown. We now add some private
+  // per font-family tables for stretchy operators, in order of preference.
+  // Do not include the Unicode table in this list.
+  if (!gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("MathJax_Main")) ||
+      !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("STIXGeneral")) ||
+      !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("Standard Symbols L"))
+#ifdef XP_WIN
+      || !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("Symbol"))
+#endif
+      ) {
+    rv = NS_ERROR_OUT_OF_MEMORY;
+  }
 
-  nsAutoCString key;
-  nsAutoString value;
-  nsCOMPtr<nsIPersistentProperties> mathfontProp;
-
-  // Add the math fonts in the gGlyphTableList in order of preference ...
-  // Note: we only load font-names at this stage. The actual glyph tables will
-  // be loaded lazily (see nsGlyphTable::ElementAt()).
-
-  // Load the "mathfont.properties" file
-  value.Truncate();
-  rv = LoadProperties(value, mathfontProp);
-  if (NS_FAILED(rv)) return rv;
-
-  // Get the list of mathfonts having special glyph tables to be used for
-  // stretchy characters.
-  // We just want to iterate over the font-family list using the
-  // callback mechanism that nsFont has...
-  nsFont font("", 0, 0, 0, 0, 0, 0);
-  NS_NAMED_LITERAL_CSTRING(defaultKey, "font.mathfont-glyph-tables");
-  rv = mathfontProp->GetStringProperty(defaultKey, font.name);
-  if (NS_FAILED(rv)) return rv;
-
-  // Parse the font list and append an entry for each family to gGlyphTableList
-  nsAutoString missingFamilyList;
-
-  font.EnumerateFamilies(MathFontEnumCallback, nullptr);
   return rv;
 }
 
@@ -1092,7 +1005,8 @@ AddFallbackFonts(nsAString& aFontName, const nsAString& aFallbackFamilies)
     ++p; // may advance past p_end
   }
 
-  aFontName.Append(NS_LITERAL_STRING(",") + aFallbackFamilies);
+  aFontName.Append(',');
+  aFontName.Append(aFallbackFamilies);
   return;
 
 insert:
@@ -1399,10 +1313,6 @@ nsMathMLChar::StretchEnumContext::TryParts(nsGlyphTable* aGlyphTable,
       textRun[i] = aGlyphTable->MakeTextRun(mThebesContext, oneDevPixel,
                                             *aFontGroup, ch);
       nsBoundingMetrics bm = MeasureTextRun(mThebesContext, textRun[i]);
-
-      // TODO: For the generic Unicode table, ideally we should check that the
-      // glyphs are actually found and that they each come from the same
-      // font.
       bmdata[i] = bm;
       sizedata[i] = isVertical ? bm.ascent + bm.descent
                                : bm.rightBearing - bm.leftBearing;
@@ -1412,6 +1322,32 @@ nsMathMLChar::StretchEnumContext::TryParts(nsGlyphTable* aGlyphTable,
       textRun[i] = nullptr;
       bmdata[i] = nsBoundingMetrics();
       sizedata[i] = i == 3 ? mTargetSize : 0;
+    }
+  }
+
+  // For the Unicode table, we check that all the glyphs are actually found and
+  // come from the same font.
+  if (aGlyphTable == &gGlyphTableList->mUnicodeTable) {
+    gfxFont* unicodeFont = nullptr;
+    for (int32_t i = 0; i < 4; i++) {
+      if (!textRun[i]) {
+        continue;
+      }
+      if (textRun[i]->GetLength() != 1 ||
+          textRun[i]->GetCharacterGlyphs()[0].IsMissing()) {
+        return false;
+      }
+      uint32_t numGlyphRuns;
+      const gfxTextRun::GlyphRun* glyphRuns =
+        textRun[i]->GetGlyphRuns(&numGlyphRuns);
+      if (numGlyphRuns != 1) {
+        return false;
+      }
+      if (!unicodeFont) {
+        unicodeFont = glyphRuns[0].mFont;
+      } else if (unicodeFont != glyphRuns[0].mFont) {
+        return false;
+      }
     }
   }
 
@@ -1589,15 +1525,6 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
   // For the base size, the default font should come from the parent context
   nsFont font = mStyleContext->GetParent()->StyleFont()->mFont;
 
-  // Override with specific fonts if applicable for this character
-  nsAutoString families;
-  if (GetFontExtensionPref(mData[0], eExtension_base, families)) {
-    font.name = families;
-  }
-
-  // Don't modify this nsMathMLChar when doing GetMaxWidth()
-  bool maxWidth = (NS_STRETCH_MAXWIDTH & aStretchHint) != 0;
-
   nsRefPtr<nsFontMetrics> fm;
   aPresContext->DeviceContext()->
     GetMetricsFor(font,
@@ -1613,6 +1540,7 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
   aDesiredStretchSize = MeasureTextRun(aThebesContext, textRun);
   mGlyphs[0] = textRun;
 
+  bool maxWidth = (NS_STRETCH_MAXWIDTH & aStretchHint) != 0;
   if (!maxWidth) {
     mUnscaledAscent = aDesiredStretchSize.ascent;
   }
@@ -1704,41 +1632,10 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
   //////////////////////////////////////////////////////////////////////////////
 
   bool glyphFound = false;
-  nsAutoString cssFamilies;
-
-  if (!done) {
-    font = mStyleContext->StyleFont()->mFont;
-    cssFamilies = font.name;
-  }
-
-  // See if there are preferred fonts for the variants of this char
-  if (!done && GetFontExtensionPref(mData[0], eExtension_variants, families)) {
-    font.name = families;
-
-    StretchEnumContext enumData(this, aPresContext, aThebesContext,
-                                aStretchDirection, targetSize, aStretchHint,
-                                aDesiredStretchSize, font.name, glyphFound);
-    enumData.mTryParts = false;
-
-    done = !font.EnumerateFamilies(StretchEnumContext::EnumCallback, &enumData);
-  }
-
-  // See if there are preferred fonts for the parts of this char
-  if (!done && !largeopOnly
-      && GetFontExtensionPref(mData[0], eExtension_parts, families)) {
-    font.name = families;
-
-    StretchEnumContext enumData(this, aPresContext, aThebesContext,
-                                aStretchDirection, targetSize, aStretchHint,
-                                aDesiredStretchSize, font.name, glyphFound);
-    enumData.mTryVariants = false;
-
-    done = !font.EnumerateFamilies(StretchEnumContext::EnumCallback, &enumData);
-  }
 
   if (!done) { // normal case
     // Use the css font-family but add preferred fallback fonts.
-    font.name = cssFamilies;
+    font = mStyleContext->StyleFont()->mFont;
     NS_NAMED_LITERAL_CSTRING(defaultKey, "font.mathfont-family");
     nsAdoptingString fallbackFonts = Preferences::GetString(defaultKey.get());
     if (!fallbackFonts.IsEmpty()) {
@@ -1763,12 +1660,16 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
     mUnscaledAscent = aDesiredStretchSize.ascent;
   }
     
+  if (glyphFound) {
+    return NS_OK;
+  }
+
   // stretchy character
   if (stretchy) {
     if (isVertical) {
       float scale =
-        float(aContainerSize.ascent + aContainerSize.descent) /
-        (aDesiredStretchSize.ascent + aDesiredStretchSize.descent);
+        std::min(kMaxScaleFactor, float(aContainerSize.ascent + aContainerSize.descent) /
+        (aDesiredStretchSize.ascent + aDesiredStretchSize.descent));
       if (!largeop || scale > 1.0) {
         // make the character match the desired height.
         if (!maxWidth) {
@@ -1779,8 +1680,8 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
       }
     } else {
       float scale =
-        float(aContainerSize.rightBearing - aContainerSize.leftBearing) /
-        (aDesiredStretchSize.rightBearing - aDesiredStretchSize.leftBearing);
+        std::min(kMaxScaleFactor, float(aContainerSize.rightBearing - aContainerSize.leftBearing) /
+        (aDesiredStretchSize.rightBearing - aDesiredStretchSize.leftBearing));
       if (!largeop || scale > 1.0) {
         // make the character match the desired width.
         if (!maxWidth) {
@@ -1795,7 +1696,7 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
 
   // We do not have a char variant for this largeop in display mode, so we
   // apply a scale transform to the base char.
-  if (!glyphFound && largeop) {
+  if (largeop) {
     float scale;
     float largeopFactor = kLargeOpFactor;
 

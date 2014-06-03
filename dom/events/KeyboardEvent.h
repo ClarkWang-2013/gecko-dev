@@ -58,6 +58,8 @@ public:
   virtual uint32_t Which() MOZ_OVERRIDE;
   uint32_t Location();
 
+  void GetCode(nsAString& aCode);
+
   void InitKeyEvent(const nsAString& aType, bool aCanBubble, bool aCancelable,
                     nsIDOMWindow* aView, bool aCtrlKey, bool aAltKey,
                     bool aShiftKey, bool aMetaKey,
@@ -68,13 +70,6 @@ public:
                        aCtrlKey, aAltKey, aShiftKey,aMetaKey,
                        aKeyCode, aCharCode);
   }
-
-  void InitKeyboardEvent(const nsAString& aType,
-                         bool aCanBubble, bool aCancelable,
-                         nsIDOMWindow* aView, uint32_t aDetail,
-                         const nsAString& aKey, uint32_t aLocation,
-                         const nsAString& aModifiersList, bool aRepeat,
-                         ErrorResult& aRv);
 
 private:
   // True, if the instance is created with Constructor().

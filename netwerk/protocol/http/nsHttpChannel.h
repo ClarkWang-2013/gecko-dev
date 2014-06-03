@@ -231,7 +231,7 @@ private:
     void     HandleAsyncFallback();
     nsresult ContinueHandleAsyncFallback(nsresult);
     nsresult PromptTempRedirect();
-    nsresult StartRedirectChannelToURI(nsIURI *);
+    nsresult StartRedirectChannelToURI(nsIURI *, uint32_t);
     virtual  nsresult SetupReplacementChannel(nsIURI *, nsIChannel *, bool preserveMethod);
 
     // proxy specific methods
@@ -424,8 +424,6 @@ private: // cache telemetry
     bool mDidReval;
 
 private:
-    nsIPrincipal *GetPrincipal();
-    nsCOMPtr<nsIPrincipal> mPrincipal;
     bool mForcePending;
 };
 

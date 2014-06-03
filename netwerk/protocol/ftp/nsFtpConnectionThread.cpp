@@ -64,13 +64,13 @@ removeParamsFromPath(nsCString& path)
   }
 }
 
-NS_IMPL_ISUPPORTS_INHERITED5(nsFtpState,
-                             nsBaseContentStream,
-                             nsIInputStreamCallback, 
-                             nsITransportEventSink,
-                             nsICacheListener,
-                             nsIRequestObserver,
-                             nsIProtocolProxyCallback)
+NS_IMPL_ISUPPORTS_INHERITED(nsFtpState,
+                            nsBaseContentStream,
+                            nsIInputStreamCallback, 
+                            nsITransportEventSink,
+                            nsICacheListener,
+                            nsIRequestObserver,
+                            nsIProtocolProxyCallback)
 
 nsFtpState::nsFtpState()
     : nsBaseContentStream(true)
@@ -1998,10 +1998,10 @@ nsFtpState::StopProcessing()
                 alertEvent = new nsFtpAsyncAlert(prompter,
                     NS_ConvertASCIItoUTF16(mResponseMsg));
             }
-            NS_DispatchToMainThread(alertEvent, NS_DISPATCH_NORMAL);
+            NS_DispatchToMainThread(alertEvent);
         }
     }
-    
+
     nsresult broadcastErrorCode = mControlStatus;
     if (NS_SUCCEEDED(broadcastErrorCode))
         broadcastErrorCode = mInternalError;

@@ -22,8 +22,8 @@
 using mozilla::unused;
 using namespace mozilla::dom;
 
-NS_IMPL_ISUPPORTS1(FilePickerParent::FilePickerShownCallback,
-                   nsIFilePickerShownCallback);
+NS_IMPL_ISUPPORTS(FilePickerParent::FilePickerShownCallback,
+                  nsIFilePickerShownCallback);
 
 NS_IMETHODIMP
 FilePickerParent::FilePickerShownCallback::Done(int16_t aResult)
@@ -95,7 +95,7 @@ FilePickerParent::FileSizeAndDateRunnable::Run()
   }
 
   // Dispatch ourselves back on the main thread.
-  if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
+  if (NS_FAILED(NS_DispatchToMainThread(this))) {
     // It's hard to see how we can recover gracefully in this case. The child
     // process is waiting for an IPC, but that can only happen on the main
     // thread.

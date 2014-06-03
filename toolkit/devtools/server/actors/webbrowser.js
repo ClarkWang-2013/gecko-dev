@@ -6,16 +6,30 @@
 
 "use strict";
 
-let {Cu} = require("chrome");
+let { Ci, Cu } = require("chrome");
+let Services = require("Services");
+let { ActorPool, createExtraActors, appendExtraActors } = require("devtools/server/actors/common");
+let { RootActor } = require("devtools/server/actors/root");
+let { AddonThreadActor, ThreadActor } = require("devtools/server/actors/script");
+let { DebuggerServer } = require("devtools/server/main");
+let DevToolsUtils = require("devtools/toolkit/DevToolsUtils");
+let { dbg_assert, dumpn } = DevToolsUtils;
+
 let {Promise: promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
 
 // Assumptions on events module:
 // events needs to be dispatched synchronously,
 // by calling the listeners in the order or registration.
 XPCOMUtils.defineLazyGetter(this, "events", () => {
-  return devtools.require("sdk/event/core");
+  return require("sdk/event/core");
 });
+
+// Also depends on following symbols, shared by common scope with main.js:
+// DebuggerServer, CommonCreateExtraActors, CommonAppendExtraActors, ActorPool,
+// ThreadActor
 
 /**
  * Browser-specific actors.
@@ -52,6 +66,8 @@ function sendShutdownEvent() {
     win.document.documentElement.dispatchEvent(evt);
   }
 }
+
+exports.sendShutdownEvent = sendShutdownEvent;
 
 /**
  * Construct a root actor appropriate for use in a server running in a
@@ -478,6 +494,8 @@ BrowserTabList.prototype.onCloseWindow = DevToolsUtils.makeInfallible(function(a
   }, "BrowserTabList.prototype.onCloseWindow's delayed body"), 0);
 }, "BrowserTabList.prototype.onCloseWindow");
 
+exports.BrowserTabList = BrowserTabList;
+
 /**
  * Creates a tab actor for handling requests to a browser tab, like
  * attaching and detaching. TabActor respects the actor factories
@@ -652,6 +670,12 @@ TabActor.prototype = {
       return;
     }
 
+    // Tell the thread actor that the tab is closed, so that it may terminate
+    // instead of resuming the debuggee script.
+    if (this._attached) {
+      this.threadActor._tabClosed = true;
+    }
+
     if (this._detach()) {
       this.conn.send({ from: this.actorID,
                        type: "tabDetached" });
@@ -661,8 +685,8 @@ TabActor.prototype = {
   },
 
   /* Support for DebuggerServer.addTabActor. */
-  _createExtraActors: CommonCreateExtraActors,
-  _appendExtraActors: CommonAppendExtraActors,
+  _createExtraActors: createExtraActors,
+  _appendExtraActors: appendExtraActors,
 
   /**
    * Does the actual work of attching to a tab.
@@ -1040,9 +1064,15 @@ TabActor.prototype = {
    *         True if the window.console object is native, or false otherwise.
    */
   hasNativeConsoleAPI: function BTA_hasNativeConsoleAPI(aWindow) {
-    // Do not expose WebConsoleActor function directly as it is always
-    // loaded after the BrowserTabActor
-    return WebConsoleActor.prototype.hasNativeConsoleAPI(aWindow);
+    let isNative = false;
+    try {
+      // We are very explicitly examining the "console" property of
+      // the non-Xrayed object here.
+      let console = aWindow.wrappedJSObject.console;
+      isNative = console instanceof aWindow.Console;
+    }
+    catch (ex) { }
+    return isNative;
   }
 };
 
@@ -1056,6 +1086,8 @@ TabActor.prototype.requestTypes = {
   "navigateTo": TabActor.prototype.onNavigateTo,
   "reconfigure": TabActor.prototype.onReconfigure
 };
+
+exports.TabActor = TabActor;
 
 /**
  * Creates a tab actor for handling requests to a single in-process
@@ -1124,6 +1156,8 @@ BrowserTabActor.prototype.exit = function() {
   this._browser = null;
   this._tabbrowser = null;
 };
+
+exports.BrowserTabActor = BrowserTabActor;
 
 /**
  * This actor is a shim that connects to a ContentActor in a remote
@@ -1201,10 +1235,13 @@ BrowserAddonList.prototype.onUninstalled = function (aAddon) {
   this._onListChanged();
 };
 
+exports.BrowserAddonList = BrowserAddonList;
+
 function BrowserAddonActor(aConnection, aAddon) {
   this.conn = aConnection;
   this._addon = aAddon;
-  this._contextPool = null;
+  this._contextPool = new ActorPool(this.conn);
+  this.conn.addActorPool(this._contextPool);
   this._threadActor = null;
   this._global = null;
   AddonManager.addAddonListener(this);
@@ -1235,6 +1272,11 @@ BrowserAddonActor.prototype = {
 
   form: function BAA_form() {
     dbg_assert(this.actorID, "addon should have an actorID.");
+    if (!this._consoleActor) {
+      let {AddonConsoleActor} = require("devtools/server/actors/webconsole");
+      this._consoleActor = new AddonConsoleActor(this._addon, this.conn, this);
+      this._contextPool.addActor(this._consoleActor);
+    }
 
     return {
       actor: this.actorID,
@@ -1242,10 +1284,14 @@ BrowserAddonActor.prototype = {
       name: this._addon.name,
       url: this.url,
       debuggable: this._addon.isDebuggable,
+      consoleActor: this._consoleActor.actorID,
     };
   },
 
   disconnect: function BAA_disconnect() {
+    this.conn.removeActorPool(this._contextPool);
+    this._contextPool = null;
+    this._consoleActor = null;
     this._addon = null;
     this._global = null;
     AddonManager.removeAddonListener(this);
@@ -1284,9 +1330,6 @@ BrowserAddonActor.prototype = {
     }
 
     if (!this.attached) {
-      this._contextPool = new ActorPool(this.conn);
-      this.conn.addActorPool(this._contextPool);
-
       this._threadActor = new AddonThreadActor(this.conn, this,
                                                this._addon.id);
       this._contextPool.addActor(this._threadActor);
@@ -1300,8 +1343,7 @@ BrowserAddonActor.prototype = {
       return { error: "wrongState" };
     }
 
-    this.conn.removeActorPool(this._contextPool);
-    this._contextPool = null;
+    this._contextPool.remoteActor(this._threadActor);
 
     this._threadActor = null;
 
@@ -1429,4 +1471,12 @@ DebuggerProgressListener.prototype = {
       this._tabActor._navigate(window);
     }
   }, "DebuggerProgressListener.prototype.onStateChange")
+};
+
+exports.register = function(handle) {
+  handle.setRootActor(createRootActor);
+};
+
+exports.unregister = function(handle) {
+  handle.setRootActor(null);
 };

@@ -72,8 +72,8 @@ MightNeedIMEFocus(const nsWidgetInitData* aInitData)
 // Arbitrary, fungible.
 const size_t PuppetWidget::kMaxDimension = 4000;
 
-NS_IMPL_ISUPPORTS_INHERITED1(PuppetWidget, nsBaseWidget,
-                             nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS_INHERITED(PuppetWidget, nsBaseWidget,
+                            nsISupportsWeakReference)
 
 PuppetWidget::PuppetWidget(TabChild* aTabChild)
   : mTabChild(aTabChild)
@@ -649,15 +649,17 @@ PuppetWidget::NotifyIMEOfSelectionChange(
 NS_IMETHODIMP
 PuppetWidget::SetCursor(nsCursor aCursor)
 {
-  if (mCursor == aCursor) {
+  if (mCursor == aCursor && !mUpdateCursor) {
     return NS_OK;
   }
 
-  if (mTabChild && !mTabChild->SendSetCursor(aCursor)) {
+  if (mTabChild &&
+      !mTabChild->SendSetCursor(aCursor, mUpdateCursor)) {
     return NS_ERROR_FAILURE;
   }
 
   mCursor = aCursor;
+  mUpdateCursor = false;
 
   return NS_OK;
 }
@@ -855,7 +857,7 @@ PuppetScreen::SetRotation(uint32_t aRotation)
   return NS_ERROR_NOT_AVAILABLE;
 }
 
-NS_IMPL_ISUPPORTS1(PuppetScreenManager, nsIScreenManager)
+NS_IMPL_ISUPPORTS(PuppetScreenManager, nsIScreenManager)
 
 PuppetScreenManager::PuppetScreenManager()
 {

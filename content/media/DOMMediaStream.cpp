@@ -41,11 +41,11 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DOMMediaStream)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(DOMMediaStream)
 
-NS_IMPL_ISUPPORTS_INHERITED1(DOMLocalMediaStream, DOMMediaStream,
-                             nsIDOMLocalMediaStream)
+NS_IMPL_ISUPPORTS_INHERITED(DOMLocalMediaStream, DOMMediaStream,
+                            nsIDOMLocalMediaStream)
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(DOMAudioNodeMediaStream, DOMMediaStream,
-                                     mStreamNode)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(DOMAudioNodeMediaStream, DOMMediaStream,
+                                   mStreamNode)
 
 NS_IMPL_ADDREF_INHERITED(DOMAudioNodeMediaStream, DOMMediaStream)
 NS_IMPL_RELEASE_INHERITED(DOMAudioNodeMediaStream, DOMMediaStream)
@@ -250,7 +250,40 @@ DOMMediaStream::SetTrackEnabled(TrackID aTrackID, bool aEnabled)
 bool
 DOMMediaStream::CombineWithPrincipal(nsIPrincipal* aPrincipal)
 {
-  return nsContentUtils::CombineResourcePrincipals(&mPrincipal, aPrincipal);
+  bool changed =
+    nsContentUtils::CombineResourcePrincipals(&mPrincipal, aPrincipal);
+  if (changed) {
+    NotifyPrincipalChanged();
+  }
+  return changed;
+}
+
+void
+DOMMediaStream::SetPrincipal(nsIPrincipal* aPrincipal)
+{
+  mPrincipal = aPrincipal;
+  NotifyPrincipalChanged();
+}
+
+void
+DOMMediaStream::NotifyPrincipalChanged()
+{
+  for (uint32_t i = 0; i < mPrincipalChangeObservers.Length(); ++i) {
+    mPrincipalChangeObservers[i]->PrincipalChanged(this);
+  }
+}
+
+
+bool
+DOMMediaStream::AddPrincipalChangeObserver(PrincipalChangeObserver* aObserver)
+{
+  return mPrincipalChangeObservers.AppendElement(aObserver) != nullptr;
+}
+
+bool
+DOMMediaStream::RemovePrincipalChangeObserver(PrincipalChangeObserver* aObserver)
+{
+  return mPrincipalChangeObservers.RemoveElement(aObserver);
 }
 
 MediaStreamTrack*

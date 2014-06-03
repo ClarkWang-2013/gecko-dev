@@ -27,11 +27,8 @@ AssertInnerizedScopeChain(JSContext *cx, JSObject &scopeobj)
 {
 #ifdef DEBUG
     RootedObject obj(cx);
-    for (obj = &scopeobj; obj; obj = obj->enclosingScope()) {
-        if (JSObjectOp op = obj->getClass()->ext.innerObject) {
-            JS_ASSERT(op(cx, obj) == obj);
-        }
-    }
+    for (obj = &scopeobj; obj; obj = obj->enclosingScope())
+        JS_ASSERT(GetInnerObject(obj) == obj);
 #endif
 }
 
@@ -93,7 +90,7 @@ class EvalScriptGuard
     Rooted<JSLinearString*> lookupStr_;
 
   public:
-    EvalScriptGuard(JSContext *cx)
+    explicit EvalScriptGuard(JSContext *cx)
         : cx_(cx), script_(cx), lookup_(cx), lookupStr_(cx) {}
 
     ~EvalScriptGuard() {
@@ -189,30 +186,6 @@ TryEvalJSON(JSContext *cx, JSScript *callerScript,
         }
     }
     return EvalJSON_NotJSON;
-}
-
-static void
-MarkFunctionsWithinEvalScript(JSScript *script)
-{
-    // Mark top level functions in an eval script as being within an eval and,
-    // if applicable, inside a with statement.
-
-    if (!script->hasObjects())
-        return;
-
-    ObjectArray *objects = script->objects();
-    size_t start = script->innerObjectsStart();
-
-    for (size_t i = start; i < objects->length; i++) {
-        JSObject *obj = objects->vector[i];
-        if (obj->is<JSFunction>()) {
-            JSFunction *fun = &obj->as<JSFunction>();
-            if (fun->hasScript())
-                fun->nonLazyScript()->setDirectlyInsideEval();
-            else if (fun->isInterpretedLazy())
-                fun->lazyScript()->setDirectlyInsideEval();
-        }
-    }
 }
 
 // Define subset of ExecuteType so that casting performs the injection.
@@ -320,13 +293,12 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, AbstractFrame
                .setNoScriptRval(false)
                .setOriginPrincipals(originPrincipals)
                .setIntroductionInfo(introducerFilename, "eval", lineno, maybeScript, pcOffset);
+        SourceBufferHolder srcBuf(chars.get(), length, SourceBufferHolder::NoOwnership);
         JSScript *compiled = frontend::CompileScript(cx, &cx->tempLifoAlloc(),
                                                      scopeobj, callerScript, options,
-                                                     chars.get(), length, flatStr, staticLevel);
+                                                     srcBuf, flatStr, staticLevel);
         if (!compiled)
             return false;
-
-        MarkFunctionsWithinEvalScript(compiled);
 
         esg.setNewScript(compiled);
     }
@@ -388,13 +360,12 @@ js::DirectEvalStringFromIon(JSContext *cx,
                .setNoScriptRval(false)
                .setOriginPrincipals(originPrincipals)
                .setIntroductionInfo(introducerFilename, "eval", lineno, maybeScript, pcOffset);
+        SourceBufferHolder srcBuf(chars.get(), length, SourceBufferHolder::NoOwnership);
         JSScript *compiled = frontend::CompileScript(cx, &cx->tempLifoAlloc(),
                                                      scopeobj, callerScript, options,
-                                                     chars.get(), length, flatStr, staticLevel);
+                                                     srcBuf, flatStr, staticLevel);
         if (!compiled)
             return false;
-
-        MarkFunctionsWithinEvalScript(compiled);
 
         esg.setNewScript(compiled);
     }

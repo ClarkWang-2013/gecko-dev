@@ -71,6 +71,9 @@ var gAdvancedPane = {
 #endif
     this.updateActualCacheSize();
     this.updateActualAppCacheSize();
+
+    // Notify observers that the UI is now ready
+    Services.obs.notifyObservers(window, "advanced-pane-loaded", null);
   },
 
   /**
@@ -299,7 +302,7 @@ var gAdvancedPane = {
       ])
     };
 
-    actualSizeLabel.value = prefStrBundle.getString("actualDiskCacheSizeCalculated");
+    actualSizeLabel.textContent = prefStrBundle.getString("actualDiskCacheSizeCalculated");
 
     var cacheService =
       Components.classes["@mozilla.org/netwerk/cache-storage-service;1"]
@@ -318,7 +321,7 @@ var gAdvancedPane = {
           var sizeStrings = DownloadUtils.convertByteUnits(deviceInfo.totalSize);
           var prefStrBundle = document.getElementById("bundlePreferences");
           var sizeStr = prefStrBundle.getFormattedString("actualAppCacheSize", sizeStrings);
-          actualSizeLabel.value = sizeStr;
+          actualSizeLabel.textContent = sizeStr;
         }
         // Do not enumerate entries
         return false;
@@ -428,9 +431,6 @@ var gAdvancedPane = {
   {
     var cacheService = Components.classes["@mozilla.org/network/application-cache-service;1"].
                        getService(Components.interfaces.nsIApplicationCacheService);
-    if (!groups)
-      groups = cacheService.getGroups();
-
     var ios = Components.classes["@mozilla.org/network/io-service;1"].
               getService(Components.interfaces.nsIIOService);
 
@@ -459,9 +459,14 @@ var gAdvancedPane = {
       list.removeChild(list.firstChild);
     }
 
-    var cacheService = Components.classes["@mozilla.org/network/application-cache-service;1"].
-                       getService(Components.interfaces.nsIApplicationCacheService);
-    var groups = cacheService.getGroups();
+    var groups;
+    try {
+      var cacheService = Components.classes["@mozilla.org/network/application-cache-service;1"].
+                         getService(Components.interfaces.nsIApplicationCacheService);
+      groups = cacheService.getGroups();
+    } catch (e) {
+      return;
+    }
 
     var bundle = document.getElementById("bundlePreferences");
 
@@ -517,18 +522,20 @@ var gAdvancedPane = {
       return;
 
     // clear offline cache entries
-    var cacheService = Components.classes["@mozilla.org/network/application-cache-service;1"].
-                       getService(Components.interfaces.nsIApplicationCacheService);
-    var ios = Components.classes["@mozilla.org/network/io-service;1"].
-              getService(Components.interfaces.nsIIOService);
-    var groups = cacheService.getGroups();
-    for (var i = 0; i < groups.length; i++) {
-        var uri = ios.newURI(groups[i], null, null);
-        if (uri.asciiHost == host) {
-            var cache = cacheService.getActiveCache(groups[i]);
-            cache.discard();
-        }
-    }
+    try {
+      var cacheService = Components.classes["@mozilla.org/network/application-cache-service;1"].
+                         getService(Components.interfaces.nsIApplicationCacheService);
+      var ios = Components.classes["@mozilla.org/network/io-service;1"].
+                getService(Components.interfaces.nsIIOService);
+      var groups = cacheService.getGroups();
+      for (var i = 0; i < groups.length; i++) {
+          var uri = ios.newURI(groups[i], null, null);
+          if (uri.asciiHost == host) {
+              var cache = cacheService.getActiveCache(groups[i]);
+              cache.discard();
+          }
+      }
+    } catch (e) {}
 
     // remove the permission
     var pm = Components.classes["@mozilla.org/permissionmanager;1"]

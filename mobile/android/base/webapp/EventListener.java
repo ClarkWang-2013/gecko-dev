@@ -42,41 +42,24 @@ public class EventListener implements GeckoEventListener {
 
     private static final String LOGTAG = "GeckoWebappEventListener";
 
-    private EventListener() { }
-
-    private static EventListener mEventListener;
-
-    private static EventListener getEventListener() {
-        if (mEventListener == null) {
-            mEventListener = new EventListener();
-        }
-        return mEventListener;
+    public void registerEvents() {
+        EventDispatcher.getInstance().registerGeckoThreadListener(this,
+            "Webapps:Preinstall",
+            "Webapps:InstallApk",
+            "Webapps:Postinstall",
+            "Webapps:Open",
+            "Webapps:Uninstall",
+            "Webapps:GetApkVersions");
     }
 
-    private static void registerEventListener(String event) {
-        GeckoAppShell.getEventDispatcher().registerEventListener(event, EventListener.getEventListener());
-    }
-
-    private static void unregisterEventListener(String event) {
-        GeckoAppShell.getEventDispatcher().unregisterEventListener(event, EventListener.getEventListener());
-    }
-
-    public static void registerEvents() {
-        registerEventListener("Webapps:Preinstall");
-        registerEventListener("Webapps:InstallApk");
-        registerEventListener("Webapps:Postinstall");
-        registerEventListener("Webapps:Open");
-        registerEventListener("Webapps:Uninstall");
-        registerEventListener("Webapps:GetApkVersions");
-    }
-
-    public static void unregisterEvents() {
-        unregisterEventListener("Webapps:Preinstall");
-        unregisterEventListener("Webapps:InstallApk");
-        unregisterEventListener("Webapps:Postinstall");
-        unregisterEventListener("Webapps:Open");
-        unregisterEventListener("Webapps:Uninstall");
-        unregisterEventListener("Webapps:GetApkVersions");
+    public void unregisterEvents() {
+        EventDispatcher.getInstance().unregisterGeckoThreadListener(this,
+            "Webapps:Preinstall",
+            "Webapps:InstallApk",
+            "Webapps:Postinstall",
+            "Webapps:Open",
+            "Webapps:Uninstall",
+            "Webapps:GetApkVersions");
     }
 
     @Override

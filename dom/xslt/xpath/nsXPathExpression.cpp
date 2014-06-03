@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Move.h"
 #include "nsXPathExpression.h"
 #include "txExpr.h"
 #include "txExprResult.h"
@@ -10,12 +11,13 @@
 #include "nsIDOMCharacterData.h"
 #include "nsDOMClassInfoID.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMXPathNamespace.h"
 #include "nsXPathResult.h"
 #include "txURIUtils.h"
 #include "txXPathTreeWalker.h"
 
-NS_IMPL_CYCLE_COLLECTION_1(nsXPathExpression, mDocument)
+using mozilla::Move;
+
+NS_IMPL_CYCLE_COLLECTION(nsXPathExpression, mDocument)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsXPathExpression)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsXPathExpression)
@@ -29,10 +31,10 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsXPathExpression)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(XPathExpression)
 NS_INTERFACE_MAP_END
 
-nsXPathExpression::nsXPathExpression(nsAutoPtr<Expr>& aExpression,
+nsXPathExpression::nsXPathExpression(nsAutoPtr<Expr>&& aExpression,
                                      txResultRecycler* aRecycler,
                                      nsIDOMDocument *aDocument)
-    : mExpression(aExpression),
+    : mExpression(Move(aExpression)),
       mRecycler(aRecycler),
       mDocument(aDocument)
 {
@@ -94,8 +96,7 @@ nsXPathExpression::EvaluateWithContext(nsIDOMNode *aContextNode,
              nodeType != nsIDOMNode::ELEMENT_NODE &&
              nodeType != nsIDOMNode::ATTRIBUTE_NODE &&
              nodeType != nsIDOMNode::COMMENT_NODE &&
-             nodeType != nsIDOMNode::PROCESSING_INSTRUCTION_NODE &&
-             nodeType != nsIDOMXPathNamespace::XPATH_NAMESPACE_NODE) {
+             nodeType != nsIDOMNode::PROCESSING_INSTRUCTION_NODE) {
         return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
     }
 

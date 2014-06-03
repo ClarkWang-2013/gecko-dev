@@ -23,14 +23,14 @@ let Debugger = sandbox.Debugger;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+let Timer = Cu.import("resource://gre/modules/Timer.jsm", {});
 
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil", "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "FileUtils", "resource://gre/modules/FileUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "console", "resource://gre/modules/devtools/Console.jsm");
 
-let SourceMap = {};
-Cu.import("resource://gre/modules/devtools/SourceMap.jsm", SourceMap);
+let xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
 
 let loader = Cu.import("resource://gre/modules/commonjs/toolkit/loader.js", {}).Loader;
 let promise = Cu.import("resource://gre/modules/Promise.jsm", {}).Promise;
@@ -52,7 +52,8 @@ let loaderGlobals = {
     lazyGetter: XPCOMUtils.defineLazyGetter.bind(XPCOMUtils),
     lazyImporter: XPCOMUtils.defineLazyModuleGetter.bind(XPCOMUtils),
     lazyServiceGetter: XPCOMUtils.defineLazyServiceGetter.bind(XPCOMUtils)
-  }
+  },
+  reportError: Cu.reportError,
 };
 
 // Used when the tools should be loaded from the Firefox package itself (the default)
@@ -60,11 +61,13 @@ function BuiltinProvider() {}
 BuiltinProvider.prototype = {
   load: function() {
     this.loader = new loader.Loader({
+      id: "fx-devtools",
       modules: {
         "Debugger": Debugger,
         "Services": Object.create(Services),
+        "Timer": Object.create(Timer),
         "toolkit/loader": loader,
-        "source-map": SourceMap,
+        "xpcInspector": xpcInspector,
       },
       paths: {
         // When you add a line to this mapping, don't forget to make a
@@ -85,8 +88,11 @@ BuiltinProvider.prototype = {
         "devtools/async-utils": "resource://gre/modules/devtools/async-utils",
         "devtools/content-observer": "resource://gre/modules/devtools/content-observer",
         "gcli": "resource://gre/modules/devtools/gcli",
+        "projecteditor": "resource:///modules/devtools/projecteditor",
         "acorn": "resource://gre/modules/devtools/acorn",
         "acorn/util/walk": "resource://gre/modules/devtools/acorn/walk.js",
+        "tern": "resource://gre/modules/devtools/tern",
+        "source-map": "resource://gre/modules/devtools/SourceMap.jsm",
 
         // Allow access to xpcshell test items from the loader.
         "xpcshell-test": "resource://test"
@@ -135,14 +141,19 @@ SrcdirProvider.prototype = {
     let asyncUtilsURI = this.fileURI(OS.Path.join(toolkitDir), "async-utils.js");
     let contentObserverURI = this.fileURI(OS.Path.join(toolkitDir), "content-observer.js");
     let gcliURI = this.fileURI(OS.Path.join(toolkitDir, "gcli", "source", "lib", "gcli"));
+    let projecteditorURI = this.fileURI(OS.Path.join(devtoolsDir, "projecteditor"));
     let acornURI = this.fileURI(OS.Path.join(toolkitDir, "acorn"));
     let acornWalkURI = OS.Path.join(acornURI, "walk.js");
+    let ternURI = OS.Path.join(toolkitDir, "tern");
+    let sourceMapURI = this.fileURI(OS.Path.join(toolkitDir), "SourceMap.jsm");
     this.loader = new loader.Loader({
+      id: "fx-devtools",
       modules: {
         "Debugger": Debugger,
         "Services": Object.create(Services),
+        "Timer": Object.create(Timer),
         "toolkit/loader": loader,
-        "source-map": SourceMap,
+        "xpcInspector": xpcInspector,
       },
       paths: {
         "": "resource://gre/modules/commonjs/",
@@ -161,8 +172,11 @@ SrcdirProvider.prototype = {
         "devtools/async-utils": asyncUtilsURI,
         "devtools/content-observer": contentObserverURI,
         "gcli": gcliURI,
+        "projecteditor": projecteditorURI,
         "acorn": acornURI,
-        "acorn/util/walk": acornWalkURI
+        "acorn/util/walk": acornWalkURI,
+        "tern": ternURI,
+        "source-map": sourceMapURI,
       },
       globals: loaderGlobals,
       invisibleToDebugger: this.invisibleToDebugger
@@ -250,6 +264,7 @@ SrcdirProvider.prototype = {
  */
 this.DevToolsLoader = function DevToolsLoader() {
   this.require = this.require.bind(this);
+  this.lazyRequireGetter = this.lazyRequireGetter.bind(this);
 };
 
 DevToolsLoader.prototype = {
@@ -270,6 +285,24 @@ DevToolsLoader.prototype = {
   require: function() {
     this._chooseProvider();
     return this.require.apply(this, arguments);
+  },
+
+  /**
+   * Define a getter property on the given object that requires the given
+   * module. This enables delaying importing modules until the module is
+   * actually used.
+   *
+   * @param Object obj
+   *    The object to define the property on.
+   * @param String property
+   *    The property name.
+   * @param String module
+   *    The module path.
+   */
+  lazyRequireGetter: function (obj, property, module) {
+    Object.defineProperty(obj, property, {
+      get: () => this.require(module)
+    });
   },
 
   /**

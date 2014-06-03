@@ -38,7 +38,7 @@
 #include "nsICollation.h"
 #include "nsUnicharUtils.h"
 
-NS_IMPL_ISUPPORTS1(XULSortServiceImpl, nsIXULSortService)
+NS_IMPL_ISUPPORTS(XULSortServiceImpl, nsIXULSortService)
 
 void
 XULSortServiceImpl::SetSortHints(nsIContent *aNode, nsSortState* aSortState)
@@ -373,7 +373,7 @@ XULSortServiceImpl::InitializeSortState(nsIContent* aRootElement,
       if (!sortResource2.IsEmpty()) {
         nsCOMPtr<nsIAtom> sortkeyatom2 = do_GetAtom(sortResource2);
         aSortState->sortKeys.AppendObject(sortkeyatom2);
-        sort.AppendLiteral(" ");
+        sort.Append(' ');
         sort.Append(sortResource2);
       }
     }

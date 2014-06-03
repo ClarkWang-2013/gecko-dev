@@ -166,22 +166,22 @@ fun_enumerate(JSContext *cx, HandleObject obj)
 
     if (!obj->isBoundFunction() && !obj->as<JSFunction>().isArrow()) {
         id = NameToId(cx->names().prototype);
-        if (!JSObject::hasProperty(cx, obj, id, &found, 0))
+        if (!JSObject::hasProperty(cx, obj, id, &found))
             return false;
     }
 
     id = NameToId(cx->names().length);
-    if (!JSObject::hasProperty(cx, obj, id, &found, 0))
+    if (!JSObject::hasProperty(cx, obj, id, &found))
         return false;
 
     id = NameToId(cx->names().name);
-    if (!JSObject::hasProperty(cx, obj, id, &found, 0))
+    if (!JSObject::hasProperty(cx, obj, id, &found))
         return false;
 
     for (unsigned i = 0; i < ArrayLength(poisonPillProps); i++) {
         const uint16_t offset = poisonPillProps[i];
         id = NameToId(AtomStateOffsetToName(cx->names(), offset));
-        if (!JSObject::hasProperty(cx, obj, id, &found, 0))
+        if (!JSObject::hasProperty(cx, obj, id, &found))
             return false;
     }
 
@@ -193,7 +193,7 @@ ResolveInterpretedFunctionPrototype(JSContext *cx, HandleObject obj)
 {
 #ifdef DEBUG
     JSFunction *fun = &obj->as<JSFunction>();
-    JS_ASSERT(fun->isInterpreted());
+    JS_ASSERT(fun->isInterpreted() || fun->isAsmJSNative());
     JS_ASSERT(!fun->isFunctionPrototype());
 #endif
 
@@ -265,8 +265,7 @@ js::FunctionHasResolveHook(const JSAtomState &atomState, PropertyName *name)
 }
 
 bool
-js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-                MutableHandleObject objp)
+js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObject objp)
 {
     if (!JSID_IS_ATOM(id))
         return true;
@@ -312,7 +311,7 @@ js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
         }
 
         if (!DefineNativeProperty(cx, fun, id, v, JS_PropertyStub, JS_StrictPropertyStub,
-                                  JSPROP_PERMANENT | JSPROP_READONLY, 0)) {
+                                  JSPROP_PERMANENT | JSPROP_READONLY)) {
             return false;
         }
         objp.set(fun);
@@ -341,7 +340,7 @@ js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
                 setter = JS_StrictPropertyStub;
             }
 
-            if (!DefineNativeProperty(cx, fun, id, UndefinedHandleValue, getter, setter, attrs, 0))
+            if (!DefineNativeProperty(cx, fun, id, UndefinedHandleValue, getter, setter, attrs))
                 return false;
             objp.set(fun);
             return true;
@@ -577,7 +576,6 @@ JSFunction::trace(JSTracer *trc)
             // - they are not in the self-hosting compartment
             // - they aren't generators
             // - they don't have JIT code attached
-            // - they haven't ever been inlined
             // - they don't have child functions
             // - they have information for un-lazifying them again later
             // This information can either be a LazyScript, or the name of a
@@ -605,6 +603,118 @@ fun_trace(JSTracer *trc, JSObject *obj)
     obj->as<JSFunction>().trace(trc);
 }
 
+static JSObject *
+CreateFunctionConstructor(JSContext *cx, JSProtoKey key)
+{
+    Rooted<GlobalObject*> self(cx, cx->global());
+    RootedObject functionProto(cx, &self->getPrototype(JSProto_Function).toObject());
+
+    // Note that ctor is rooted purely for the JS_ASSERT at the end
+    RootedObject ctor(cx, NewObjectWithGivenProto(cx, &JSFunction::class_, functionProto,
+                                                  self, SingletonObject));
+    if (!ctor)
+        return nullptr;
+    RootedObject functionCtor(cx, NewFunction(cx, ctor, Function, 1, JSFunction::NATIVE_CTOR, self,
+                                              HandlePropertyName(cx->names().Function)));
+    if (!functionCtor)
+        return nullptr;
+
+    JS_ASSERT(ctor == functionCtor);
+    return functionCtor;
+
+}
+
+static JSObject *
+CreateFunctionPrototype(JSContext *cx, JSProtoKey key)
+{
+    Rooted<GlobalObject*> self(cx, cx->global());
+    RootedObject objectProto(cx, &self->getPrototype(JSProto_Object).toObject());
+    JSObject *functionProto_ = NewObjectWithGivenProto(cx, &JSFunction::class_,
+                                                       objectProto, self, SingletonObject);
+    if (!functionProto_)
+        return nullptr;
+
+    RootedFunction functionProto(cx, &functionProto_->as<JSFunction>());
+
+    /*
+     * Bizarrely, |Function.prototype| must be an interpreted function, so
+     * give it the guts to be one.
+     */
+    {
+        JSObject *proto = NewFunction(cx, functionProto, nullptr, 0, JSFunction::INTERPRETED,
+                                      self, js::NullPtr());
+        if (!proto)
+            return nullptr;
+
+        JS_ASSERT(proto == functionProto);
+        functionProto->setIsFunctionPrototype();
+    }
+
+    const char *rawSource = "() {\n}";
+    size_t sourceLen = strlen(rawSource);
+    jschar *source = InflateString(cx, rawSource, &sourceLen);
+    if (!source)
+        return nullptr;
+
+    ScriptSource *ss =
+        cx->new_<ScriptSource>();
+    if (!ss) {
+        js_free(source);
+        return nullptr;
+    }
+    ScriptSourceHolder ssHolder(ss);
+    ss->setSource(source, sourceLen);
+    CompileOptions options(cx);
+    options.setNoScriptRval(true)
+           .setVersion(JSVERSION_DEFAULT);
+    RootedScriptSource sourceObject(cx, ScriptSourceObject::create(cx, ss, options));
+    if (!sourceObject)
+        return nullptr;
+
+    RootedScript script(cx, JSScript::Create(cx,
+                                             /* enclosingScope = */ js::NullPtr(),
+                                             /* savedCallerFun = */ false,
+                                             options,
+                                             /* staticLevel = */ 0,
+                                             sourceObject,
+                                             0,
+                                             ss->length()));
+    if (!script || !JSScript::fullyInitTrivial(cx, script))
+        return nullptr;
+
+    functionProto->initScript(script);
+    types::TypeObject* protoType = functionProto->getType(cx);
+    if (!protoType)
+        return nullptr;
+
+    protoType->interpretedFunction = functionProto;
+    script->setFunction(functionProto);
+
+    /*
+     * The default 'new' type of Function.prototype is required by type
+     * inference to have unknown properties, to simplify handling of e.g.
+     * CloneFunctionObject.
+     */
+    if (!JSObject::setNewTypeUnknown(cx, &JSFunction::class_, functionProto))
+        return nullptr;
+
+    return functionProto;
+}
+
+static bool
+FinishFunctionClassInit(JSContext *cx, JS::HandleObject ctor, JS::HandleObject proto)
+{
+    /*
+     * Notify any debuggers about the creation of the script for
+     * |Function.prototype| -- after all initialization, for simplicity.
+     */
+    RootedFunction functionProto(cx, &proto->as<JSFunction>());
+    RootedScript functionProtoScript(cx, functionProto->nonLazyScript());
+    CallNewScriptHook(cx, functionProtoScript, functionProto);
+    return true;
+}
+
+
 const Class JSFunction::class_ = {
     js_Function_str,
     JSCLASS_NEW_RESOLVE | JSCLASS_IMPLEMENTS_BARRIERS |
@@ -620,7 +730,15 @@ const Class JSFunction::class_ = {
     nullptr,                 /* call        */
     fun_hasInstance,
     nullptr,                 /* construct   */
-    fun_trace
+    fun_trace,
+    {
+        CreateFunctionConstructor,
+        CreateFunctionPrototype,
+        nullptr,
+        function_methods,
+        nullptr,
+        FinishFunctionClassInit
+    }
 };
 
 const Class* const js::FunctionClassPtr = &JSFunction::class_;
@@ -1058,7 +1176,7 @@ JSFunction::initBoundFunction(JSContext *cx, HandleValue thisArg,
     return true;
 }
 
-inline const js::Value &
+const js::Value &
 JSFunction::getBoundFunctionThis() const
 {
     JS_ASSERT(isBoundFunction());
@@ -1066,7 +1184,7 @@ JSFunction::getBoundFunctionThis() const
     return getSlot(JSSLOT_BOUND_FUNCTION_THIS);
 }
 
-inline const js::Value &
+const js::Value &
 JSFunction::getBoundFunctionArgument(unsigned which) const
 {
     JS_ASSERT(isBoundFunction());
@@ -1075,7 +1193,7 @@ JSFunction::getBoundFunctionArgument(unsigned which) const
     return getSlot(BOUND_FUNCTION_RESERVED_SLOTS + which);
 }
 
-inline size_t
+size_t
 JSFunction::getBoundFunctionArgumentCount() const
 {
     JS_ASSERT(isBoundFunction());
@@ -1617,10 +1735,11 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
         fun->setHasRest();
 
     bool ok;
+    SourceBufferHolder srcBuf(chars, length, SourceBufferHolder::NoOwnership);
     if (isStarGenerator)
-        ok = frontend::CompileStarGeneratorBody(cx, &fun, options, formals, chars, length);
+        ok = frontend::CompileStarGeneratorBody(cx, &fun, options, formals, srcBuf);
     else
-        ok = frontend::CompileFunctionBody(cx, &fun, options, formals, chars, length);
+        ok = frontend::CompileFunctionBody(cx, &fun, options, formals, srcBuf);
     args.rval().setObject(*fun);
     return ok;
 }

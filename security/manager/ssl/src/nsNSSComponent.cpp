@@ -51,6 +51,7 @@
 #include "nsNSSShutDown.h"
 #include "GeneratedEvents.h"
 #include "SharedSSLState.h"
+#include "NSSErrorsService.h"
 
 #include "nss.h"
 #include "ssl.h"
@@ -98,7 +99,7 @@ private:
 };
 
 // ISuuports implementation for nsTokenEventRunnable
-NS_IMPL_ISUPPORTS1(nsTokenEventRunnable, nsIRunnable)
+NS_IMPL_ISUPPORTS(nsTokenEventRunnable, nsIRunnable)
 
 nsTokenEventRunnable::nsTokenEventRunnable(const nsAString& aType,
                                            const nsAString& aTokenName)
@@ -126,6 +127,40 @@ nsTokenEventRunnable::Run()
 #endif // MOZ_DISABLE_CRYPTOLEGACY
 
 bool nsPSMInitPanic::isPanic = false;
+
+// This function can be called from chrome or content processes
+// to ensure that NSS is initialized.
+bool EnsureNSSInitializedChromeOrContent()
+{
+  nsresult rv;
+  if (XRE_GetProcessType() == GeckoProcessType_Default) {
+    nsCOMPtr<nsISupports> nss = do_GetService(PSM_COMPONENT_CONTRACTID, &rv);
+    if (NS_FAILED(rv)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (!NS_IsMainThread()) {
+    return false;
+  }
+
+  if (NSS_IsInitialized()) {
+    return true;
+  }
+
+  if (NSS_NoDB_Init(nullptr) != SECSuccess) {
+    return false;
+  }
+
+  if (NS_FAILED(mozilla::psm::InitializeCipherSuite())) {
+    return false;
+  }
+
+  mozilla::psm::DisableMD5();
+  return true;
+}
 
 // We must ensure that the nsNSSComponent has been loaded before
 // creating any other components.
@@ -875,7 +910,7 @@ private:
   CipherSuiteChangeObserver() {}
 };
 
-NS_IMPL_ISUPPORTS1(CipherSuiteChangeObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(CipherSuiteChangeObserver, nsIObserver)
 
 // static
 StaticRefPtr<CipherSuiteChangeObserver> CipherSuiteChangeObserver::sObserver;
@@ -972,7 +1007,7 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
     = CertVerifier::classic;
 
   // The mozilla::pkix pref overrides the libpkix pref
-  if (Preferences::GetBool("security.use_mozillapkix_verification", false)) {
+  if (Preferences::GetBool("security.use_mozillapkix_verification", true)) {
     certVerifierImplementation = CertVerifier::mozillapkix;
   } else {
 #ifndef NSS_NO_LIBPKIX
@@ -994,6 +1029,16 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
     }
   }
 
+  // Default pinning enforcement level is disabled.
+  CertVerifier::pinning_enforcement_config
+    pinningEnforcementLevel =
+      static_cast<CertVerifier::pinning_enforcement_config>
+        (Preferences::GetInt("security.cert_pinning.enforcement_level",
+                             CertVerifier::pinningDisabled));
+  if (pinningEnforcementLevel > CertVerifier::pinningEnforceTestMode) {
+    pinningEnforcementLevel = CertVerifier::pinningDisabled;
+  }
+
   CertVerifier::ocsp_download_config odc;
   CertVerifier::ocsp_strict_config osc;
   CertVerifier::ocsp_get_config ogc;
@@ -1007,7 +1052,7 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
       crlDownloading ?
         CertVerifier::crl_download_allowed : CertVerifier::crl_local_only,
 #endif
-      odc, osc, ogc);
+      odc, osc, ogc, pinningEnforcementLevel);
 
   // mozilla::pkix has its own OCSP cache, so disable the NSS cache
   // if appropriate.
@@ -1236,6 +1281,8 @@ nsNSSComponent::InitializeNSS()
   LaunchSmartCardThreads();
 #endif
 
+  RegisterPSMErrorTable();
+
   PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("NSS Initialization done\n"));
   return NS_OK;
 }
@@ -1365,12 +1412,12 @@ nsNSSComponent::Init()
 }
 
 // nsISupports Implementation for the class
-NS_IMPL_ISUPPORTS5(nsNSSComponent,
-                   nsISignatureVerifier,
-                   nsIEntropyCollector,
-                   nsINSSComponent,
-                   nsIObserver,
-                   nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(nsNSSComponent,
+                  nsISignatureVerifier,
+                  nsIEntropyCollector,
+                  nsINSSComponent,
+                  nsIObserver,
+                  nsISupportsWeakReference)
 
 
 // Callback functions for decoder. For now, use empty/default functions.
@@ -1594,15 +1641,15 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
     bool clearSessionCache = true;
     NS_ConvertUTF16toUTF8  prefName(someData);
 
-    if (prefName.Equals("security.tls.version.min") ||
-        prefName.Equals("security.tls.version.max")) {
+    if (prefName.EqualsLiteral("security.tls.version.min") ||
+        prefName.EqualsLiteral("security.tls.version.max")) {
       (void) setEnabledTLSVersions();
-    } else if (prefName.Equals("security.ssl.require_safe_negotiation")) {
+    } else if (prefName.EqualsLiteral("security.ssl.require_safe_negotiation")) {
       bool requireSafeNegotiation =
         Preferences::GetBool("security.ssl.require_safe_negotiation",
                              REQUIRE_SAFE_NEGOTIATION_DEFAULT);
       SSL_OptionSetDefault(SSL_REQUIRE_SAFE_NEGOTIATION, requireSafeNegotiation);
-    } else if (prefName.Equals("security.ssl.allow_unrestricted_renego_everywhere__temporarily_available_pref")) {
+    } else if (prefName.EqualsLiteral("security.ssl.allow_unrestricted_renego_everywhere__temporarily_available_pref")) {
       bool allowUnrestrictedRenego =
         Preferences::GetBool("security.ssl.allow_unrestricted_renego_everywhere__temporarily_available_pref",
                              ALLOW_UNRESTRICTED_RENEGO_DEFAULT);
@@ -1610,30 +1657,31 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
                            allowUnrestrictedRenego ?
                              SSL_RENEGOTIATE_UNRESTRICTED :
                              SSL_RENEGOTIATE_REQUIRES_XTN);
-    } else if (prefName.Equals("security.ssl.enable_false_start")) {
+    } else if (prefName.EqualsLiteral("security.ssl.enable_false_start")) {
       SSL_OptionSetDefault(SSL_ENABLE_FALSE_START,
                            Preferences::GetBool("security.ssl.enable_false_start",
                                                 FALSE_START_ENABLED_DEFAULT));
-    } else if (prefName.Equals("security.ssl.enable_npn")) {
+    } else if (prefName.EqualsLiteral("security.ssl.enable_npn")) {
       SSL_OptionSetDefault(SSL_ENABLE_NPN,
                            Preferences::GetBool("security.ssl.enable_npn",
                                                 NPN_ENABLED_DEFAULT));
-    } else if (prefName.Equals("security.ssl.enable_alpn")) {
+    } else if (prefName.EqualsLiteral("security.ssl.enable_alpn")) {
       SSL_OptionSetDefault(SSL_ENABLE_ALPN,
                            Preferences::GetBool("security.ssl.enable_alpn",
                                                 ALPN_ENABLED_DEFAULT));
-    } else if (prefName.Equals("security.OCSP.enabled")
-               || prefName.Equals("security.CRL_download.enabled")
-               || prefName.Equals("security.fresh_revocation_info.require")
-               || prefName.Equals("security.missing_cert_download.enabled")
-               || prefName.Equals("security.OCSP.require")
-               || prefName.Equals("security.OCSP.GET.enabled")
-               || prefName.Equals("security.ssl.enable_ocsp_stapling")
-               || prefName.Equals("security.use_mozillapkix_verification")
-               || prefName.Equals("security.use_libpkix_verification")) {
+    } else if (prefName.EqualsLiteral("security.OCSP.enabled") ||
+               prefName.EqualsLiteral("security.CRL_download.enabled") ||
+               prefName.EqualsLiteral("security.fresh_revocation_info.require") ||
+               prefName.EqualsLiteral("security.missing_cert_download.enabled") ||
+               prefName.EqualsLiteral("security.OCSP.require") ||
+               prefName.EqualsLiteral("security.OCSP.GET.enabled") ||
+               prefName.EqualsLiteral("security.ssl.enable_ocsp_stapling") ||
+               prefName.EqualsLiteral("security.use_mozillapkix_verification") ||
+               prefName.EqualsLiteral("security.use_libpkix_verification") ||
+               prefName.EqualsLiteral("security.cert_pinning.enforcement_level")) {
       MutexAutoLock lock(mutex);
       setValidationOptions(false, lock);
-    } else if (prefName.Equals("network.ntlm.send-lm-response")) {
+    } else if (prefName.EqualsLiteral("network.ntlm.send-lm-response")) {
       bool sendLM = Preferences::GetBool("network.ntlm.send-lm-response",
                                          SEND_LM_DEFAULT);
       nsNTLMAuthModule::SetSendLM(sendLM);
@@ -1859,7 +1907,7 @@ GetDefaultCertVerifier()
 
 } } // namespace mozilla::psm
 
-NS_IMPL_ISUPPORTS1(PipUIContext, nsIInterfaceRequestor)
+NS_IMPL_ISUPPORTS(PipUIContext, nsIInterfaceRequestor)
 
 PipUIContext::PipUIContext()
 {

@@ -257,7 +257,8 @@ jit::SetPropertyPar(ForkJoinContext *cx, HandleObject obj, HandlePropertyName na
 
     RootedValue v(cx, value);
     RootedId id(cx, NameToId(name));
-    return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, 0, &v, strict);
+    return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, baseops::Qualified, &v,
+                                                         strict);
 }
 
 bool
@@ -274,7 +275,8 @@ jit::SetElementPar(ForkJoinContext *cx, HandleObject obj, HandleValue index, Han
     // can't modify any TI state anyways. If we need to add a new type, we
     // would bail out.
     RootedValue v(cx, value);
-    return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, 0, &v, strict);
+    return baseops::SetPropertyHelper<ParallelExecution>(cx, obj, obj, id, baseops::Qualified, &v,
+                                                         strict);
 }
 
 bool
@@ -355,11 +357,12 @@ CompareStringsPar(ForkJoinContext *cx, JSString *left, JSString *right, int32_t 
 {
     ScopedThreadSafeStringInspector leftInspector(left);
     ScopedThreadSafeStringInspector rightInspector(right);
-    if (!leftInspector.ensureChars(cx) || !rightInspector.ensureChars(cx))
+    AutoCheckCannotGC nogc;
+    if (!leftInspector.ensureChars(cx, nogc) || !rightInspector.ensureChars(cx, nogc))
         return false;
 
-    *res = CompareChars(leftInspector.chars(), left->length(),
-                        rightInspector.chars(), right->length());
+    *res = CompareChars(leftInspector.twoByteChars(), left->length(),
+                        rightInspector.twoByteChars(), right->length());
     return true;
 }
 
@@ -426,7 +429,7 @@ StrictlyEqualImplPar(ForkJoinContext *cx, MutableHandleValue lhs, MutableHandleV
             return LooselyEqualImplPar<Equal>(cx, lhs, rhs, res);
     }
 
-    *res = false;
+    *res = !Equal;
     return true;
 }
 

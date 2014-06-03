@@ -262,9 +262,9 @@ private:
   uint32_t mLoadID;
 };
 
-NS_IMPL_ISUPPORTS5(HTMLMediaElement::MediaLoadListener, nsIRequestObserver,
-                   nsIStreamListener, nsIChannelEventSink,
-                   nsIInterfaceRequestor, nsIObserver)
+NS_IMPL_ISUPPORTS(HTMLMediaElement::MediaLoadListener, nsIRequestObserver,
+                  nsIStreamListener, nsIChannelEventSink,
+                  nsIInterfaceRequestor, nsIObserver)
 
 NS_IMETHODIMP
 HTMLMediaElement::MediaLoadListener::Observe(nsISupports* aSubject,
@@ -1132,7 +1132,7 @@ nsresult HTMLMediaElement::LoadResource()
       return NS_ERROR_FAILURE;
     }
     mMediaSource = source.forget();
-    nsRefPtr<MediaResource> resource = new MediaSourceResource();
+    nsRefPtr<MediaResource> resource = MediaSourceDecoder::CreateResource();
     return FinishDecoderSetup(decoder, resource, nullptr, nullptr);
   }
 
@@ -2338,7 +2338,7 @@ bool HTMLMediaElement::CheckAudioChannelPermissions(const nsAString& aString)
   }
 
   nsCOMPtr<nsIPermissionManager> permissionManager =
-    do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+    services::GetPermissionManager();
   if (!permissionManager) {
     return false;
   }
@@ -3267,7 +3267,7 @@ nsresult HTMLMediaElement::DispatchAsyncEvent(const nsAString& aName)
   }
 
   nsCOMPtr<nsIRunnable> event = new nsAsyncEventRunner(aName, this);
-  NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+  NS_DispatchToMainThread(event);
   return NS_OK;
 }
 
@@ -3459,7 +3459,7 @@ void HTMLMediaElement::DispatchAsyncSourceError(nsIContent* aSourceElement)
   LOG_EVENT(PR_LOG_DEBUG, ("%p Queuing simple source error event", this));
 
   nsCOMPtr<nsIRunnable> event = new nsSourceErrorEventRunner(this, aSourceElement);
-  NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+  NS_DispatchToMainThread(event);
 }
 
 void HTMLMediaElement::NotifyAddedSource()
@@ -3847,6 +3847,11 @@ void HTMLMediaElement::UpdateAudioChannelPlayingState()
       }
       mAudioChannelAgent->SetVisibilityState(!OwnerDoc()->Hidden());
     }
+
+    // This is needed to pass nsContentUtils::IsCallerChrome().
+    // AudioChannel API should not called from content but it can happen that
+    // this method has some content JS in its stack.
+    AutoNoJSAPI nojsapi;
 
     if (mPlayingThroughTheAudioChannel) {
       int32_t canPlay;

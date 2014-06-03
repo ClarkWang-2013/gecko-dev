@@ -22,64 +22,46 @@ struct AnyRegister {
     static const uint32_t Total = Registers::Total + FloatRegisters::Total;
     static const uint32_t Invalid = UINT_MAX;
 
-    union {
-        Registers::Code gpr_;
-        FloatRegisters::Code fpu_;
-    };
-    bool isFloat_;
+  private:
+    Code code_;
 
+  public:
     AnyRegister()
     { }
     explicit AnyRegister(Register gpr) {
-        gpr_ = gpr.code();
-        isFloat_ = false;
+        code_ = gpr.code();
     }
     explicit AnyRegister(FloatRegister fpu) {
-        fpu_ = fpu.code();
-        isFloat_ = true;
+        code_ = fpu.code() + Registers::Total;
     }
     static AnyRegister FromCode(uint32_t i) {
         JS_ASSERT(i < Total);
         AnyRegister r;
-        if (i < Registers::Total) {
-            r.gpr_ = Register::Code(i);
-            r.isFloat_ = false;
-        } else {
-            r.fpu_ = FloatRegister::Code(i - Registers::Total);
-            r.isFloat_ = true;
-        }
+        r.code_ = i;
         return r;
     }
     bool isFloat() const {
-        return isFloat_;
+        return code_ >= Registers::Total;
     }
     Register gpr() const {
         JS_ASSERT(!isFloat());
-        return Register::FromCode(gpr_);
+        return Register::FromCode(code_);
     }
     FloatRegister fpu() const {
         JS_ASSERT(isFloat());
-        return FloatRegister::FromCode(fpu_);
+        return FloatRegister::FromCode(code_ - Registers::Total);
     }
-    bool operator ==(const AnyRegister &other) const {
-        return isFloat()
-               ? (other.isFloat() && fpu_ == other.fpu_)
-               : (!other.isFloat() && gpr_ == other.gpr_);
+    bool operator ==(AnyRegister other) const {
+        return code_ == other.code_;
     }
-    bool operator !=(const AnyRegister &other) const {
-        return isFloat()
-               ? (!other.isFloat() || fpu_ != other.fpu_)
-               : (other.isFloat() || gpr_ != other.gpr_);
+    bool operator !=(AnyRegister other) const {
+        return code_ != other.code_;
     }
     const char *name() const {
-        return isFloat()
-               ? FloatRegister::FromCode(fpu_).name()
-               : Register::FromCode(gpr_).name();
+        return isFloat() ? fpu().name() : gpr().name();
     }
-    const Code code() const {
-        return isFloat()
-               ? fpu_ + Registers::Total
-               : gpr_;
+    Code code() const {
+        return code_;
     }
     bool volatile_() const {
         return isFloat() ? fpu().volatile_() : gpr().volatile_();
@@ -163,7 +145,7 @@ class TypedOrValueRegister
         return *data.value.addr();
     }
 
-    const AnyRegister &dataTyped() const {
+    AnyRegister dataTyped() const {
         JS_ASSERT(hasTyped());
         return *data.typed.addr();
     }
@@ -184,7 +166,7 @@ class TypedOrValueRegister
         dataTyped() = reg;
     }
 
-    TypedOrValueRegister(ValueOperand value)
+    MOZ_IMPLICIT TypedOrValueRegister(ValueOperand value)
       : type_(MIRType_Value)
     {
         dataValue() = value;
@@ -243,13 +225,13 @@ class ConstantOrRegister
     ConstantOrRegister()
     {}
 
-    ConstantOrRegister(Value value)
+    MOZ_IMPLICIT ConstantOrRegister(Value value)
       : constant_(true)
     {
         dataValue() = value;
     }
 
-    ConstantOrRegister(TypedOrValueRegister reg)
+    MOZ_IMPLICIT ConstantOrRegister(TypedOrValueRegister reg)
       : constant_(false)
     {
         dataReg() = reg;
@@ -540,7 +522,7 @@ class RegisterSet {
     void add(FloatRegister reg) {
         fpu_.add(reg);
     }
-    void add(const AnyRegister &any) {
+    void add(AnyRegister any) {
         if (any.isFloat())
             add(any.fpu());
         else
@@ -568,7 +550,7 @@ class RegisterSet {
     void addUnchecked(FloatRegister reg) {
         fpu_.addUnchecked(reg);
     }
-    void addUnchecked(const AnyRegister &any) {
+    void addUnchecked(AnyRegister any) {
         if (any.isFloat())
             addUnchecked(any.fpu());
         else
@@ -592,7 +574,7 @@ class RegisterSet {
 #error "Bad architecture"
 #endif
     }
-    void take(const AnyRegister &reg) {
+    void take(AnyRegister reg) {
         if (reg.isFloat())
             fpu_.take(reg.fpu());
         else
@@ -649,7 +631,7 @@ class TypedRegisterIterator
     TypedRegisterSet<T> regset_;
 
   public:
-    TypedRegisterIterator(TypedRegisterSet<T> regset) : regset_(regset)
+    explicit TypedRegisterIterator(TypedRegisterSet<T> regset) : regset_(regset)
     { }
     TypedRegisterIterator(const TypedRegisterIterator &other) : regset_(other.regset_)
     { }
@@ -678,7 +660,7 @@ class TypedRegisterBackwardIterator
     TypedRegisterSet<T> regset_;
 
   public:
-    TypedRegisterBackwardIterator(TypedRegisterSet<T> regset) : regset_(regset)
+    explicit TypedRegisterBackwardIterator(TypedRegisterSet<T> regset) : regset_(regset)
     { }
     TypedRegisterBackwardIterator(const TypedRegisterBackwardIterator &other)
       : regset_(other.regset_)
@@ -708,7 +690,7 @@ class TypedRegisterForwardIterator
     TypedRegisterSet<T> regset_;
 
   public:
-    TypedRegisterForwardIterator(TypedRegisterSet<T> regset) : regset_(regset)
+    explicit TypedRegisterForwardIterator(TypedRegisterSet<T> regset) : regset_(regset)
     { }
     TypedRegisterForwardIterator(const TypedRegisterForwardIterator &other) : regset_(other.regset_)
     { }
@@ -749,7 +731,7 @@ class AnyRegisterIterator
     AnyRegisterIterator(GeneralRegisterSet genset, FloatRegisterSet floatset)
       : geniter_(genset), floatiter_(floatset)
     { }
-    AnyRegisterIterator(const RegisterSet &set)
+    explicit AnyRegisterIterator(const RegisterSet &set)
       : geniter_(set.gpr_), floatiter_(set.fpu_)
     { }
     AnyRegisterIterator(const AnyRegisterIterator &other)
@@ -788,9 +770,9 @@ class ABIArg
 
   public:
     ABIArg() : kind_(Kind(-1)) { u.offset_ = -1; }
-    ABIArg(Register gpr) : kind_(GPR) { u.gpr_ = gpr.code(); }
-    ABIArg(FloatRegister fpu) : kind_(FPU) { u.fpu_ = fpu.code(); }
-    ABIArg(uint32_t offset) : kind_(Stack) { u.offset_ = offset; }
+    explicit ABIArg(Register gpr) : kind_(GPR) { u.gpr_ = gpr.code(); }
+    explicit ABIArg(FloatRegister fpu) : kind_(FPU) { u.fpu_ = fpu.code(); }
+    explicit ABIArg(uint32_t offset) : kind_(Stack) { u.offset_ = offset; }
 
     Kind kind() const { return kind_; }
     Register gpr() const { JS_ASSERT(kind() == GPR); return Register::FromCode(u.gpr_); }
@@ -800,72 +782,6 @@ class ABIArg
     bool argInRegister() const { return kind() != Stack; }
     AnyRegister reg() const { return kind_ == GPR ? AnyRegister(gpr()) : AnyRegister(fpu()); }
 };
-
-// Summarizes a heap access made by asm.js code that needs to be patched later
-// and/or looked up by the asm.js signal handlers. Different architectures need
-// to know different things (x64: offset and length, ARM: where to patch in
-// heap length, x86: where to patch in heap length and base) hence the massive
-// #ifdefery.
-class AsmJSHeapAccess
-{
-    uint32_t offset_;
-#if defined(JS_CODEGEN_X86)
-    uint8_t cmpDelta_;  // the number of bytes from the cmp to the load/store instruction
-#endif
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    uint8_t opLength_;  // the length of the load/store instruction
-    uint8_t isFloat32Load_;
-    AnyRegister::Code loadedReg_ : 8;
-#endif
-
-    JS_STATIC_ASSERT(AnyRegister::Total < UINT8_MAX);
-
-  public:
-    AsmJSHeapAccess() {}
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    // If 'cmp' equals 'offset' or if it is not supplied then the
-    // cmpDelta_ is zero indicating that there is no length to patch.
-    AsmJSHeapAccess(uint32_t offset, uint32_t after, ArrayBufferView::ViewType vt,
-                    AnyRegister loadedReg, uint32_t cmp = UINT32_MAX)
-      : offset_(offset),
-# if defined(JS_CODEGEN_X86)
-        cmpDelta_(cmp == UINT32_MAX ? 0 : offset - cmp),
-# endif
-        opLength_(after - offset),
-        isFloat32Load_(vt == ArrayBufferView::TYPE_FLOAT32),
-        loadedReg_(loadedReg.code())
-    {}
-    AsmJSHeapAccess(uint32_t offset, uint8_t after, uint32_t cmp = UINT32_MAX)
-      : offset_(offset),
-# if defined(JS_CODEGEN_X86)
-        cmpDelta_(cmp == UINT32_MAX ? 0 : offset - cmp),
-# endif
-        opLength_(after - offset),
-        isFloat32Load_(false),
-        loadedReg_(UINT8_MAX)
-    {}
-#elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
-    explicit AsmJSHeapAccess(uint32_t offset)
-      : offset_(offset)
-    {}
-#endif
-
-    uint32_t offset() const { return offset_; }
-    void setOffset(uint32_t offset) { offset_ = offset; }
-#if defined(JS_CODEGEN_X86)
-    bool hasLengthCheck() const { return cmpDelta_ > 0; }
-    void *patchLengthAt(uint8_t *code) const { return code + (offset_ - cmpDelta_); }
-    void *patchOffsetAt(uint8_t *code) const { return code + (offset_ + opLength_); }
-#endif
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-    unsigned opLength() const { return opLength_; }
-    bool isLoad() const { return loadedReg_ != UINT8_MAX; }
-    bool isFloat32Load() const { return isFloat32Load_; }
-    AnyRegister loadedReg() const { return AnyRegister::FromCode(loadedReg_); }
-#endif
-};
-
-typedef Vector<AsmJSHeapAccess, 0, IonAllocPolicy> AsmJSHeapAccessVector;
 
 } // namespace jit
 } // namespace js

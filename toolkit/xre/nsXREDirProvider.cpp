@@ -159,10 +159,10 @@ nsXREDirProvider::SetProfile(nsIFile* aDir, nsIFile* aLocalDir)
   return NS_OK;
 }
 
-NS_IMPL_QUERY_INTERFACE3(nsXREDirProvider,
-                         nsIDirectoryServiceProvider,
-                         nsIDirectoryServiceProvider2,
-                         nsIProfileStartup)
+NS_IMPL_QUERY_INTERFACE(nsXREDirProvider,
+                        nsIDirectoryServiceProvider,
+                        nsIDirectoryServiceProvider2,
+                        nsIProfileStartup)
 
 NS_IMETHODIMP_(MozExternalRefCountType)
 nsXREDirProvider::AddRef()
@@ -491,7 +491,7 @@ LoadDirsIntoArray(nsCOMArray<nsIFile>& aSourceDirs,
 
     nsAutoCString leaf;
     appended->GetNativeLeafName(leaf);
-    if (!Substring(leaf, leaf.Length() - 4).Equals(NS_LITERAL_CSTRING(".xpi"))) {
+    if (!Substring(leaf, leaf.Length() - 4).EqualsLiteral(".xpi")) {
       LoadDirIntoArray(appended,
                        aAppendList,
                        aDirectories);
@@ -564,7 +564,7 @@ LoadExtensionDirectories(nsINIParser &parser,
       continue;
 
     aDirectories.AppendObject(dir);
-    if (Substring(path, path.Length() - 4).Equals(NS_LITERAL_CSTRING(".xpi"))) {
+    if (Substring(path, path.Length() - 4).EqualsLiteral(".xpi")) {
       XRE_AddJarManifestLocation(aType, dir);
     }
     else {
@@ -931,8 +931,8 @@ GetRegWindowsAppDataFolder(bool aLocal, nsAString& _retval)
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  // |size| includes room for the terminating null character
-  DWORD resultLen = size / 2 - 1;
+  // |size| may or may not include room for the terminating null character
+  DWORD resultLen = size / 2;
 
   _retval.SetLength(resultLen);
   nsAString::iterator begin;
@@ -949,6 +949,11 @@ GetRegWindowsAppDataFolder(bool aLocal, nsAString& _retval)
   if (res != ERROR_SUCCESS) {
     _retval.SetLength(0);
     return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (!_retval.CharAt(resultLen - 1)) {
+    // It was already null terminated.
+    _retval.Truncate(resultLen - 1);
   }
 
   return NS_OK;
@@ -1066,7 +1071,7 @@ nsXREDirProvider::GetUpdateRootDir(nsIFile* *aResult)
   rv = GetShellFolderPath(CSIDL_PROGRAM_FILES, programFiles);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  programFiles.AppendLiteral("\\");
+  programFiles.Append('\\');
   uint32_t programFilesLen = programFiles.Length();
 
   nsAutoString programName;

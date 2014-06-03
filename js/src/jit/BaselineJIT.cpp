@@ -40,15 +40,18 @@ PCMappingSlotInfo::ToSlotLocation(const StackValue *stackVal)
     return SlotIgnore;
 }
 
-BaselineScript::BaselineScript(uint32_t prologueOffset, uint32_t spsPushToggleOffset)
+BaselineScript::BaselineScript(uint32_t prologueOffset, uint32_t epilogueOffset,
+                               uint32_t spsPushToggleOffset, uint32_t postDebugPrologueOffset)
   : method_(nullptr),
     templateScope_(nullptr),
     fallbackStubSpace_(),
     prologueOffset_(prologueOffset),
+    epilogueOffset_(epilogueOffset),
 #ifdef DEBUG
     spsOn_(false),
 #endif
     spsPushToggleOffset_(spsPushToggleOffset),
+    postDebugPrologueOffset_(postDebugPrologueOffset),
     flags_(0)
 { }
 
@@ -110,8 +113,6 @@ EnterBaseline(JSContext *cx, EnterJitData &data)
     {
         AssertCompartmentUnchanged pcc(cx);
         JitActivation activation(cx, data.constructing);
-        JSAutoResolveFlags rf(cx, RESOLVE_INFER);
-        AutoFlushInhibitor afi(cx->runtime()->jitRuntime());
 
         if (data.osrFrame)
             data.osrFrame->setRunningInJit();
@@ -126,7 +127,7 @@ EnterBaseline(JSContext *cx, EnterJitData &data)
             data.osrFrame->clearRunningInJit();
     }
 
-    JS_ASSERT(!cx->runtime()->hasIonReturnOverride());
+    JS_ASSERT(!cx->runtime()->jitRuntime()->hasIonReturnOverride());
 
     // Jit callers wrap primitive constructor return.
     if (!data.result.isMagic() && data.constructing && data.result.isPrimitive())
@@ -214,7 +215,7 @@ jit::EnterBaselineAtBranch(JSContext *cx, InterpreterFrame *fp, jsbytecode *pc)
 }
 
 MethodStatus
-jit::BaselineCompile(JSContext *cx, HandleScript script)
+jit::BaselineCompile(JSContext *cx, JSScript *script)
 {
     JS_ASSERT(!script->hasBaselineScript());
     JS_ASSERT(script->canBaselineCompile());
@@ -233,7 +234,6 @@ jit::BaselineCompile(JSContext *cx, HandleScript script)
     if (!compiler.init())
         return Method_Error;
 
-    AutoFlushCache afc("BaselineJIT", cx->runtime()->jitRuntime());
     MethodStatus status = compiler.compile();
 
     JS_ASSERT_IF(status == Method_Compiled, script->hasBaselineScript());
@@ -359,9 +359,9 @@ jit::CanEnterBaselineMethod(JSContext *cx, RunState &state)
 };
 
 BaselineScript *
-BaselineScript::New(JSContext *cx, uint32_t prologueOffset,
-                    uint32_t spsPushToggleOffset, size_t icEntries,
-                    size_t pcMappingIndexEntries, size_t pcMappingSize,
+BaselineScript::New(JSContext *cx, uint32_t prologueOffset, uint32_t epilogueOffset,
+                    uint32_t spsPushToggleOffset, uint32_t postDebugPrologueOffset,
+                    size_t icEntries, size_t pcMappingIndexEntries, size_t pcMappingSize,
                     size_t bytecodeTypeMapEntries)
 {
     static const unsigned DataAlignment = sizeof(uintptr_t);
@@ -388,7 +388,8 @@ BaselineScript::New(JSContext *cx, uint32_t prologueOffset,
         return nullptr;
 
     BaselineScript *script = reinterpret_cast<BaselineScript *>(buffer);
-    new (script) BaselineScript(prologueOffset, spsPushToggleOffset);
+    new (script) BaselineScript(prologueOffset, epilogueOffset,
+                                spsPushToggleOffset, postDebugPrologueOffset);
 
     size_t offsetCursor = paddedBaselineScriptSize;
 
@@ -453,7 +454,7 @@ BaselineScript::Destroy(FreeOp *fop, BaselineScript *script)
      * in invalid store buffer entries. Assert that if we do destroy scripts
      * outside of a GC that we at least emptied the nursery first.
      */
-    JS_ASSERT(fop->runtime()->gcNursery.isEmpty());
+    JS_ASSERT(fop->runtime()->gc.nursery.isEmpty());
 #endif
     fop->delete_(script);
 }
@@ -596,7 +597,7 @@ BaselineScript::icEntryFromReturnAddress(uint8_t *returnAddr)
 }
 
 void
-BaselineScript::copyICEntries(HandleScript script, const ICEntry *entries, MacroAssembler &masm)
+BaselineScript::copyICEntries(JSScript *script, const ICEntry *entries, MacroAssembler &masm)
 {
     // Fix up the return offset in the IC entries and copy them in.
     // Also write out the IC entry ptrs in any fallback stubs that were added.
@@ -761,12 +762,6 @@ BaselineScript::toggleDebugTraps(JSScript *script, jsbytecode *pc)
 
     SrcNoteLineScanner scanner(script->notes(), script->lineno());
 
-    JSRuntime *rt = script->runtimeFromMainThread();
-    IonContext ictx(CompileRuntime::get(rt),
-                    CompileCompartment::get(script->compartment()),
-                    nullptr);
-    AutoFlushCache afc("DebugTraps", rt->jitRuntime());
-
     for (uint32_t i = 0; i < numPCMappingIndexEntries(); i++) {
         PCMappingIndexEntry &entry = pcMappingIndexEntry(i);
 
@@ -788,7 +783,7 @@ BaselineScript::toggleDebugTraps(JSScript *script, jsbytecode *pc)
                     script->hasBreakpointsAt(curPC);
 
                 // Patch the trap.
-                CodeLocationLabel label(method(), nativeOffset);
+                CodeLocationLabel label(method(), CodeOffsetLabel(nativeOffset));
                 Assembler::ToggleCall(label, enabled);
             }
 
@@ -919,7 +914,7 @@ void
 jit::ToggleBaselineSPS(JSRuntime *runtime, bool enable)
 {
     for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {
-        for (gc::CellIter i(zone, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+        for (gc::ZoneCellIter i(zone, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
             if (!script->hasBaselineScript())
                 continue;
@@ -954,7 +949,7 @@ jit::MarkActiveBaselineScripts(Zone *zone)
 {
     JSRuntime *rt = zone->runtimeFromMainThread();
     for (JitActivationIterator iter(rt); !iter.done(); ++iter) {
-        if (iter.activation()->compartment()->zone() == zone)
+        if (iter->compartment()->zone() == zone)
             MarkActiveBaselineScripts(rt, iter);
     }
 }

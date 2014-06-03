@@ -274,7 +274,7 @@ class HTMLInputElementState MOZ_FINAL : public nsISupports
 
 NS_DEFINE_STATIC_IID_ACCESSOR(HTMLInputElementState, NS_INPUT_ELEMENT_STATE_IID)
 
-NS_IMPL_ISUPPORTS1(HTMLInputElementState, HTMLInputElementState)
+NS_IMPL_ISUPPORTS(HTMLInputElementState, HTMLInputElementState)
 
 HTMLInputElement::nsFilePickerShownCallback::nsFilePickerShownCallback(
   HTMLInputElement* aInput, nsIFilePicker* aFilePicker)
@@ -283,7 +283,7 @@ HTMLInputElement::nsFilePickerShownCallback::nsFilePickerShownCallback(
 {
 }
 
-NS_IMPL_ISUPPORTS1(UploadLastDir::ContentPrefCallback, nsIContentPrefCallback2)
+NS_IMPL_ISUPPORTS(UploadLastDir::ContentPrefCallback, nsIContentPrefCallback2)
 
 NS_IMETHODIMP
 UploadLastDir::ContentPrefCallback::HandleCompletion(uint16_t aReason)
@@ -478,7 +478,7 @@ private:
   nsTArray<nsCOMPtr<nsISimpleEnumerator> > mDirEnumeratorStack;
 };
 
-NS_IMPL_ISUPPORTS1(DirPickerRecursiveFileEnumerator, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS(DirPickerRecursiveFileEnumerator, nsISimpleEnumerator)
 
 /**
  * This may return nullptr if aDomFile's implementation of
@@ -714,8 +714,8 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
                                               false);
 }
 
-NS_IMPL_ISUPPORTS1(HTMLInputElement::nsFilePickerShownCallback,
-                   nsIFilePickerShownCallback)
+NS_IMPL_ISUPPORTS(HTMLInputElement::nsFilePickerShownCallback,
+                  nsIFilePickerShownCallback)
 
 class nsColorPickerShownCallback MOZ_FINAL
   : public nsIColorPickerShownCallback
@@ -814,7 +814,7 @@ nsColorPickerShownCallback::Done(const nsAString& aColor)
   return rv;
 }
 
-NS_IMPL_ISUPPORTS1(nsColorPickerShownCallback, nsIColorPickerShownCallback)
+NS_IMPL_ISUPPORTS(nsColorPickerShownCallback, nsIColorPickerShownCallback)
 
 bool
 HTMLInputElement::IsPopupBlocked() const
@@ -989,7 +989,7 @@ HTMLInputElement::InitFilePicker(FilePickerType aType)
 
 #define CPS_PREF_NAME NS_LITERAL_STRING("browser.upload.lastDir")
 
-NS_IMPL_ISUPPORTS2(UploadLastDir, nsIObserver, nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(UploadLastDir, nsIObserver, nsISupportsWeakReference)
 
 void
 HTMLInputElement::InitUploadLastDir() {
@@ -1223,16 +1223,16 @@ NS_IMPL_RELEASE_INHERITED(HTMLInputElement, Element)
 
 // QueryInterface implementation for HTMLInputElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLInputElement)
-  NS_INTERFACE_TABLE_INHERITED9(HTMLInputElement,
-                                nsIDOMHTMLInputElement,
-                                nsITextControlElement,
-                                nsIPhonetic,
-                                imgINotificationObserver,
-                                nsIImageLoadingContent,
-                                imgIOnloadBlocker,
-                                nsIDOMNSEditableElement,
-                                nsITimerCallback,
-                                nsIConstraintValidation)
+  NS_INTERFACE_TABLE_INHERITED(HTMLInputElement,
+                               nsIDOMHTMLInputElement,
+                               nsITextControlElement,
+                               nsIPhonetic,
+                               imgINotificationObserver,
+                               nsIImageLoadingContent,
+                               imgIOnloadBlocker,
+                               nsIDOMNSEditableElement,
+                               nsITimerCallback,
+                               nsIConstraintValidation)
 NS_INTERFACE_TABLE_TAIL_INHERITING(nsGenericHTMLFormElementWithState)
 
 // nsIConstraintValidation
@@ -2518,7 +2518,7 @@ HTMLInputElement::GetDisplayFileName(nsAString& aValue) const
     }
   } else {
     nsString count;
-    count.AppendInt(mFiles.Length());
+    count.AppendInt(int(mFiles.Length()));
 
     const char16_t* params[] = { count.get() };
     nsContentUtils::FormatLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
@@ -5196,6 +5196,8 @@ HTMLInputElement::SetRangeText(const nsAString& aReplacement, uint32_t aStart,
       }
     }
     break;
+    default:
+      MOZ_CRASH("Unknown mode!");
   }
 
   Optional<nsAString> direction;
@@ -6685,8 +6687,6 @@ HTMLInputElement::UpdateBarredFromConstraintValidation()
   SetBarredFromConstraintValidation(mType == NS_FORM_INPUT_HIDDEN ||
                                     mType == NS_FORM_INPUT_BUTTON ||
                                     mType == NS_FORM_INPUT_RESET ||
-                                    mType == NS_FORM_INPUT_SUBMIT ||
-                                    mType == NS_FORM_INPUT_IMAGE ||
                                     HasAttr(kNameSpaceID_None, nsGkAtoms::readonly) ||
                                     IsDisabled());
 }
@@ -6733,16 +6733,16 @@ HTMLInputElement::GetValidationMessage(nsAString& aValidationMessage,
       switch (mType)
       {
         case NS_FORM_INPUT_FILE:
-          key.Assign("FormValidationFileMissing");
+          key.AssignLiteral("FormValidationFileMissing");
           break;
         case NS_FORM_INPUT_CHECKBOX:
-          key.Assign("FormValidationCheckboxMissing");
+          key.AssignLiteral("FormValidationCheckboxMissing");
           break;
         case NS_FORM_INPUT_RADIO:
-          key.Assign("FormValidationRadioMissing");
+          key.AssignLiteral("FormValidationRadioMissing");
           break;
         default:
-          key.Assign("FormValidationValueMissing");
+          key.AssignLiteral("FormValidationValueMissing");
       }
       rv = nsContentUtils::GetLocalizedString(nsContentUtils::eDOM_PROPERTIES,
                                               key.get(), message);
@@ -7275,44 +7275,6 @@ HTMLInputElement::SetFilePickerFiltersFromAccept(nsIFilePicker* filePicker)
     // current filter.
     filePicker->SetFilterIndex(1);
   }
-}
-
-int32_t
-HTMLInputElement::GetFilterFromAccept()
-{
-  NS_ASSERTION(HasAttr(kNameSpaceID_None, nsGkAtoms::accept),
-               "You should not call GetFileFiltersFromAccept if the element"
-               " has no accept attribute!");
-
-  int32_t filter = 0;
-  nsAutoString accept;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::accept, accept);
-
-  HTMLSplitOnSpacesTokenizer tokenizer(accept, ',');
-
-  while (tokenizer.hasMoreTokens()) {
-    const nsDependentSubstring token = tokenizer.nextToken();
-
-    int32_t tokenFilter = 0;
-    if (token.EqualsLiteral("image/*")) {
-      tokenFilter = nsIFilePicker::filterImages;
-    } else if (token.EqualsLiteral("audio/*")) {
-      tokenFilter = nsIFilePicker::filterAudio;
-    } else if (token.EqualsLiteral("video/*")) {
-      tokenFilter = nsIFilePicker::filterVideo;
-    }
-
-    if (tokenFilter) {
-      // We do not want to set more than one filter so if we found two different
-      // kwown tokens, we will return 0 (no filter).
-      if (filter && filter != tokenFilter) {
-        return 0;
-      }
-      filter = tokenFilter;
-    }
-  }
-
-  return filter;
 }
 
 Decimal

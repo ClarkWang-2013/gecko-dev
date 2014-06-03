@@ -930,7 +930,7 @@ StructMetaTypeDescr::create(JSContext *cx,
 
         // userFieldTypes[id] = typeObj
         if (!JSObject::defineGeneric(cx, userFieldTypes, id,
-                                     fieldTypeObjs.handleAt(i), nullptr, nullptr,
+                                     fieldTypeObjs[i], nullptr, nullptr,
                                      JSPROP_READONLY | JSPROP_PERMANENT))
             return nullptr;
 
@@ -1300,7 +1300,7 @@ DefineMetaTypeDescr(JSContext *cx,
     RootedObject protoProto(cx);
     protoProto = NewObjectWithProto<JSObject>(cx, objProto,
                                               global, SingletonObject);
-    if (!proto)
+    if (!protoProto)
         return nullptr;
 
     RootedValue protoProtoValue(cx, ObjectValue(*protoProto));
@@ -2480,7 +2480,7 @@ TypedObject::constructUnsized(JSContext *cx, unsigned int argc, Value *vp)
         Rooted<ArrayBufferObject*> buffer(cx);
         buffer = &args[0].toObject().as<ArrayBufferObject>();
 
-        if (callee->opaque() || buffer->isNeutered()) {
+        if (callee->opaque()) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage,
                                  nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
             return false;
@@ -2531,6 +2531,12 @@ TypedObject::constructUnsized(JSContext *cx, unsigned int argc, Value *vp)
             }
 
             length = maximumLength;
+        }
+
+        if (buffer->isNeutered()) {
+            JS_ReportErrorNumber(cx, js_GetErrorMessage,
+                                 nullptr, JSMSG_TYPEDOBJECT_BAD_ARGS);
+            return false;
         }
 
         Rooted<TypedObject*> obj(cx);
@@ -3154,7 +3160,7 @@ class MemoryInitVisitor {
     const JSRuntime *rt_;
 
   public:
-    MemoryInitVisitor(const JSRuntime *rt)
+    explicit MemoryInitVisitor(const JSRuntime *rt)
       : rt_(rt)
     {}
 
@@ -3222,7 +3228,7 @@ class MemoryTracingVisitor {
 
   public:
 
-    MemoryTracingVisitor(JSTracer *trace)
+    explicit MemoryTracingVisitor(JSTracer *trace)
       : trace_(trace)
     {}
 

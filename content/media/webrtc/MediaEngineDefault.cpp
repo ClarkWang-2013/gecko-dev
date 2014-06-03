@@ -22,6 +22,10 @@
 #include "nsISupportsUtils.h"
 #endif
 
+#ifdef MOZ_WEBRTC
+#include "YuvStamper.h"
+#endif
+
 #define VIDEO_RATE USECS_PER_S
 #define AUDIO_RATE 16000
 #define AUDIO_FRAME_LENGTH ((AUDIO_RATE * MediaEngine::DEFAULT_AUDIO_TIMER_MS) / 1000)
@@ -29,7 +33,7 @@ namespace mozilla {
 
 using namespace mozilla::gfx;
 
-NS_IMPL_ISUPPORTS1(MediaEngineDefaultVideoSource, nsITimerCallback)
+NS_IMPL_ISUPPORTS(MediaEngineDefaultVideoSource, nsITimerCallback)
 /**
  * Default video source.
  */
@@ -47,25 +51,28 @@ MediaEngineDefaultVideoSource::~MediaEngineDefaultVideoSource()
 void
 MediaEngineDefaultVideoSource::GetName(nsAString& aName)
 {
-  aName.Assign(NS_LITERAL_STRING("Default Video Device"));
+  aName.AssignLiteral(MOZ_UTF16("Default Video Device"));
   return;
 }
 
 void
 MediaEngineDefaultVideoSource::GetUUID(nsAString& aUUID)
 {
-  aUUID.Assign(NS_LITERAL_STRING("1041FCBD-3F12-4F7B-9E9B-1EC556DD5676"));
+  aUUID.AssignLiteral(MOZ_UTF16("1041FCBD-3F12-4F7B-9E9B-1EC556DD5676"));
   return;
 }
 
 nsresult
-MediaEngineDefaultVideoSource::Allocate(const MediaEnginePrefs &aPrefs)
+MediaEngineDefaultVideoSource::Allocate(const VideoTrackConstraintsN &aConstraints,
+                                        const MediaEnginePrefs &aPrefs)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;
   }
 
   mOpts = aPrefs;
+  mOpts.mWidth = mOpts.mWidth ? mOpts.mWidth : MediaEngine::DEFAULT_43_VIDEO_WIDTH;
+  mOpts.mHeight = mOpts.mHeight ? mOpts.mHeight : MediaEngine::DEFAULT_43_VIDEO_HEIGHT;
   mState = kAllocated;
   return NS_OK;
 }
@@ -239,6 +246,15 @@ MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
       static_cast<layers::PlanarYCbCrImage*>(image.get());
   layers::PlanarYCbCrData data;
   AllocateSolidColorFrame(data, mOpts.mWidth, mOpts.mHeight, 0x80, mCb, mCr);
+
+#ifdef MOZ_WEBRTC
+  uint64_t timestamp = PR_Now();
+  YuvStamper::Encode(mOpts.mWidth, mOpts.mHeight, mOpts.mWidth,
+		     data.mYChannel,
+		     reinterpret_cast<unsigned char*>(&timestamp), sizeof(timestamp),
+		     0, 0);
+#endif
+
   ycbcr_image->SetData(data);
   // SetData copies data, so we can free the frame
   ReleaseFrame(data);
@@ -332,7 +348,7 @@ private:
 /**
  * Default audio source.
  */
-NS_IMPL_ISUPPORTS1(MediaEngineDefaultAudioSource, nsITimerCallback)
+NS_IMPL_ISUPPORTS(MediaEngineDefaultAudioSource, nsITimerCallback)
 
 MediaEngineDefaultAudioSource::MediaEngineDefaultAudioSource()
   : mTimer(nullptr)
@@ -346,19 +362,20 @@ MediaEngineDefaultAudioSource::~MediaEngineDefaultAudioSource()
 void
 MediaEngineDefaultAudioSource::GetName(nsAString& aName)
 {
-  aName.Assign(NS_LITERAL_STRING("Default Audio Device"));
+  aName.AssignLiteral(MOZ_UTF16("Default Audio Device"));
   return;
 }
 
 void
 MediaEngineDefaultAudioSource::GetUUID(nsAString& aUUID)
 {
-  aUUID.Assign(NS_LITERAL_STRING("B7CBD7C1-53EF-42F9-8353-73F61C70C092"));
+  aUUID.AssignLiteral(MOZ_UTF16("B7CBD7C1-53EF-42F9-8353-73F61C70C092"));
   return;
 }
 
 nsresult
-MediaEngineDefaultAudioSource::Allocate(const MediaEnginePrefs &aPrefs)
+MediaEngineDefaultAudioSource::Allocate(const AudioTrackConstraintsN &aConstraints,
+                                        const MediaEnginePrefs &aPrefs)
 {
   if (mState != kReleased) {
     return NS_ERROR_FAILURE;
@@ -408,10 +425,10 @@ MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
 #if defined(MOZ_WIDGET_GONK) && defined(DEBUG)
 // B2G emulator debug is very, very slow and has problems dealing with realtime audio inputs
   mTimer->InitWithCallback(this, MediaEngine::DEFAULT_AUDIO_TIMER_MS*10,
-                           nsITimer::TYPE_REPEATING_PRECISE);
+                           nsITimer::TYPE_REPEATING_PRECISE_CAN_SKIP);
 #else
   mTimer->InitWithCallback(this, MediaEngine::DEFAULT_AUDIO_TIMER_MS,
-                           nsITimer::TYPE_REPEATING_PRECISE);
+                           nsITimer::TYPE_REPEATING_PRECISE_CAN_SKIP);
 #endif
   mState = kStarted;
 

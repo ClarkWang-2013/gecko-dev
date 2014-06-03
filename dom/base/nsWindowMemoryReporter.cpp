@@ -42,8 +42,8 @@ nsWindowMemoryReporter::~nsWindowMemoryReporter()
   KillCheckTimer();
 }
 
-NS_IMPL_ISUPPORTS3(nsWindowMemoryReporter, nsIMemoryReporter, nsIObserver,
-                   nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(nsWindowMemoryReporter, nsIMemoryReporter, nsIObserver,
+                  nsISupportsWeakReference)
 
 static nsresult
 AddNonJSSizeOfWindowAndItsDescendents(nsGlobalWindow* aWindow,
@@ -688,7 +688,7 @@ nsWindowMemoryReporter::AsyncCheckForGhostWindows()
   int32_t timeSinceLastCheck = (TimeStamp::NowLoRes() - mLastCheckForGhostWindows).ToSeconds();
   int32_t timerDelay = (kTimeBetweenChecks - std::min(timeSinceLastCheck, kTimeBetweenChecks)) * PR_MSEC_PER_SEC;
 
-  CallCreateInstance<nsITimer>("@mozilla.org/timer;1", getter_AddRefs(mCheckTimer));
+  mCheckTimer = do_CreateInstance("@mozilla.org/timer;1");
 
   if (mCheckTimer) {
     mCheckTimer->InitWithFuncCallback(CheckTimerFired, nullptr,
@@ -882,8 +882,8 @@ nsWindowMemoryReporter::CheckForGhostWindows(
                              &ghostEnumData);
 }
 
-NS_IMPL_ISUPPORTS1(nsWindowMemoryReporter::GhostWindowsReporter,
-                   nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(nsWindowMemoryReporter::GhostWindowsReporter,
+                  nsIMemoryReporter)
 
 /* static */ int64_t
 nsWindowMemoryReporter::GhostWindowsReporter::DistinguishedAmount()

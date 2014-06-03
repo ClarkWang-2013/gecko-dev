@@ -193,7 +193,7 @@ bool Wrapper::finalizeInBackground(Value priv)
      * If the wrapped object is in the nursery then we know it doesn't have a
      * finalizer, and so background finalization is ok.
      */
-    if (IsInsideNursery(priv.toObject().runtimeFromMainThread(), &priv.toObject()))
+    if (IsInsideNursery(&priv.toObject()))
         return true;
     return IsBackgroundFinalized(priv.toObject().tenuredGetAllocKind());
 }
@@ -230,24 +230,23 @@ CrossCompartmentWrapper::preventExtensions(JSContext *cx, HandleObject wrapper)
 
 bool
 CrossCompartmentWrapper::getPropertyDescriptor(JSContext *cx, HandleObject wrapper, HandleId id,
-                                               MutableHandle<PropertyDescriptor> desc, unsigned flags)
+                                               MutableHandle<PropertyDescriptor> desc)
 {
     RootedId idCopy(cx, id);
     PIERCE(cx, wrapper,
            cx->compartment()->wrapId(cx, idCopy.address()),
-           Wrapper::getPropertyDescriptor(cx, wrapper, idCopy, desc, flags),
+           Wrapper::getPropertyDescriptor(cx, wrapper, idCopy, desc),
            cx->compartment()->wrap(cx, desc));
 }
 
 bool
-CrossCompartmentWrapper::getOwnPropertyDescriptor(JSContext *cx, HandleObject wrapper,
-                                                  HandleId id, MutableHandle<PropertyDescriptor> desc,
-                                                  unsigned flags)
+CrossCompartmentWrapper::getOwnPropertyDescriptor(JSContext *cx, HandleObject wrapper, HandleId id,
+                                                  MutableHandle<PropertyDescriptor> desc)
 {
     RootedId idCopy(cx, id);
     PIERCE(cx, wrapper,
            cx->compartment()->wrapId(cx, idCopy.address()),
-           Wrapper::getOwnPropertyDescriptor(cx, wrapper, idCopy, desc, flags),
+           Wrapper::getOwnPropertyDescriptor(cx, wrapper, idCopy, desc),
            cx->compartment()->wrap(cx, desc));
 }
 
@@ -411,7 +410,7 @@ Reify(JSContext *cx, JSCompartment *origin, MutableHandleValue vp)
             if (!ValueToId<CanGC>(cx, v, &id))
                 return false;
             keys.infallibleAppend(id);
-            if (!origin->wrapId(cx, &keys[i]))
+            if (!origin->wrapId(cx, keys[i].address()))
                 return false;
         }
     }
@@ -756,7 +755,7 @@ DeadObjectProxy::preventExtensions(JSContext *cx, HandleObject proxy)
 
 bool
 DeadObjectProxy::getPropertyDescriptor(JSContext *cx, HandleObject wrapper, HandleId id,
-                                       MutableHandle<PropertyDescriptor> desc, unsigned flags)
+                                       MutableHandle<PropertyDescriptor> desc)
 {
     JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEAD_OBJECT);
     return false;
@@ -764,7 +763,7 @@ DeadObjectProxy::getPropertyDescriptor(JSContext *cx, HandleObject wrapper, Hand
 
 bool
 DeadObjectProxy::getOwnPropertyDescriptor(JSContext *cx, HandleObject wrapper, HandleId id,
-                                          MutableHandle<PropertyDescriptor> desc, unsigned flags)
+                                          MutableHandle<PropertyDescriptor> desc)
 {
     JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEAD_OBJECT);
     return false;
@@ -1000,7 +999,7 @@ js::RemapWrapper(JSContext *cx, JSObject *wobjArg, JSObject *newTargetArg)
     // Update the entry in the compartment's wrapper map to point to the old
     // wrapper, which has now been updated (via reuse or swap).
     JS_ASSERT(wobj->is<WrapperObject>());
-    wcompartment->putWrapper(cx, ObjectValue(*newTarget), ObjectValue(*wobj));
+    wcompartment->putWrapper(cx, CrossCompartmentKey(newTarget), ObjectValue(*wobj));
     return true;
 }
 

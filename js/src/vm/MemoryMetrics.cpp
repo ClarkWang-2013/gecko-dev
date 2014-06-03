@@ -259,7 +259,8 @@ StatsCompartmentCallback(JSRuntime *rt, void *data, JSCompartment *compartment)
                                         &cStats.shapesMallocHeapCompartmentTables,
                                         &cStats.crossCompartmentWrappersTable,
                                         &cStats.regexpCompartment,
-                                        &cStats.debuggeesSet);
+                                        &cStats.debuggeesSet,
+                                        &cStats.savedStacksSet);
 }
 
 static void
@@ -536,7 +537,7 @@ JS::CollectRuntimeStats(JSRuntime *rt, RuntimeStats *rtStats, ObjectPrivateVisit
     if (!rtStats->compartmentStatsVector.reserve(rt->numCompartments))
         return false;
 
-    if (!rtStats->zoneStatsVector.reserve(rt->zones.length()))
+    if (!rtStats->zoneStatsVector.reserve(rt->gc.zones.length()))
         return false;
 
     rtStats->gcHeapChunkTotal =
@@ -650,7 +651,7 @@ AddSizeOfTab(JSRuntime *rt, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
     class SimpleJSRuntimeStats : public JS::RuntimeStats
     {
       public:
-        SimpleJSRuntimeStats(MallocSizeOf mallocSizeOf)
+        explicit SimpleJSRuntimeStats(MallocSizeOf mallocSizeOf)
           : JS::RuntimeStats(mallocSizeOf)
         {}
 

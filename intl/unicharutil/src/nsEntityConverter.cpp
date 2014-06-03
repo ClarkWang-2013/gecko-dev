@@ -85,7 +85,7 @@ nsEntityConverter::LoadEntityBundle(uint32_t version)
 
   // all property file names are ASCII, like "html40Latin1" so this is safe
   LossyAppendUTF16toASCII(versionName, url);
-  url.Append(".properties");
+  url.AppendLiteral(".properties");
 
   nsCOMPtr<nsIStringBundle> bundle;
   rv = bundleService->CreateBundle(url.get(), getter_AddRefs(bundle));
@@ -135,7 +135,7 @@ nsEntityConverter:: GetVersionBundleInstance(uint32_t versionNumber)
 //
 // nsISupports methods
 //
-NS_IMPL_ISUPPORTS1(nsEntityConverter,nsIEntityConverter)
+NS_IMPL_ISUPPORTS(nsEntityConverter,nsIEntityConverter)
 
 
 //

@@ -38,7 +38,7 @@ FxAccountsUIGlue.prototype = {
         return;
       }
 
-      log.debug("Got content event " + JSON.stringify(msg));
+      log.debug("UIGlue got content event " + JSON.stringify(msg));
 
       if (msg.error) {
         deferred.reject(msg);
@@ -64,9 +64,9 @@ FxAccountsUIGlue.prototype = {
     return this._contentRequest("openFlow");
   },
 
-  refreshAuthentication: function(aAccountId) {
+  refreshAuthentication: function(aEmail) {
     return this._contentRequest("refreshAuthentication", {
-      accountId: aAccountId
+      email: aEmail
     });
   },
 

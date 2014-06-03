@@ -107,14 +107,14 @@ nsWyciwygChannel::~nsWyciwygChannel()
 {
 }
 
-NS_IMPL_ISUPPORTS7(nsWyciwygChannel,
-                   nsIChannel,
-                   nsIRequest,
-                   nsIStreamListener,
-                   nsIRequestObserver,
-                   nsICacheEntryOpenCallback,
-                   nsIWyciwygChannel,
-                   nsIPrivateBrowsingChannel)
+NS_IMPL_ISUPPORTS(nsWyciwygChannel,
+                  nsIChannel,
+                  nsIRequest,
+                  nsIStreamListener,
+                  nsIRequestObserver,
+                  nsICacheEntryOpenCallback,
+                  nsIWyciwygChannel,
+                  nsIPrivateBrowsingChannel)
 
 nsresult
 nsWyciwygChannel::Init(nsIURI* uri)
@@ -336,7 +336,7 @@ nsWyciwygChannel::SetContentType(const nsACString &aContentType)
 NS_IMETHODIMP
 nsWyciwygChannel::GetContentCharset(nsACString &aContentCharset)
 {
-  aContentCharset.Assign("UTF-16");
+  aContentCharset.AssignLiteral("UTF-16");
   return NS_OK;
 }
 
@@ -781,7 +781,7 @@ nsWyciwygChannel::ReadFromCache()
   nsAutoCString tmpStr;
   rv = mCacheEntry->GetMetaDataElement("inhibit-persistent-caching",
                                        getter_Copies(tmpStr));
-  if (NS_SUCCEEDED(rv) && tmpStr == NS_LITERAL_CSTRING("1"))
+  if (NS_SUCCEEDED(rv) && tmpStr.EqualsLiteral("1"))
     mLoadFlags |= INHIBIT_PERSISTENT_CACHING;
 
   // Get a transport to the cached data...

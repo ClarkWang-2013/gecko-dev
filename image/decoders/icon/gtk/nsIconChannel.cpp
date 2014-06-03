@@ -38,9 +38,9 @@ extern "C" {
 
 #include "nsIconChannel.h"
 
-NS_IMPL_ISUPPORTS2(nsIconChannel,
-                   nsIRequest,
-                   nsIChannel)
+NS_IMPL_ISUPPORTS(nsIconChannel,
+                  nsIRequest,
+                  nsIChannel)
 
 #ifdef MOZ_ENABLE_GNOMEUI
 // These let us have a soft dependency on libgnomeui rather than a hard one. These are just basically the prototypes
@@ -325,7 +325,7 @@ nsIconChannel::InitWithGnome(nsIMozIconURI *aIconURI)
                                 getter_Copies(appName));
     } else {
       NS_WARNING("brand.properties not present, using default application name");
-      appName.Assign(NS_LITERAL_STRING("Gecko"));
+      appName.AssignLiteral(MOZ_UTF16("Gecko"));
     }
 
     char* empty[] = { "" };

@@ -39,10 +39,10 @@
 
 #define MAX_BYTES 512u
 
-NS_IMPL_ISUPPORTS3(nsFeedSniffer,
-                   nsIContentSniffer,
-                   nsIStreamListener,
-                   nsIRequestObserver)
+NS_IMPL_ISUPPORTS(nsFeedSniffer,
+                  nsIContentSniffer,
+                  nsIStreamListener,
+                  nsIRequestObserver)
 
 nsresult
 nsFeedSniffer::ConvertEncodedData(nsIRequest* request,
@@ -208,7 +208,7 @@ nsFeedSniffer::GetMIMETypeFromContent(nsIRequest* request,
   // Check that this is a GET request, since you can't subscribe to a POST...
   nsAutoCString method;
   channel->GetRequestMethod(method);
-  if (!method.Equals("GET")) {
+  if (!method.EqualsLiteral("GET")) {
     sniffedType.Truncate();
     return NS_OK;
   }

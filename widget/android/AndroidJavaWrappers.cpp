@@ -37,6 +37,7 @@ jfieldID AndroidGeckoEvent::jCharactersExtraField = 0;
 jfieldID AndroidGeckoEvent::jDataField = 0;
 jfieldID AndroidGeckoEvent::jDOMPrintableKeyValueField = 0;
 jfieldID AndroidGeckoEvent::jKeyCodeField = 0;
+jfieldID AndroidGeckoEvent::jScanCodeField = 0;
 jfieldID AndroidGeckoEvent::jMetaStateField = 0;
 jfieldID AndroidGeckoEvent::jDomKeyLocationField = 0;
 jfieldID AndroidGeckoEvent::jFlagsField = 0;
@@ -62,6 +63,11 @@ jfieldID AndroidGeckoEvent::jScreenOrientationField = 0;
 jfieldID AndroidGeckoEvent::jByteBufferField = 0;
 jfieldID AndroidGeckoEvent::jWidthField = 0;
 jfieldID AndroidGeckoEvent::jHeightField = 0;
+jfieldID AndroidGeckoEvent::jIDField = 0;
+jfieldID AndroidGeckoEvent::jGamepadButtonField = 0;
+jfieldID AndroidGeckoEvent::jGamepadButtonPressedField = 0;
+jfieldID AndroidGeckoEvent::jGamepadButtonValueField = 0;
+jfieldID AndroidGeckoEvent::jGamepadValuesField = 0;
 jfieldID AndroidGeckoEvent::jPrefNamesField = 0;
 
 jclass AndroidGeckoEvent::jDomKeyLocationClass = 0;
@@ -141,6 +147,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jCharactersExtraField = getField("mCharactersExtra", "Ljava/lang/String;");
     jDataField = getField("mData", "Ljava/lang/String;");
     jKeyCodeField = getField("mKeyCode", "I");
+    jScanCodeField = getField("mScanCode", "I");
     jMetaStateField = getField("mMetaState", "I");
     jDomKeyLocationField = getField("mDomKeyLocation", "Lorg/mozilla/gecko/GeckoEvent$DomKeyLocation;");
     jFlagsField = getField("mFlags", "I");
@@ -167,6 +174,11 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jByteBufferField = getField("mBuffer", "Ljava/nio/ByteBuffer;");
     jWidthField = getField("mWidth", "I");
     jHeightField = getField("mHeight", "I");
+    jIDField = getField("mID", "I");
+    jGamepadButtonField = getField("mGamepadButton", "I");
+    jGamepadButtonPressedField = getField("mGamepadButtonPressed", "Z");
+    jGamepadButtonValueField = getField("mGamepadButtonValue", "F");
+    jGamepadValuesField = getField("mGamepadValues", "[F");
     jPrefNamesField = getField("mPrefNames", "[Ljava/lang/String;");
 
     // Init GeckoEvent.DomKeyLocation enum
@@ -422,6 +434,7 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             mDomKeyLocation = ReadDomKeyLocation(jenv, jobj);
             mFlags = jenv->GetIntField(jobj, jFlagsField);
             mKeyCode = jenv->GetIntField(jobj, jKeyCodeField);
+            mScanCode = jenv->GetIntField(jobj, jScanCodeField);
             mUnicodeChar = jenv->GetIntField(jobj, jUnicodeCharField);
             mBaseUnicodeChar = jenv->GetIntField(jobj, jBaseUnicodeCharField);
             mDOMPrintableKeyValue =
@@ -583,6 +596,26 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             ReadCharactersExtraField(jenv);
             ReadDataField(jenv);
             mTime = jenv->GetLongField(jobj, jTimeField);
+            break;
+        }
+
+        case GAMEPAD_ADDREMOVE: {
+            mID = jenv->GetIntField(jobj, jIDField);
+            break;
+        }
+
+        case GAMEPAD_DATA: {
+            mID = jenv->GetIntField(jobj, jIDField);
+            if (mAction == ACTION_GAMEPAD_BUTTON) {
+                mGamepadButton = jenv->GetIntField(jobj, jGamepadButtonField);
+                mGamepadButtonPressed = jenv->GetBooleanField(jobj, jGamepadButtonPressedField);
+                mGamepadButtonValue = jenv->GetFloatField(jobj, jGamepadButtonValueField);
+            } else if (mAction == ACTION_GAMEPAD_AXES) {
+                // Flags is a bitfield of valid entries in gamepadvalues
+                mFlags = jenv->GetIntField(jobj, jFlagsField);
+                mCount = jenv->GetIntField(jobj, jCountField);
+                ReadFloatArray(mGamepadValues, jenv, jGamepadValuesField, mCount);
+            }
             break;
         }
 
@@ -862,7 +895,7 @@ AndroidLayerRendererFrame::Dispose(JNIEnv *env)
     wrapped_obj = 0;
 }
 
-NS_IMPL_ISUPPORTS1(nsAndroidDisplayport, nsIAndroidDisplayport)
+NS_IMPL_ISUPPORTS(nsAndroidDisplayport, nsIAndroidDisplayport)
 
 bool
 AndroidLayerRendererFrame::BeginDrawing(AutoLocalJNIFrame *jniFrame)

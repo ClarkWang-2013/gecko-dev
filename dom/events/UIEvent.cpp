@@ -15,6 +15,7 @@
 #include "nsContentUtils.h"
 #include "nsIContent.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsIDocShell.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMNode.h"
 #include "nsIFrame.h"
@@ -68,12 +69,10 @@ UIEvent::UIEvent(EventTarget* aOwner,
   mView = nullptr;
   if (mPresContext)
   {
-    nsISupports* container = mPresContext->GetContainerWeak();
-    if (container)
+    nsIDocShell* docShell = mPresContext->GetDocShell();
+    if (docShell)
     {
-       nsCOMPtr<nsIDOMWindow> window = do_GetInterface(container);
-       if (window)
-          mView = do_QueryInterface(window);
+       mView = docShell->GetWindow();
     }
   }
 }
@@ -94,8 +93,8 @@ UIEvent::Constructor(const GlobalObject& aGlobal,
   return e.forget();
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(UIEvent, Event,
-                                     mView)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(UIEvent, Event,
+                                   mView)
 
 NS_IMPL_ADDREF_INHERITED(UIEvent, Event)
 NS_IMPL_RELEASE_INHERITED(UIEvent, Event)
@@ -456,6 +455,9 @@ UIEvent::GetModifierStateInternal(const nsAString& aKey)
 {
   WidgetInputEvent* inputEvent = mEvent->AsInputEvent();
   MOZ_ASSERT(inputEvent, "mEvent must be WidgetInputEvent or derived class");
+  if (aKey.EqualsLiteral("Accel")) {
+    return inputEvent->IsAccel();
+  }
   if (aKey.EqualsLiteral(NS_DOM_KEYNAME_SHIFT)) {
     return inputEvent->IsShift();
   }

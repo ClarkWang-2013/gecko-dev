@@ -70,6 +70,9 @@ enum DOM4ErrorTypeCodeMap {
 
   /* FileHandle API errors */
   LockedFileInactiveError = 0,
+
+  /* WebCrypto errors https://dvcs.w3.org/hg/webcrypto-api/raw-file/tip/spec/Overview.html#dfn-DataError */
+  OperationError           = 0,
 };
 
 #define DOM4_MSG_DEF(name, message, nsresult) {(nsresult), name, #name, message},
@@ -171,7 +174,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Exception)
   tmp->mThrownJSVal.setNull();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
-NS_IMPL_CI_INTERFACE_GETTER1(Exception, nsIXPCException)
+NS_IMPL_CI_INTERFACE_GETTER(Exception, nsIXPCException)
 
 Exception::Exception(const nsACString& aMessage,
                      nsresult aResult,
@@ -484,7 +487,7 @@ Exception::GetMessageMoz(nsString& retval)
 {
   nsCString str;
 #ifdef DEBUG
-  DebugOnly<nsresult> rv = 
+  DebugOnly<nsresult> rv =
 #endif
   GetMessageMoz(str);
   MOZ_ASSERT(NS_SUCCEEDED(rv));

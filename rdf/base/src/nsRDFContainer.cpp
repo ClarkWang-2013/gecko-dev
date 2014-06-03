@@ -88,7 +88,7 @@ nsIRDFResource*       RDFContainerImpl::kRDF_nextVal;
 ////////////////////////////////////////////////////////////////////////
 // nsISupports interface
 
-NS_IMPL_ISUPPORTS1(RDFContainerImpl, nsIRDFContainer)
+NS_IMPL_ISUPPORTS(RDFContainerImpl, nsIRDFContainer)
 
 
 
@@ -690,7 +690,7 @@ RDFContainerImpl::GetNextValue(nsIRDFResource** aResult)
     char buf[sizeof(kRDFNameSpaceURI) + 16];
     nsFixedCString nextValStr(buf, sizeof(buf), 0);
     nextValStr = kRDFNameSpaceURI;
-    nextValStr.Append("_");
+    nextValStr.Append('_');
     nextValStr.AppendInt(nextVal, 10);
 
     rv = gRDFService->GetResource(nextValStr, aResult);

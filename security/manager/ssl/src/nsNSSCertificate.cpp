@@ -67,14 +67,14 @@ NSSCleanupAutoPtrClass_WithParam(PLArenaPool, PORT_FreeArena, FalseParam, false)
 // in the list to mean not yet initialized.
 #define CERT_TYPE_NOT_YET_INITIALIZED (1 << 30)
 
-NS_IMPL_ISUPPORTS7(nsNSSCertificate,
-                   nsIX509Cert,
-                   nsIX509Cert2,
-                   nsIX509Cert3,
-                   nsIIdentityInfo,
-                   nsISMimeCert,
-                   nsISerializable,
-                   nsIClassInfo)
+NS_IMPL_ISUPPORTS(nsNSSCertificate,
+                  nsIX509Cert,
+                  nsIX509Cert2,
+                  nsIX509Cert3,
+                  nsIIdentityInfo,
+                  nsISMimeCert,
+                  nsISerializable,
+                  nsIClassInfo)
 
 /*static*/ nsNSSCertificate*
 nsNSSCertificate::Create(CERTCertificate* cert, SECOidTag* evOidPolicy)
@@ -829,10 +829,12 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
 
   // We want to test all usages, but we start with server because most of the
   // time Firefox users care about server certs.
-  certVerifier->VerifyCert(mCert.get(), nullptr,
+  certVerifier->VerifyCert(mCert.get(),
                            certificateUsageSSLServer, PR_Now(),
                            nullptr, /*XXX fixme*/
+                           nullptr, /* hostname */
                            CertVerifier::FLAG_LOCAL_ONLY,
+                           nullptr, /* stapledOCSPResponse */
                            &nssChain);
   // This is the whitelist of all non-SSLServer usages that are supported by
   // verifycert.
@@ -851,10 +853,12 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG,
            ("pipnss: PKIX attempting chain(%d) for '%s'\n",
             usage, mCert->nickname));
-    certVerifier->VerifyCert(mCert.get(), nullptr,
+    certVerifier->VerifyCert(mCert.get(),
                              usage, PR_Now(),
                              nullptr, /*XXX fixme*/
+                             nullptr, /*hostname*/
                              CertVerifier::FLAG_LOCAL_ONLY,
+                             nullptr, /* stapledOCSPResponse */
                              &nssChain);
   }
 
@@ -993,52 +997,43 @@ nsNSSCertificate::GetSerialNumber(nsAString& _serialNumber)
   return NS_ERROR_FAILURE;
 }
 
-NS_IMETHODIMP
-nsNSSCertificate::GetSha1Fingerprint(nsAString& _sha1Fingerprint)
+nsresult
+nsNSSCertificate::GetCertificateHash(nsAString& aFingerprint, SECOidTag aHashAlg)
 {
   nsNSSShutDownPreventionLock locker;
-  if (isAlreadyShutDown())
+  if (isAlreadyShutDown()) {
     return NS_ERROR_NOT_AVAILABLE;
-
-  _sha1Fingerprint.Truncate();
-  unsigned char fingerprint[20];
-  SECItem fpItem;
-  memset(fingerprint, 0, sizeof fingerprint);
-  PK11_HashBuf(SEC_OID_SHA1, fingerprint,
-               mCert->derCert.data, mCert->derCert.len);
-  fpItem.data = fingerprint;
-  fpItem.len = SHA1_LENGTH;
-  char* fpStr = CERT_Hexify(&fpItem, 1);
-  if (fpStr) {
-    _sha1Fingerprint = NS_ConvertASCIItoUTF16(fpStr);
-    PORT_Free(fpStr);
-    return NS_OK;
   }
-  return NS_ERROR_FAILURE;
+
+  aFingerprint.Truncate();
+  Digest digest;
+  nsresult rv = digest.DigestBuf(aHashAlg, mCert->derCert.data,
+                                 mCert->derCert.len);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  // CERT_Hexify's second argument is an int that is interpreted as a boolean
+  char* fpStr = CERT_Hexify(const_cast<SECItem*>(&digest.get()), 1);
+  if (!fpStr) {
+    return NS_ERROR_FAILURE;
+  }
+
+  aFingerprint.AssignASCII(fpStr);
+  PORT_Free(fpStr);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
-nsNSSCertificate::GetMd5Fingerprint(nsAString& _md5Fingerprint)
+nsNSSCertificate::GetSha256Fingerprint(nsAString& aSha256Fingerprint)
 {
-  nsNSSShutDownPreventionLock locker;
-  if (isAlreadyShutDown())
-    return NS_ERROR_NOT_AVAILABLE;
+  return GetCertificateHash(aSha256Fingerprint, SEC_OID_SHA256);
+}
 
-  _md5Fingerprint.Truncate();
-  unsigned char fingerprint[20];
-  SECItem fpItem;
-  memset(fingerprint, 0, sizeof fingerprint);
-  PK11_HashBuf(SEC_OID_MD5, fingerprint,
-               mCert->derCert.data, mCert->derCert.len);
-  fpItem.data = fingerprint;
-  fpItem.len = MD5_LENGTH;
-  char* fpStr = CERT_Hexify(&fpItem, 1);
-  if (fpStr) {
-    _md5Fingerprint = NS_ConvertASCIItoUTF16(fpStr);
-    PORT_Free(fpStr);
-    return NS_OK;
-  }
-  return NS_ERROR_FAILURE;
+NS_IMETHODIMP
+nsNSSCertificate::GetSha1Fingerprint(nsAString& _sha1Fingerprint)
+{
+  return GetCertificateHash(_sha1Fingerprint, SEC_OID_SHA1);
 }
 
 NS_IMETHODIMP
@@ -1349,7 +1344,7 @@ nsNSSCertificate::GetUsagesString(bool localOnly, uint32_t* _verified,
   NS_ENSURE_SUCCESS(rv,rv);
   _usages.Truncate();
   for (uint32_t i=0; i<tmpCount; i++) {
-    if (i>0) _usages.AppendLiteral(",");
+    if (i>0) _usages.Append(',');
     _usages.Append(tmpUsages[i]);
     nsMemory::Free(tmpUsages[i]);
   }
@@ -1467,10 +1462,11 @@ nsNSSCertificate::hasValidEVOidTag(SECOidTag& resultOidTag, bool& validEV)
 
   uint32_t flags = mozilla::psm::CertVerifier::FLAG_LOCAL_ONLY |
     mozilla::psm::CertVerifier::FLAG_MUST_BE_EV;
-  SECStatus rv = certVerifier->VerifyCert(mCert.get(), nullptr,
+  SECStatus rv = certVerifier->VerifyCert(mCert.get(),
     certificateUsageSSLServer, PR_Now(),
     nullptr /* XXX pinarg */,
-    flags, nullptr, &resultOidTag);
+    nullptr /* hostname */,
+    flags, nullptr /* stapledOCSPResponse */ , nullptr, &resultOidTag);
 
   if (rv != SECSuccess) {
     resultOidTag = SEC_OID_UNKNOWN;
@@ -1566,7 +1562,7 @@ nsNSSCertificate::GetValidEVPolicyOid(nsACString& outDottedOid)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS1(nsNSSCertList, nsIX509CertList)
+NS_IMPL_ISUPPORTS(nsNSSCertList, nsIX509CertList)
 
 nsNSSCertList::nsNSSCertList(mozilla::pkix::ScopedCERTCertList& certList,
                              const nsNSSShutDownPreventionLock& proofOfLock)
@@ -1706,7 +1702,7 @@ nsNSSCertList::GetEnumerator(nsISimpleEnumerator** _retval)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS1(nsNSSCertListEnumerator, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS(nsNSSCertListEnumerator, nsISimpleEnumerator)
 
 nsNSSCertListEnumerator::nsNSSCertListEnumerator(
   CERTCertList* certList, const nsNSSShutDownPreventionLock& proofOfLock)
@@ -1777,15 +1773,19 @@ nsNSSCertListEnumerator::GetNext(nsISupports** _retval)
   return NS_OK;
 }
 
+// NB: This serialization must match that of nsNSSCertificateFakeTransport.
 NS_IMETHODIMP
 nsNSSCertificate::Write(nsIObjectOutputStream* aStream)
 {
   NS_ENSURE_STATE(mCert);
-  nsresult rv = aStream->Write32(mCert->derCert.len);
+  nsresult rv = aStream->Write32(static_cast<uint32_t>(mCachedEVStatus));
   if (NS_FAILED(rv)) {
     return rv;
   }
-
+  rv = aStream->Write32(mCert->derCert.len);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
   return aStream->WriteByteArray(mCert->derCert.data, mCert->derCert.len);
 }
 
@@ -1794,8 +1794,23 @@ nsNSSCertificate::Read(nsIObjectInputStream* aStream)
 {
   NS_ENSURE_STATE(!mCert);
 
+  uint32_t cachedEVStatus;
+  nsresult rv = aStream->Read32(&cachedEVStatus);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  if (cachedEVStatus == static_cast<uint32_t>(ev_status_unknown)) {
+    mCachedEVStatus = ev_status_unknown;
+  } else if (cachedEVStatus == static_cast<uint32_t>(ev_status_valid)) {
+    mCachedEVStatus = ev_status_valid;
+  } else if (cachedEVStatus == static_cast<uint32_t>(ev_status_invalid)) {
+    mCachedEVStatus = ev_status_invalid;
+  } else {
+    return NS_ERROR_UNEXPECTED;
+  }
+
   uint32_t len;
-  nsresult rv = aStream->Read32(&len);
+  rv = aStream->Read32(&len);
   if (NS_FAILED(rv)) {
     return rv;
   }

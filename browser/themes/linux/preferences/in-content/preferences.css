@@ -13,6 +13,10 @@ button[type="menu"] > .button-box > .button-menu-dropmarker {
   -moz-appearance: none !important;
 }
 
+.help-button > .button-box > .button-icon {
+  -moz-margin-end: 0;
+}
+
 menulist:not([editable="true"]) > .menulist-dropmarker {
   display: -moz-box;
   margin-top: 6px;
@@ -24,31 +28,14 @@ checkbox {
   -moz-box-align: center;
 }
 
-checkbox:hover::before,
-checkbox[checked]::before {
-  margin-top: 7px;
-  margin-bottom: 6px;
-  -moz-margin-end: -19px;
-  -moz-margin-start: 4px;
-  background-repeat: no-repeat;
-}
-
 radio {
   -moz-binding: url("chrome://global/content/bindings/radio.xml#radio");
   -moz-box-align: center;
-  margin: 7px 0;
+  -moz-margin-start: 0;
 }
 
 .radio-label-box {
   -moz-appearance: none;
-}
-
-radio:hover::before,
-radio[selected]::before {
-  margin-top: 6px;
-  margin-bottom: 6px;
-  -moz-margin-end: -17px;
-  -moz-margin-start: 6px;
 }
 
 .numberbox-input-box {
@@ -57,6 +44,11 @@ radio[selected]::before {
 }
 
 spinbuttons {
+  -moz-appearance: none;
+}
+
+.treecol-sortdirection {
+  /* override the Linux only toolkit rule */
   -moz-appearance: none;
 }
 

@@ -13,10 +13,10 @@
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_2(TextTrackList,
-                                     DOMEventTargetHelper,
-                                     mTextTracks,
-                                     mTextTrackManager)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(TextTrackList,
+                                   DOMEventTargetHelper,
+                                   mTextTracks,
+                                   mTextTrackManager)
 
 NS_IMPL_ADDREF_INHERITED(TextTrackList, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(TextTrackList, DOMEventTargetHelper)
@@ -172,7 +172,7 @@ TextTrackList::CreateAndDispatchChangeEvent()
   event->SetTrusted(true);
 
   nsCOMPtr<nsIRunnable> eventRunner = new TrackEventRunner(this, event);
-  NS_DispatchToMainThread(eventRunner, NS_DISPATCH_NORMAL);
+  NS_DispatchToMainThread(eventRunner);
 }
 
 void
@@ -188,7 +188,7 @@ TextTrackList::CreateAndDispatchTrackEventRunner(TextTrack* aTrack,
 
   // Dispatch the TrackEvent asynchronously.
   nsCOMPtr<nsIRunnable> eventRunner = new TrackEventRunner(this, event);
-  NS_DispatchToMainThread(eventRunner, NS_DISPATCH_NORMAL);
+  NS_DispatchToMainThread(eventRunner);
 }
 
 HTMLMediaElement*

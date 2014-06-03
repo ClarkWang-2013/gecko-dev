@@ -48,6 +48,12 @@ PRLogModuleInfo* gMediaStreamGraphLog;
 #endif
 
 /**
+ * We make the initial mCurrentTime nonzero so that zero times can have
+ * special meaning if necessary.
+ */
+static const int32_t INITIAL_CURRENT_TIME = 1;
+
+/**
  * The singleton graph instance.
  */
 static MediaStreamGraphImpl* gGraph;
@@ -77,6 +83,7 @@ MediaStreamGraphImpl::FinishStream(MediaStream* aStream)
     return;
   STREAM_LOG(PR_LOG_DEBUG, ("MediaStream %p will finish", aStream));
   aStream->mFinished = true;
+  aStream->mBuffer.AdvanceKnownTracksTime(STREAM_TIME_MAX);
   // Force at least one more iteration of the control loop, since we rely
   // on UpdateCurrentTime to notify our listeners once the stream end
   // has been reached.
@@ -206,7 +213,9 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
         aStream->mUpdateTracks.RemoveElementAt(i);
       }
     }
-    aStream->mBuffer.AdvanceKnownTracksTime(aStream->mUpdateKnownTracksTime);
+    if (!aStream->mFinished) {
+      aStream->mBuffer.AdvanceKnownTracksTime(aStream->mUpdateKnownTracksTime);
+    }
   }
   if (aStream->mBuffer.GetEnd() > 0) {
     aStream->mHasCurrentData = true;
@@ -340,7 +349,7 @@ MediaStreamGraphImpl::GetAudioPosition(MediaStream* aStream)
     return mCurrentTime;
   }
   return aStream->mAudioOutputStreams[0].mAudioPlaybackStartTime +
-      TicksToTimeRoundDown(IdealAudioRate(),
+      TicksToTimeRoundDown(mSampleRate,
                            positionInFrames);
 }
 
@@ -351,8 +360,8 @@ MediaStreamGraphImpl::UpdateCurrentTime()
   if (mRealtime) {
     TimeStamp now = TimeStamp::Now();
     prevCurrentTime = mCurrentTime;
-    nextCurrentTime =
-      SecondsToMediaTime((now - mCurrentTimeStamp).ToSeconds()) + mCurrentTime;
+    nextCurrentTime = INITIAL_CURRENT_TIME +
+      SecondsToMediaTime((now - mInitialTimeStamp).ToSeconds());
 
     mCurrentTimeStamp = now;
     STREAM_LOG(PR_LOG_DEBUG+1, ("Updating current time to %f (real %f, mStateComputedTime %f)",
@@ -369,6 +378,11 @@ MediaStreamGraphImpl::UpdateCurrentTime()
 
   if (mStateComputedTime < nextCurrentTime) {
     STREAM_LOG(PR_LOG_WARNING, ("Media graph global underrun detected"));
+    if (mRealtime) {
+      // Adjust mInitialTimeStamp to remove the missed time.
+      mInitialTimeStamp += TimeDuration::
+        FromSeconds(MediaTimeToSeconds(nextCurrentTime - mStateComputedTime));
+    }
     nextCurrentTime = mStateComputedTime;
   }
 
@@ -586,7 +600,8 @@ MediaStreamGraphImpl::UpdateStreamOrderForStream(mozilla::LinkedList<MediaStream
 static void AudioMixerCallback(AudioDataValue* aMixedBuffer,
                                AudioSampleFormat aFormat,
                                uint32_t aChannels,
-                               uint32_t aFrames)
+                               uint32_t aFrames,
+                               uint32_t aSampleRate)
 {
   // Need an api to register mixer callbacks, bug 989921
 #ifdef MOZ_WEBRTC
@@ -594,7 +609,7 @@ static void AudioMixerCallback(AudioDataValue* aMixedBuffer,
     // XXX need Observer base class and registration API
     if (gFarendObserver) {
       gFarendObserver->InsertFarEnd(aMixedBuffer, aFrames, false,
-                                    IdealAudioRate(), aChannels, aFormat);
+                                    aSampleRate, aChannels, aFormat);
     }
   }
 #endif
@@ -847,8 +862,8 @@ MediaStreamGraphImpl::CreateOrDestroyAudioStreams(GraphTime aAudioOutputStartTim
         // XXX for now, allocate stereo output. But we need to fix this to
         // match the system's ideal channel configuration.
         // NOTE: we presume this is either fast or async-under-the-covers
-        audioOutputStream->mStream->Init(2, IdealAudioRate(),
-                                         AudioChannel::Normal,
+        audioOutputStream->mStream->Init(2, mSampleRate,
+                                         aStream->mAudioChannelType,
                                          AudioStream::LowLatency);
         audioOutputStream->mTrackID = tracks->GetID();
 
@@ -879,7 +894,7 @@ MediaStreamGraphImpl::PlayAudio(MediaStream* aStream,
   // the rounding between {Graph,Stream}Time and track ticks is not dependant
   // on the absolute value of the {Graph,Stream}Time, and so that number of
   // ticks to play is the same for each cycle.
-  TrackTicks ticksNeeded = TimeToTicksRoundDown(IdealAudioRate(), aTo) - TimeToTicksRoundDown(IdealAudioRate(), aFrom);
+  TrackTicks ticksNeeded = TimeToTicksRoundDown(mSampleRate, aTo) - TimeToTicksRoundDown(mSampleRate, aFrom);
 
   if (aStream->mAudioOutputStreams.IsEmpty()) {
     return 0;
@@ -897,7 +912,7 @@ MediaStreamGraphImpl::PlayAudio(MediaStream* aStream,
     StreamBuffer::Track* track = aStream->mBuffer.FindTrack(audioOutput.mTrackID);
     AudioSegment* audio = track->Get<AudioSegment>();
     AudioSegment output;
-    MOZ_ASSERT(track->GetRate() == IdealAudioRate());
+    MOZ_ASSERT(track->GetRate() == mSampleRate);
 
     // offset and audioOutput.mLastTickWritten can differ by at most one sample,
     // because of the rounding issue. We track that to ensure we don't skip a
@@ -933,7 +948,7 @@ MediaStreamGraphImpl::PlayAudio(MediaStream* aStream,
       if (end >= aTo) {
         toWrite = ticksNeeded;
       } else {
-        toWrite = TimeToTicksRoundDown(IdealAudioRate(), end - aFrom);
+        toWrite = TimeToTicksRoundDown(mSampleRate, end - aFrom);
       }
 
       if (blocked) {
@@ -1050,7 +1065,7 @@ MediaStreamGraphImpl::PlayVideo(MediaStream* aStream)
 
     nsCOMPtr<nsIRunnable> event =
       NS_NewRunnableMethod(output, &VideoFrameContainer::Invalidate);
-    NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+    NS_DispatchToMainThread(event);
   }
   if (!aStream->mNotifiedFinished) {
     aStream->mLastPlayedVideoFrame = *frame;
@@ -1284,23 +1299,8 @@ MediaStreamGraphImpl::RunThread()
       UpdateStreamOrder();
     }
 
-    TrackRate sampleRate;
-    // Find the sampling rate that we need to use for non-realtime graphs.
-    if (!mRealtime) {
-      for (uint32_t i = 0; i < mStreams.Length(); ++i) {
-        AudioNodeStream* n = mStreams[i]->AsAudioNodeStream();
-        if (n) {
-          // We know that the rest of the streams will run at the same rate.
-          sampleRate = n->SampleRate();
-          break;
-        }
-      }
-    } else {
-      sampleRate = IdealAudioRate();
-    }
-
     GraphTime endBlockingDecisions =
-      RoundUpToNextAudioBlock(sampleRate, mCurrentTime + MillisecondsToMediaTime(AUDIO_TARGET_MS));
+      RoundUpToNextAudioBlock(mSampleRate, mCurrentTime + MillisecondsToMediaTime(AUDIO_TARGET_MS));
     bool ensureNextIteration = false;
 
     // Grab pending stream input.
@@ -1798,6 +1798,7 @@ MediaStream::MediaStream(DOMMediaStream* aWrapper)
   , mMainThreadFinished(false)
   , mMainThreadDestroyed(false)
   , mGraph(nullptr)
+  , mAudioChannelType(dom::AudioChannel::Normal)
 {
   MOZ_COUNT_CTOR(MediaStream);
   // aWrapper should not already be connected to a MediaStream! It needs
@@ -1919,7 +1920,8 @@ MediaStream::EnsureTrack(TrackID aTrackId, TrackRate aSampleRate)
     nsAutoPtr<MediaSegment> segment(new AudioSegment());
     for (uint32_t j = 0; j < mListeners.Length(); ++j) {
       MediaStreamListener* l = mListeners[j];
-      l->NotifyQueuedTrackChanges(Graph(), aTrackId, IdealAudioRate(), 0,
+      l->NotifyQueuedTrackChanges(Graph(), aTrackId,
+                                  GraphImpl()->AudioSampleRate(), 0,
                                   MediaStreamListener::TRACK_EVENT_CREATED,
                                   *segment);
     }
@@ -2269,7 +2271,7 @@ SourceMediaStream::AddTrack(TrackID aID, TrackRate aRate, TrackTicks aStart,
   data->mInputRate = aRate;
   // We resample all audio input tracks to the sample rate of the audio mixer.
   data->mOutputRate = aSegment->GetType() == MediaSegment::AUDIO ?
-                      IdealAudioRate() : aRate;
+                      GraphImpl()->AudioSampleRate() : aRate;
   data->mStart = aStart;
   data->mCommands = TRACK_CREATE;
   data->mData = aSegment;
@@ -2283,18 +2285,23 @@ void
 SourceMediaStream::ResampleAudioToGraphSampleRate(TrackData* aTrackData, MediaSegment* aSegment)
 {
   if (aSegment->GetType() != MediaSegment::AUDIO ||
-      aTrackData->mInputRate == IdealAudioRate()) {
+      aTrackData->mInputRate == GraphImpl()->AudioSampleRate()) {
     return;
   }
   AudioSegment* segment = static_cast<AudioSegment*>(aSegment);
   if (!aTrackData->mResampler) {
     int channels = segment->ChannelCount();
-    SpeexResamplerState* state = speex_resampler_init(channels,
-                                                      aTrackData->mInputRate,
-                                                      IdealAudioRate(),
-                                                      SPEEX_RESAMPLER_QUALITY_DEFAULT,
-                                                      nullptr);
-    if (state) {
+
+    // If this segment is just silence, we delay instanciating the resampler.
+    if (channels) {
+      SpeexResamplerState* state = speex_resampler_init(channels,
+                                                        aTrackData->mInputRate,
+                                                        GraphImpl()->AudioSampleRate(),
+                                                        SPEEX_RESAMPLER_QUALITY_DEFAULT,
+                                                        nullptr);
+      if (!state) {
+        return;
+      }
       aTrackData->mResampler.own(state);
     }
   }
@@ -2416,6 +2423,7 @@ void
 SourceMediaStream::AdvanceKnownTracksTime(StreamTime aKnownTime)
 {
   MutexAutoLock lock(mMutex);
+  MOZ_ASSERT(aKnownTime >= mUpdateKnownTracksTime);
   mUpdateKnownTracksTime = aKnownTime;
   if (!mDestroyed) {
     GraphImpl()->EnsureNextIteration();
@@ -2633,13 +2641,7 @@ ProcessedMediaStream::DestroyImpl()
   GraphImpl()->SetStreamOrderDirty();
 }
 
-/**
- * We make the initial mCurrentTime nonzero so that zero times can have
- * special meaning if necessary.
- */
-static const int32_t INITIAL_CURRENT_TIME = 1;
-
-MediaStreamGraphImpl::MediaStreamGraphImpl(bool aRealtime)
+MediaStreamGraphImpl::MediaStreamGraphImpl(bool aRealtime, TrackRate aSampleRate)
   : mCurrentTime(INITIAL_CURRENT_TIME)
   , mStateComputedTime(INITIAL_CURRENT_TIME)
   , mProcessingGraphUpdateIndex(0)
@@ -2648,6 +2650,7 @@ MediaStreamGraphImpl::MediaStreamGraphImpl(bool aRealtime)
   , mLifecycleState(LIFECYCLE_THREAD_NOT_STARTED)
   , mWaitState(WAITSTATE_RUNNING)
   , mEndTime(GRAPH_TIME_MAX)
+  , mSampleRate(aSampleRate)
   , mNeedAnotherIteration(false)
   , mForceShutDown(false)
   , mPostedRunInStableStateEvent(false)
@@ -2684,7 +2687,7 @@ MediaStreamGraphImpl::Destroy()
   mSelfRef = nullptr;
 }
 
-NS_IMPL_ISUPPORTS1(MediaStreamGraphShutdownObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(MediaStreamGraphShutdownObserver, nsIObserver)
 
 static bool gShutdownObserverRegistered = false;
 
@@ -2714,22 +2717,22 @@ MediaStreamGraph::GetInstance()
       nsContentUtils::RegisterShutdownObserver(new MediaStreamGraphShutdownObserver());
     }
 
-    gGraph = new MediaStreamGraphImpl(true);
+    AudioStream::InitPreferredSampleRate();
+
+    gGraph = new MediaStreamGraphImpl(true, AudioStream::PreferredSampleRate());
 
     STREAM_LOG(PR_LOG_DEBUG, ("Starting up MediaStreamGraph %p", gGraph));
-
-    AudioStream::InitPreferredSampleRate();
   }
 
   return gGraph;
 }
 
 MediaStreamGraph*
-MediaStreamGraph::CreateNonRealtimeInstance()
+MediaStreamGraph::CreateNonRealtimeInstance(TrackRate aSampleRate)
 {
   NS_ASSERTION(NS_IsMainThread(), "Main thread only");
 
-  MediaStreamGraphImpl* graph = new MediaStreamGraphImpl(false);
+  MediaStreamGraphImpl* graph = new MediaStreamGraphImpl(false, aSampleRate);
 
   return graph;
 }
@@ -2751,7 +2754,7 @@ MediaStreamGraph::DestroyNonRealtimeInstance(MediaStreamGraph* aGraph)
   graph->ForceShutDown();
 }
 
-NS_IMPL_ISUPPORTS1(MediaStreamGraphImpl, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(MediaStreamGraphImpl, nsIMemoryReporter)
 
 struct ArrayClearer
 {

@@ -149,7 +149,7 @@ JSRuntime::initializeAtoms(JSContext *cx)
     if (!commonNames)
         return false;
 
-    FixedHeapPtr<PropertyName> *names = reinterpret_cast<FixedHeapPtr<PropertyName> *>(commonNames);
+    ImmutablePropertyNamePtr *names = reinterpret_cast<ImmutablePropertyNamePtr *>(commonNames);
     for (size_t i = 0; i < ArrayLength(cachedNames); i++, names++) {
         JSAtom *atom = Atomize(cx, cachedNames[i].str, cachedNames[i].length, InternAtom);
         if (!atom)
@@ -452,7 +452,7 @@ js::Atomize(ExclusiveContext *cx, const char *bytes, size_t length, InternBehavi
          * js::AtomizeString rarely has to copy the temp string we make.
          */
         jschar inflated[ATOMIZE_BUF_MAX];
-        InflateStringToBuffer(bytes, length, inflated);
+        CopyAndInflateChars(inflated, bytes, length);
         return AtomizeAndCopyChars(cx, inflated, length, ib);
     }
 

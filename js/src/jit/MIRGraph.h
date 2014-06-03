@@ -43,7 +43,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     };
 
   private:
-    MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kind kind);
+    MBasicBlock(MIRGraph &graph, CompileInfo &info, const BytecodeSite &site, Kind kind);
     bool init();
     void copySlots(MBasicBlock *from);
     bool inherit(TempAllocator &alloc, BytecodeAnalysis *analysis, MBasicBlock *pred,
@@ -69,19 +69,16 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     // Creates a new basic block for a MIR generator. If |pred| is not nullptr,
     // its slots and stack depth are initialized from |pred|.
     static MBasicBlock *New(MIRGraph &graph, BytecodeAnalysis *analysis, CompileInfo &info,
-                            MBasicBlock *pred, jsbytecode *entryPc, Kind kind);
+                            MBasicBlock *pred, const BytecodeSite &site, Kind kind);
     static MBasicBlock *NewPopN(MIRGraph &graph, CompileInfo &info,
-                                MBasicBlock *pred, jsbytecode *entryPc, Kind kind, uint32_t popn);
+                                MBasicBlock *pred, const BytecodeSite &site, Kind kind, uint32_t popn);
     static MBasicBlock *NewWithResumePoint(MIRGraph &graph, CompileInfo &info,
-                                           MBasicBlock *pred, jsbytecode *entryPc,
+                                           MBasicBlock *pred, const BytecodeSite &site,
                                            MResumePoint *resumePoint);
     static MBasicBlock *NewPendingLoopHeader(MIRGraph &graph, CompileInfo &info,
-                                             MBasicBlock *pred, jsbytecode *entryPc,
+                                             MBasicBlock *pred, const BytecodeSite &site,
                                              unsigned loopStateSlots);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
-    static MBasicBlock *NewAbortPar(MIRGraph &graph, CompileInfo &info,
-                                    MBasicBlock *pred, jsbytecode *entryPc,
-                                    MResumePoint *resumePoint);
     static MBasicBlock *NewAsmJS(MIRGraph &graph, CompileInfo &info,
                                  MBasicBlock *pred, Kind kind);
 
@@ -206,6 +203,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Propagates phis placed in a loop header down to this successor block.
     void inheritPhis(MBasicBlock *header);
+
+    // Propagates backedge slots into phis operands of the loop header.
+    bool inheritPhisFromBackedge(MBasicBlock *backedge, bool *hadTypeChange);
 
     // Compute the types for phis in this block according to their inputs.
     bool specializePhis();
@@ -469,12 +469,18 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Track bailouts by storing the current pc in MIR instruction added at this
     // cycle. This is also used for tracking calls when profiling.
-    void updateTrackedPc(jsbytecode *pc) {
-        trackedPc_ = pc;
+    void updateTrackedSite(const BytecodeSite &site) {
+        JS_ASSERT(site.tree() == trackedSite_.tree());
+        trackedSite_ = site;
     }
-
-    jsbytecode *trackedPc() {
-        return trackedPc_;
+    const BytecodeSite &trackedSite() const {
+        return trackedSite_;
+    }
+    jsbytecode *trackedPc() const {
+        return trackedSite_.pc();
+    }
+    InlineScriptTree *trackedTree() const {
+        return trackedSite_.tree();
     }
 
   private:
@@ -505,7 +511,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MBasicBlock *immediateDominator_;
     size_t numDominated_;
 
-    jsbytecode *trackedPc_;
+    BytecodeSite trackedSite_;
 
 #if defined (JS_ION_PERF)
     unsigned lineno_;
@@ -539,7 +545,7 @@ class MIRGraph
     bool hasTryBlock_;
 
   public:
-    MIRGraph(TempAllocator *alloc)
+    explicit MIRGraph(TempAllocator *alloc)
       : alloc_(alloc),
         returnAccumulator_(nullptr),
         blockIdGen_(0),
@@ -575,17 +581,6 @@ class MIRGraph
 
     MBasicBlock *entryBlock() {
         return *blocks_.begin();
-    }
-
-    void clearBlockList() {
-        blocks_.clear();
-        blockIdGen_ = 0;
-        numBlocks_ = 0;
-    }
-    void resetInstructionNumber() {
-        // This intentionally starts above 0. The id 0 is in places used to
-        // indicate a failure to perform an operation on an instruction.
-        idGen_ = 1;
     }
     MBasicBlockIterator begin() {
         return blocks_.begin();
@@ -631,7 +626,7 @@ class MIRGraph
         return idGen_;
     }
     MResumePoint *entryResumePoint() {
-        return blocks_.begin()->entryResumePoint();
+        return entryBlock()->entryResumePoint();
     }
 
     void copyIds(const MIRGraph &other) {
@@ -703,7 +698,7 @@ class MDefinitionIterator
     }
 
   public:
-    MDefinitionIterator(MBasicBlock *block)
+    explicit MDefinitionIterator(MBasicBlock *block)
       : block_(block),
         phiIter_(block->phisBegin()),
         iter_(block->begin())

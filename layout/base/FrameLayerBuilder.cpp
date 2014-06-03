@@ -26,7 +26,7 @@
 #include "GeckoProfiler.h"
 #include "mozilla/gfx/Tools.h"
 #include "mozilla/gfx/2D.h"
-#include "mozilla/Preferences.h"
+#include "gfxPrefs.h"
 
 #include <algorithm>
 
@@ -500,6 +500,9 @@ public:
     mAppUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
     mContainerReferenceFrame = aContainerItem ? aContainerItem->ReferenceFrameForChildren() :
       mBuilder->FindReferenceFrameFor(mContainerFrame);
+    mContainerAnimatedGeometryRoot = aContainerItem
+      ? nsLayoutUtils::GetAnimatedGeometryRootFor(aContainerItem, aBuilder)
+      : mContainerReferenceFrame;
     // When AllowResidualTranslation is false, display items will be drawn
     // scaled with a translation by integer pixels, so we know how the snapping
     // will work.
@@ -705,6 +708,7 @@ protected:
   FrameLayerBuilder*               mLayerBuilder;
   nsIFrame*                        mContainerFrame;
   const nsIFrame*                  mContainerReferenceFrame;
+  const nsIFrame*                  mContainerAnimatedGeometryRoot;
   ContainerLayer*                  mContainerLayer;
   ContainerLayerParameters         mParameters;
   /**
@@ -1468,6 +1472,11 @@ ContainerState::CreateOrRecycleThebesLayer(const nsIFrame* aAnimatedGeometryRoot
     if (!FuzzyEqual(data->mXScale, mParameters.mXScale, 0.00001f) ||
         !FuzzyEqual(data->mYScale, mParameters.mYScale, 0.00001f) ||
         data->mAppUnitsPerDevPixel != mAppUnitsPerDevPixel) {
+#ifdef MOZ_DUMP_PAINTING
+    if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+      printf_stderr("Recycled layer %p changed scale\n", layer.get());
+    }
+#endif
       InvalidateEntireThebesLayer(layer, aAnimatedGeometryRoot);
 #ifndef MOZ_ANDROID_OMTC
       didResetScrollPositionForLayerPixelAlignment = true;
@@ -1831,6 +1840,9 @@ AddTransformedBoundsToRegion(const nsIntRegion& aRegion,
                              nsIntRegion* aDest)
 {
   nsIntRect bounds = aRegion.GetBounds();
+  if (bounds.IsEmpty()) {
+    return;
+  }
   gfxRect transformed =
     aTransform.TransformBounds(gfxRect(bounds.x, bounds.y, bounds.width, bounds.height));
   transformed.RoundOut();
@@ -1971,6 +1983,15 @@ ContainerState::PopThebesLayerData()
     if (userData->mForcedBackgroundColor != backgroundColor) {
       // Invalidate the entire target ThebesLayer since we're changing
       // the background color
+#ifdef MOZ_DUMP_PAINTING
+      if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
+        printf_stderr("Forced background color has changed from #%08X to #%08X on layer %p\n",
+                      userData->mForcedBackgroundColor, backgroundColor, data->mLayer);
+        nsAutoCString str;
+        AppendToString(str, data->mLayer->GetValidRegion());
+        printf_stderr("Invalidating layer %p: %s\n", data->mLayer, str.get());
+      }
+#endif
       data->mLayer->InvalidateRegion(data->mLayer->GetValidRegion());
     }
     userData->mForcedBackgroundColor = backgroundColor;
@@ -2289,7 +2310,7 @@ static void
 DumpPaintedImage(nsDisplayItem* aItem, gfxASurface* aSurf)
 {
   nsCString string(aItem->Name());
-  string.Append("-");
+  string.Append('-');
   string.AppendInt((uint64_t)aItem);
   fprintf_stderr(gfxUtils::sDumpPaintFile, "array[\"%s\"]=\"", string.BeginReading());
   aSurf->DumpAsDataURL(gfxUtils::sDumpPaintFile);
@@ -2395,7 +2416,8 @@ void
 ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
                                     uint32_t aFlags)
 {
-  PROFILER_LABEL("ContainerState", "ProcessDisplayItems");
+  PROFILER_LABEL("ContainerState", "ProcessDisplayItems",
+    js::ProfileEntry::Category::GRAPHICS);
 
   const nsIFrame* lastAnimatedGeometryRoot = mContainerReferenceFrame;
   nsPoint topLeft(0,0);
@@ -2452,7 +2474,7 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
         // For inactive layer subtrees, splitting content into ThebesLayers
         // based on animated geometry roots is pointless. It's more efficient
         // to build the minimum number of layers.
-        animatedGeometryRoot = mContainerReferenceFrame;
+        animatedGeometryRoot = mContainerAnimatedGeometryRoot;
       }
       if (animatedGeometryRoot != lastAnimatedGeometryRoot) {
         lastAnimatedGeometryRoot = animatedGeometryRoot;
@@ -2851,7 +2873,7 @@ FrameLayerBuilder::AddThebesDisplayItem(ThebesLayerData* aLayerData,
       if (aLayerState == LAYER_SVG_EFFECTS) {
         invalid = nsSVGIntegrationUtils::AdjustInvalidAreaForSVGEffects(aItem->Frame(),
                                                                         aItem->ToReferenceFrame(),
-                                                                        invalid.GetBounds());
+                                                                        invalid);
       }
       if (!invalid.IsEmpty()) {
 #ifdef MOZ_DUMP_PAINTING
@@ -3094,7 +3116,9 @@ ChooseScaleAndSetTransform(FrameLayerBuilder* aLayerBuilder,
     // Set any matrix entries close to integers to be those exact integers.
     // This protects against floating-point inaccuracies causing problems
     // in the checks below.
-    transform.NudgeToIntegers();
+    // We use the fixed epsilon version here because we don't want the nudging
+    // to depend on the scroll position.
+    transform.NudgeToIntegersFixedEpsilon();
   }
   gfxMatrix transform2d;
   if (aContainerFrame &&
@@ -3692,14 +3716,7 @@ FrameLayerBuilder::PaintItems(nsTArray<ClippedDisplayItem>& aItems,
  */
 static bool ShouldDrawRectsSeparately(gfxContext* aContext, DrawRegionClip aClip)
 {
-  static bool sPaintRectsSeparately;
-  static bool sPaintRectsSeparatelyPrefCached = false;
-  if (!sPaintRectsSeparatelyPrefCached) {
-    mozilla::Preferences::AddBoolVarCache(&sPaintRectsSeparately, "layout.paint_rects_separately", false);
-    sPaintRectsSeparatelyPrefCached = true;
-  }
-
-  if (!sPaintRectsSeparately ||
+  if (!gfxPrefs::LayoutPaintRectsSeparately() ||
       aContext->IsCairo() ||
       aClip == DrawRegionClip::CLIP_NONE) {
     return false;
@@ -3756,7 +3773,8 @@ FrameLayerBuilder::DrawThebesLayer(ThebesLayer* aLayer,
                                    const nsIntRegion& aRegionToInvalidate,
                                    void* aCallbackData)
 {
-  PROFILER_LABEL("gfx", "DrawThebesLayer");
+  PROFILER_LABEL("FrameLayerBuilder", "DrawThebesLayer",
+    js::ProfileEntry::Category::GRAPHICS);
 
   nsDisplayListBuilder* builder = static_cast<nsDisplayListBuilder*>
     (aCallbackData);
@@ -3841,6 +3859,14 @@ FrameLayerBuilder::DrawThebesLayer(ThebesLayer* aLayer,
   }
 
   if (presContext->GetPaintFlashing()) {
+    gfxContextAutoSaveRestore save(aContext);
+    if (shouldDrawRectsSeparately) {
+      if (aClip == DrawRegionClip::DRAW_SNAPPED) {
+        gfxUtils::ClipToRegionSnapped(aContext, aRegionToDraw);
+      } else if (aClip == DrawRegionClip::DRAW) {
+        gfxUtils::ClipToRegion(aContext, aRegionToDraw);
+      }
+    }
     FlashPaint(aContext);
   }
 

@@ -15,7 +15,7 @@
 #include "nsNetUtil.h"
 
 NS_INTERFACE_TABLE_HEAD(nsHtml5Parser)
-  NS_INTERFACE_TABLE2(nsHtml5Parser, nsIParser, nsISupportsWeakReference)
+  NS_INTERFACE_TABLE(nsHtml5Parser, nsIParser, nsISupportsWeakReference)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(nsHtml5Parser)
 NS_INTERFACE_MAP_END
 
@@ -70,7 +70,7 @@ nsHtml5Parser::GetContentSink()
 NS_IMETHODIMP_(void)
 nsHtml5Parser::GetCommand(nsCString& aCommand)
 {
-  aCommand.Assign("view");
+  aCommand.AssignLiteral("view");
 }
 
 NS_IMETHODIMP_(void)
@@ -79,6 +79,7 @@ nsHtml5Parser::SetCommand(const char* aCommand)
   NS_ASSERTION(!strcmp(aCommand, "view") ||
                !strcmp(aCommand, "view-source") ||
                !strcmp(aCommand, "external-resource") ||
+               !strcmp(aCommand, "import") ||
                !strcmp(aCommand, kLoadAsData),
                "Unsupported parser command");
 }
@@ -577,7 +578,8 @@ nsHtml5Parser::MarkAsNotScriptCreated(const char* aCommand)
 #ifdef DEBUG
   else {
     NS_ASSERTION(!nsCRT::strcmp(aCommand, "view") ||
-                 !nsCRT::strcmp(aCommand, "external-resource"),
+                 !nsCRT::strcmp(aCommand, "external-resource") ||
+                 !nsCRT::strcmp(aCommand, "import"),
                  "Unsupported parser command!");
   }
 #endif

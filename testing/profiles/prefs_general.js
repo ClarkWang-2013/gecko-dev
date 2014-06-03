@@ -44,6 +44,7 @@ user_pref("browser.panorama.experienced_first_run", true); // Assume experienced
 user_pref("dom.w3c_touch_events.enabled", 1);
 user_pref("dom.undo_manager.enabled", true);
 user_pref("dom.webcomponents.enabled", true);
+user_pref("dom.animations-api.core.enabled", true);
 // Set a future policy version to avoid the telemetry prompt.
 user_pref("toolkit.telemetry.prompted", 999);
 user_pref("toolkit.telemetry.notifiedOptOut", 999);
@@ -54,6 +55,7 @@ user_pref("font.size.inflation.minTwips", 0);
 // AddonManager tests require that the experiments provider be present.
 user_pref("experiments.supported", true);
 user_pref("experiments.logging.level", "Trace");
+user_pref("experiments.logging.dump", true);
 // Point the manifest at something local so we don't risk it hitting production
 // data and installing experiments that may vary over time.
 user_pref("experiments.manifest.uri", "http://%(server)s/experiments-dummy/manifest");
@@ -143,11 +145,6 @@ user_pref("network.http.bypass-cachelock-threshold", 200000);
 user_pref("dom.gamepad.enabled", true);
 user_pref("dom.gamepad.non_standard_events.enabled", true);
 
-// Enable Web Audio legacy APIs
-user_pref("media.webaudio.legacy.BiquadFilterNode", true);
-user_pref("media.webaudio.legacy.PannerNode", true);
-user_pref("media.webaudio.legacy.OscillatorNode", true);
-
 // Always use network provider for geolocation tests
 // so we bypass the OSX dialog raised by the corelocation provider
 user_pref("geo.provider.testing", true);
@@ -188,3 +185,11 @@ user_pref('browser.contentHandlers.types.5.uri', 'http://test1.example.org/rss?u
 
 // We want to collect telemetry, but we don't want to send in the results.
 user_pref('toolkit.telemetry.server', 'https://%(server)s/telemetry-dummy/');
+
+// We don't want to hit the real Firefox Accounts server for tests.  We don't
+// actually need a functioning FxA server, so just set it to something that
+// resolves and accepts requests, even if they all fail.
+user_pref('identity.fxaccounts.auth.uri', 'https://%(server)s/fxa-dummy/');
+
+// Enable logging of APZ test data (see bug 961289).
+user_pref('apz.test.logging_enabled', true);

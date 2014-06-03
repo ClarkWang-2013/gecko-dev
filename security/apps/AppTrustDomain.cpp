@@ -103,15 +103,15 @@ AppTrustDomain::FindPotentialIssuers(const SECItem* encodedIssuerName,
 
 SECStatus
 AppTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
-                             SECOidTag policy,
+                             const CertPolicyId& policy,
                              const CERTCertificate* candidateCert,
                      /*out*/ TrustLevel* trustLevel)
 {
-  MOZ_ASSERT(policy == SEC_OID_X509_ANY_POLICY);
+  MOZ_ASSERT(policy.IsAnyPolicy());
   MOZ_ASSERT(candidateCert);
   MOZ_ASSERT(trustLevel);
   MOZ_ASSERT(mTrustedRoot);
-  if (!candidateCert || !trustLevel || policy != SEC_OID_X509_ANY_POLICY) {
+  if (!candidateCert || !trustLevel || !policy.IsAnyPolicy()) {
     PR_SetError(SEC_ERROR_INVALID_ARGS, 0);
     return SECFailure;
   }
@@ -130,37 +130,23 @@ AppTrustDomain::GetCertTrust(EndEntityOrCA endEntityOrCA,
     // CERTDB_TERMINAL_RECORD means "stop trying to inherit trust" so if the
     // relevant trust bit isn't set then that means the cert must be considered
     // distrusted.
-    PRUint32 relevantTrustBit = endEntityOrCA == MustBeCA
+    PRUint32 relevantTrustBit = endEntityOrCA == EndEntityOrCA::MustBeCA
                               ? CERTDB_TRUSTED_CA
                               : CERTDB_TRUSTED;
     if (((flags & (relevantTrustBit | CERTDB_TERMINAL_RECORD)))
             == CERTDB_TERMINAL_RECORD) {
-      *trustLevel = ActivelyDistrusted;
+      *trustLevel = TrustLevel::ActivelyDistrusted;
       return SECSuccess;
     }
-
-#ifdef MOZ_B2G_CERTDATA
-    // XXX(Bug 972201): We have to allow the old way of supporting additional
-    // roots until we fix bug 889744. Remove this along with the rest of the
-    // MOZ_B2G_CERTDATA stuff.
-
-    // For TRUST, we only use the CERTDB_TRUSTED_CA bit, because Gecko hasn't
-    // needed to consider end-entity certs to be their own trust anchors since
-    // Gecko implemented nsICertOverrideService.
-    if (flags & CERTDB_TRUSTED_CA) {
-      *trustLevel = TrustAnchor;
-      return SECSuccess;
-    }
-#endif
   }
 
   // mTrustedRoot is the only trust anchor for this validation.
   if (CERT_CompareCerts(mTrustedRoot.get(), candidateCert)) {
-    *trustLevel = TrustAnchor;
+    *trustLevel = TrustLevel::TrustAnchor;
     return SECSuccess;
   }
 
-  *trustLevel = InheritsTrust;
+  *trustLevel = TrustLevel::InheritsTrust;
   return SECSuccess;
 }
 

@@ -183,9 +183,9 @@ nsImageBoxFrame::DestroyFrom(nsIFrame* aDestructRoot)
 
 
 void
-nsImageBoxFrame::Init(nsIContent*      aContent,
-                      nsIFrame*        aParent,
-                      nsIFrame*        aPrevInFlow)
+nsImageBoxFrame::Init(nsIContent*       aContent,
+                      nsContainerFrame* aParent,
+                      nsIFrame*         aPrevInFlow)
 {
   if (!mListener) {
     nsImageBoxListener *listener = new nsImageBoxListener();
@@ -729,7 +729,7 @@ nsresult nsImageBoxFrame::FrameChanged(imgIRequest *aRequest)
   return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS2(nsImageBoxListener, imgINotificationObserver, imgIOnloadBlocker)
+NS_IMPL_ISUPPORTS(nsImageBoxListener, imgINotificationObserver, imgIOnloadBlocker)
 
 nsImageBoxListener::nsImageBoxListener()
 {

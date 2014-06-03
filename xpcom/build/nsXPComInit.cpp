@@ -14,10 +14,12 @@
 #include "nsXPCOMPrivate.h"
 #include "nsXPCOMCIDInternal.h"
 
-#include "prlink.h"
-
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/AsyncTransactionTracker.h"
+#include "mozilla/layers/SharedBufferManagerChild.h"
+
+#include "prlink.h"
 
 #include "nsCycleCollector.h"
 #include "nsObserverList.h"
@@ -128,6 +130,8 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 #include "mozilla/AvailableMemoryTracker.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/SystemMemoryReporter.h"
+
+#include "mozilla/ipc/GeckoChildProcessHost.h"
 
 #ifdef MOZ_VISUAL_EVENT_TRACER
 #include "mozilla/VisualEventTracer.h"
@@ -375,7 +379,7 @@ private:
     }
 };
 
-NS_IMPL_ISUPPORTS1(ICUReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(ICUReporter, nsIMemoryReporter)
 
 /* static */ template<> Atomic<size_t> CountingAllocatorBase<ICUReporter>::sAmount(0);
 
@@ -395,7 +399,7 @@ private:
     }
 };
 
-NS_IMPL_ISUPPORTS1(OggReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(OggReporter, nsIMemoryReporter)
 
 /* static */ template<> Atomic<size_t> CountingAllocatorBase<OggReporter>::sAmount(0);
 
@@ -416,7 +420,7 @@ private:
     }
 };
 
-NS_IMPL_ISUPPORTS1(VPXReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(VPXReporter, nsIMemoryReporter)
 
 /* static */ template<> Atomic<size_t> CountingAllocatorBase<VPXReporter>::sAmount(0);
 #endif /* MOZ_VPX */
@@ -438,7 +442,7 @@ private:
     }
 };
 
-NS_IMPL_ISUPPORTS1(NesteggReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(NesteggReporter, nsIMemoryReporter)
 
 /* static */ template<> Atomic<size_t> CountingAllocatorBase<NesteggReporter>::sAmount(0);
 #endif /* MOZ_WEBM */
@@ -460,6 +464,17 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     // Initialize the available memory tracker before other threads have had a
     // chance to start up, because the initialization is not thread-safe.
     mozilla::AvailableMemoryTracker::Init();
+
+#ifdef XP_UNIX
+    // Discover the current value of the umask, and save it where
+    // nsSystemInfo::Init can retrieve it when necessary.  There is no way
+    // to read the umask without changing it, and the setting is process-
+    // global, so this must be done while we are still single-threaded; the
+    // nsSystemInfo object is typically created much later, when some piece
+    // of chrome JS wants it.  The system call is specified as unable to fail.
+    nsSystemInfo::gUserUmask = ::umask(0777);
+    ::umask(nsSystemInfo::gUserUmask);
+#endif
 
     NS_LogInit();
 
@@ -690,6 +705,10 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     mozilla::eventtracer::Init();
 #endif
 
+    // TODO: Cache the GRE dir here instead of telling GeckoChildProcessHost to do it.
+    //       Then have GeckoChildProcessHost get the dir from XPCOM::GetGREPath().
+    mozilla::ipc::GeckoChildProcessHost::CacheGreDir();
+
     return NS_OK;
 }
 
@@ -778,12 +797,21 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
             }
         }
 
+        // This must happen after the shutdown of media and widgets, which
+        // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
+        layers::ImageBridgeChild::ShutDown();
+#ifdef MOZ_WIDGET_GONK
+        layers::SharedBufferManagerChild::ShutDown();
+#endif
+
         NS_ProcessPendingEvents(thread);
         mozilla::scache::StartupCache::DeleteSingleton();
         if (observerService)
             (void) observerService->
                 NotifyObservers(nullptr, NS_XPCOM_SHUTDOWN_THREADS_OBSERVER_ID,
                                 nullptr);
+
+        layers::CompositorParent::ShutDown();
 
         gXPCOMThreadsShutDown = true;
         NS_ProcessPendingEvents(thread);
@@ -870,6 +898,8 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
     }
 
     nsCycleCollector_shutdown();
+
+    layers::AsyncTransactionTrackersHolder::Finalize();
 
     PROFILER_MARKER("Shutdown xpcom");
     // If we are doing any shutdown checks, poison writes.

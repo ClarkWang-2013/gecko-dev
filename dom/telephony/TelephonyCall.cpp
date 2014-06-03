@@ -15,7 +15,6 @@
 
 using namespace mozilla::dom;
 using mozilla::ErrorResult;
-using mozilla::dom::telephony::kOutgoingPlaceholderCallIndex;
 
 // static
 already_AddRefed<TelephonyCall>
@@ -47,7 +46,6 @@ TelephonyCall::Create(Telephony* aTelephony, uint32_t aServiceId,
 
 TelephonyCall::TelephonyCall(nsPIDOMWindow* aOwner)
   : DOMEventTargetHelper(aOwner),
-    mCallIndex(kOutgoingPlaceholderCallIndex),
     mCallState(nsITelephonyProvider::CALL_STATE_UNKNOWN),
     mLive(false)
 {
@@ -180,11 +178,11 @@ TelephonyCall::ChangeGroup(TelephonyCallGroup* aGroup)
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_3(TelephonyCall,
-                                     DOMEventTargetHelper,
-                                     mTelephony,
-                                     mError,
-                                     mGroup);
+NS_IMPL_CYCLE_COLLECTION_INHERITED(TelephonyCall,
+                                   DOMEventTargetHelper,
+                                   mTelephony,
+                                   mError,
+                                   mGroup);
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TelephonyCall)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)

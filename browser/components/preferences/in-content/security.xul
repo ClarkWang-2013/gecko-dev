@@ -1,6 +1,8 @@
-<!-- This Source Code Form is subject to the terms of the Mozilla Public
-   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
-   - You can obtain one at http://mozilla.org/MPL/2.0/.  -->
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+<!-- Security panel -->
 
 <script type="application/javascript" 
         src="chrome://browser/content/preferences/in-content/security.js"/>  
@@ -35,13 +37,12 @@
       hidden="true"
       data-category="paneSecurity">
   <image class="header-icon"/>
-  <label class="header-name"
-         value="&paneSecurity.title;"/>
+  <label class="header-name">&paneSecurity.title;</label>
 </hbox>
 
 <!-- addons, forgery (phishing) UI -->
 <groupbox id="addonsPhishingGroup" data-category="paneSecurity" hidden="true">
-  <caption label="&general.label;"/>
+  <caption><label>&general.label;</label></caption>
 
   <hbox id="addonInstallBox">
     <checkbox id="warnAddonInstall" flex="1"
@@ -68,7 +69,7 @@
 
 <!-- Passwords -->
 <groupbox id="passwordsGroup" orient="vertical" data-category="paneSecurity" hidden="true">
-  <caption label="&passwords.label;"/>
+  <caption><label>&passwords.label;</label></caption>
 
   <hbox id="savePasswordsBox">
     <checkbox id="savePasswords" flex="1"

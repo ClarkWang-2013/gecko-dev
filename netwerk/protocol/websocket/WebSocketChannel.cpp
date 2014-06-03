@@ -72,20 +72,20 @@ using namespace mozilla::net;
 namespace mozilla {
 namespace net {
 
-NS_IMPL_ISUPPORTS13(WebSocketChannel,
-                    nsIWebSocketChannel,
-                    nsIHttpUpgradeListener,
-                    nsIRequestObserver,
-                    nsIStreamListener,
-                    nsIProtocolHandler,
-                    nsIInputStreamCallback,
-                    nsIOutputStreamCallback,
-                    nsITimerCallback,
-                    nsIDNSListener,
-                    nsIProtocolProxyCallback,
-                    nsIInterfaceRequestor,
-                    nsIChannelEventSink,
-                    nsIThreadRetargetableRequest)
+NS_IMPL_ISUPPORTS(WebSocketChannel,
+                  nsIWebSocketChannel,
+                  nsIHttpUpgradeListener,
+                  nsIRequestObserver,
+                  nsIStreamListener,
+                  nsIProtocolHandler,
+                  nsIInputStreamCallback,
+                  nsIOutputStreamCallback,
+                  nsITimerCallback,
+                  nsIDNSListener,
+                  nsIProtocolProxyCallback,
+                  nsIInterfaceRequestor,
+                  nsIChannelEventSink,
+                  nsIThreadRetargetableRequest)
 
 // We implement RFC 6455, which uses Sec-WebSocket-Version: 13 on the wire.
 #define SEC_WEBSOCKET_VERSION "13"
@@ -586,7 +586,7 @@ private:
   nsCString                         mData;
   int32_t                           mLen;
 };
-NS_IMPL_ISUPPORTS1(CallOnMessageAvailable, nsIRunnable)
+NS_IMPL_ISUPPORTS(CallOnMessageAvailable, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // CallOnStop
@@ -622,7 +622,7 @@ private:
   nsRefPtr<WebSocketChannel>        mChannel;
   nsresult                          mReason;
 };
-NS_IMPL_ISUPPORTS1(CallOnStop, nsIRunnable)
+NS_IMPL_ISUPPORTS(CallOnStop, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // CallOnServerClose
@@ -655,7 +655,7 @@ private:
   uint16_t                          mCode;
   nsCString                         mReason;
 };
-NS_IMPL_ISUPPORTS1(CallOnServerClose, nsIRunnable)
+NS_IMPL_ISUPPORTS(CallOnServerClose, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // CallAcknowledge
@@ -686,7 +686,7 @@ private:
   nsRefPtr<WebSocketChannel>        mChannel;
   uint32_t                          mSize;
 };
-NS_IMPL_ISUPPORTS1(CallAcknowledge, nsIRunnable)
+NS_IMPL_ISUPPORTS(CallAcknowledge, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // CallOnTransportAvailable
@@ -720,7 +720,7 @@ private:
   nsCOMPtr<nsIAsyncInputStream>  mSocketIn;
   nsCOMPtr<nsIAsyncOutputStream> mSocketOut;
 };
-NS_IMPL_ISUPPORTS1(CallOnTransportAvailable, nsIRunnable)
+NS_IMPL_ISUPPORTS(CallOnTransportAvailable, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // OutboundMessage
@@ -856,7 +856,7 @@ private:
   nsRefPtr<WebSocketChannel>  mChannel;
   OutboundMessage            *mMessage;
 };
-NS_IMPL_ISUPPORTS1(OutboundEnqueuer, nsIRunnable)
+NS_IMPL_ISUPPORTS(OutboundEnqueuer, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // nsWSCompression
@@ -1600,7 +1600,7 @@ void
 WebSocketChannel::GeneratePing()
 {
   nsCString *buf = new nsCString();
-  buf->Assign("PING");
+  buf->AssignLiteral("PING");
   EnqueueOutgoingMessage(mOutgoingPingMessages,
                          new OutboundMessage(kMsgTypePing, buf));
 }
@@ -2116,7 +2116,7 @@ WebSocketChannel::HandleExtensions()
     NS_LITERAL_CSTRING("Sec-WebSocket-Extensions"), extensions);
   if (NS_SUCCEEDED(rv)) {
     if (!extensions.IsEmpty()) {
-      if (!extensions.Equals(NS_LITERAL_CSTRING("deflate-stream"))) {
+      if (!extensions.EqualsLiteral("deflate-stream")) {
         LOG(("WebSocketChannel::OnStartRequest: "
              "HTTP Sec-WebSocket-Exensions negotiated unknown value %s\n",
              extensions.get()));
@@ -2354,7 +2354,7 @@ WebSocketChannel::ReportConnectionTelemetry()
     nsAutoCString proxyType;
     pi->GetType(proxyType);
     if (!proxyType.IsEmpty() &&
-        !proxyType.Equals(NS_LITERAL_CSTRING("direct")))
+        !proxyType.EqualsLiteral("direct"))
       didProxy = true;
   }
 

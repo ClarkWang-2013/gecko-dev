@@ -32,9 +32,9 @@ template<int Max>
 NS_IMPL_RELEASE_INHERITED(ProgressMeterAccessible<Max>, LeafAccessible)
 
 template<int Max>
-NS_IMPL_QUERY_INTERFACE_INHERITED1(ProgressMeterAccessible<Max>,
-                                   LeafAccessible,
-                                   nsIAccessibleValue)
+NS_IMPL_QUERY_INTERFACE_INHERITED(ProgressMeterAccessible<Max>,
+                                  LeafAccessible,
+                                  nsIAccessibleValue)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Accessible
@@ -96,7 +96,7 @@ ProgressMeterAccessible<Max>::Value(nsString& aValue)
     (curValue / maxValue) * 100 : 100;
 
   aValue.AppendFloat(percentValue);
-  aValue.AppendLiteral("%");
+  aValue.Append('%');
 }
 
 template<int Max>

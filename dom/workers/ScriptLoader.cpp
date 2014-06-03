@@ -135,9 +135,18 @@ ChannelFromScriptURL(nsIPrincipal* principal,
 struct ScriptLoadInfo
 {
   ScriptLoadInfo()
-  : mLoadResult(NS_ERROR_NOT_INITIALIZED), mExecutionScheduled(false),
-    mExecutionResult(false)
+  : mScriptTextBuf(nullptr)
+  , mScriptTextLength(0)
+  , mLoadResult(NS_ERROR_NOT_INITIALIZED), mExecutionScheduled(false)
+  , mExecutionResult(false)
   { }
+
+  ~ScriptLoadInfo()
+  {
+    if (mScriptTextBuf) {
+      js_free(mScriptTextBuf);
+    }
+  }
 
   bool
   ReadyToExecute()
@@ -147,7 +156,8 @@ struct ScriptLoadInfo
 
   nsString mURL;
   nsCOMPtr<nsIChannel> mChannel;
-  nsString mScriptText;
+  jschar* mScriptTextBuf;
+  size_t mScriptTextLength;
 
   nsresult mLoadResult;
   bool mExecutionScheduled;
@@ -272,7 +282,7 @@ private:
         NS_NewRunnableMethod(this, &ScriptLoaderRunnable::CancelMainThread);
       NS_ASSERTION(runnable, "This should never fail!");
 
-      if (NS_FAILED(NS_DispatchToMainThread(runnable, NS_DISPATCH_NORMAL))) {
+      if (NS_FAILED(NS_DispatchToMainThread(runnable))) {
         JS_ReportError(aCx, "Failed to cancel script loader!");
         return false;
       }
@@ -448,12 +458,13 @@ private:
     // per spec. So we explicitly pass in the charset hint.
     rv = nsScriptLoader::ConvertToUTF16(aLoadInfo.mChannel, aString, aStringLen,
                                         NS_LITERAL_STRING("UTF-8"), parentDoc,
-                                        aLoadInfo.mScriptText);
+                                        aLoadInfo.mScriptTextBuf,
+                                        aLoadInfo.mScriptTextLength);
     if (NS_FAILED(rv)) {
       return rv;
     }
 
-    if (aLoadInfo.mScriptText.IsEmpty()) {
+    if (!aLoadInfo.mScriptTextBuf || !aLoadInfo.mScriptTextLength) {
       return NS_ERROR_FAILURE;
     }
 
@@ -600,7 +611,7 @@ private:
   }
 };
 
-NS_IMPL_ISUPPORTS2(ScriptLoaderRunnable, nsIRunnable, nsIStreamLoaderObserver)
+NS_IMPL_ISUPPORTS(ScriptLoaderRunnable, nsIRunnable, nsIStreamLoaderObserver)
 
 class ChannelGetterRunnable MOZ_FINAL : public nsRunnable
 {
@@ -730,8 +741,14 @@ ScriptExecutorRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
     JS::CompileOptions options(aCx);
     options.setFileAndLine(filename.get(), 1);
-    if (!JS::Evaluate(aCx, global, options, loadInfo.mScriptText.get(),
-                      loadInfo.mScriptText.Length())) {
+
+    JS::SourceBufferHolder srcBuf(loadInfo.mScriptTextBuf,
+                                  loadInfo.mScriptTextLength,
+                                  JS::SourceBufferHolder::GiveOwnership);
+    loadInfo.mScriptTextBuf = nullptr;
+    loadInfo.mScriptTextLength = 0;
+
+    if (!JS::Evaluate(aCx, global, options, srcBuf)) {
       return true;
     }
 
@@ -764,7 +781,9 @@ ScriptExecutorRunnable::PostRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
 NS_IMETHODIMP
 ScriptExecutorRunnable::Cancel()
 {
-  ShutdownScriptLoader(mWorkerPrivate->GetJSContext(), mWorkerPrivate, false);
+  if (mLastIndex == mScriptLoader.mLoadInfos.Length() - 1) {
+    ShutdownScriptLoader(mWorkerPrivate->GetJSContext(), mWorkerPrivate, false);
+  }
   return MainThreadWorkerSyncRunnable::Cancel();
 }
 
@@ -796,7 +815,7 @@ LoadAllScripts(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
     return false;
   }
 
-  if (NS_FAILED(NS_DispatchToMainThread(loader, NS_DISPATCH_NORMAL))) {
+  if (NS_FAILED(NS_DispatchToMainThread(loader))) {
     NS_ERROR("Failed to dispatch!");
 
     aWorkerPrivate->RemoveFeature(aCx, loader);
@@ -849,7 +868,7 @@ ChannelFromScriptURLWorkerThread(JSContext* aCx,
     new ChannelGetterRunnable(aParent, syncLoop.EventTarget(), aScriptURL,
                               aChannel);
 
-  if (NS_FAILED(NS_DispatchToMainThread(getter, NS_DISPATCH_NORMAL))) {
+  if (NS_FAILED(NS_DispatchToMainThread(getter))) {
     NS_ERROR("Failed to dispatch!");
     return NS_ERROR_FAILURE;
   }

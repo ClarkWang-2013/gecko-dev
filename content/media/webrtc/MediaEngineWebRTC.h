@@ -43,6 +43,8 @@
 #include "webrtc/voice_engine/include/voe_call_report.h"
 
 // Video Engine
+// conflicts with #include of scoped_ptr.h
+#undef FF
 #include "webrtc/video_engine/include/vie_base.h"
 #include "webrtc/video_engine/include/vie_codec.h"
 #include "webrtc/video_engine/include/vie_render.h"
@@ -142,7 +144,8 @@ public:
 
   virtual void GetName(nsAString&);
   virtual void GetUUID(nsAString&);
-  virtual nsresult Allocate(const MediaEnginePrefs &aPrefs);
+  virtual nsresult Allocate(const VideoTrackConstraintsN &aConstraints,
+                            const MediaEnginePrefs &aPrefs);
   virtual nsresult Deallocate();
   virtual nsresult Start(SourceMediaStream*, TrackID);
   virtual nsresult Stop(SourceMediaStream*, TrackID);
@@ -169,8 +172,9 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   void OnHardwareStateChange(HardwareState aState);
+  void GetRotation();
   bool OnNewPreviewFrame(layers::Image* aImage, uint32_t aWidth, uint32_t aHeight);
-  void OnError(CameraErrorContext aContext, CameraError aError);
+  void OnUserError(UserContext aContext, nsresult aError);
   void OnTakePictureComplete(uint8_t* aData, uint32_t aLength, const nsAString& aMimeType);
 
   void AllocImpl();
@@ -211,9 +215,12 @@ private:
 
   // Engine variables.
 #ifdef MOZ_B2G_CAMERA
-  nsRefPtr<ICameraControl> mCameraControl;
   mozilla::ReentrantMonitor mCallbackMonitor; // Monitor for camera callback handling
+  // This is only modified on MainThread (AllocImpl and DeallocImpl)
+  nsRefPtr<ICameraControl> mCameraControl;
   nsRefPtr<nsIDOMFile> mLastCapture;
+
+  // These are protected by mMonitor below
   int mRotation;
   int mCameraAngle; // See dom/base/ScreenOrientation.h
   bool mBackCamera;
@@ -247,7 +254,11 @@ private:
   nsString mDeviceName;
   nsString mUniqueId;
 
-  void ChooseCapability(const MediaEnginePrefs &aPrefs);
+  void ChooseCapability(const VideoTrackConstraintsN &aConstraints,
+                        const MediaEnginePrefs &aPrefs);
+
+  void GuessCapability(const VideoTrackConstraintsN &aConstraints,
+                       const MediaEnginePrefs &aPrefs);
 };
 
 class MediaEngineWebRTCAudioSource : public MediaEngineAudioSource,
@@ -280,7 +291,8 @@ public:
   virtual void GetName(nsAString&);
   virtual void GetUUID(nsAString&);
 
-  virtual nsresult Allocate(const MediaEnginePrefs &aPrefs);
+  virtual nsresult Allocate(const AudioTrackConstraintsN &aConstraints,
+                            const MediaEnginePrefs &aPrefs);
   virtual nsresult Deallocate();
   virtual nsresult Start(SourceMediaStream*, TrackID);
   virtual nsresult Stop(SourceMediaStream*, TrackID);
@@ -346,7 +358,8 @@ private:
   NullTransport *mNullTransport;
 };
 
-class MediaEngineWebRTC : public MediaEngine
+class MediaEngineWebRTC : public MediaEngine,
+                          public webrtc::TraceCallback
 {
 public:
   MediaEngineWebRTC(MediaEnginePrefs &aPrefs);
@@ -357,6 +370,9 @@ public:
 
   virtual void EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSource> >*);
   virtual void EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSource> >*);
+
+  // Webrtc trace callbacks for proxying to NSPR
+  virtual void Print(webrtc::TraceLevel level, const char* message, int length);
 
 private:
   ~MediaEngineWebRTC() {

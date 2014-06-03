@@ -82,7 +82,7 @@ bool            gDisableNativeTheme               = false;
 int32_t nsIWidget::sPointerIdCounter = 0;
 
 // nsBaseWidget
-NS_IMPL_ISUPPORTS1(nsBaseWidget, nsIWidget)
+NS_IMPL_ISUPPORTS(nsBaseWidget, nsIWidget)
 
 
 nsAutoRollup::nsAutoRollup()
@@ -111,6 +111,7 @@ nsBaseWidget::nsBaseWidget()
 , mAttachedWidgetListener(nullptr)
 , mContext(nullptr)
 , mCursor(eCursor_standard)
+, mUpdateCursor(true)
 , mBorderStyle(eBorderStyle_none)
 , mUseLayersAcceleration(false)
 , mForceLayersAcceleration(false)
@@ -137,7 +138,7 @@ nsBaseWidget::nsBaseWidget()
   nsContentUtils::RegisterShutdownObserver(mShutdownObserver);
 }
 
-NS_IMPL_ISUPPORTS1(WidgetShutdownObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(WidgetShutdownObserver, nsIObserver)
 
 NS_IMETHODIMP
 WidgetShutdownObserver::Observe(nsISupports *aSubject,
@@ -874,6 +875,7 @@ nsBaseWidget::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
 static void
 CheckForBasicBackends(nsTArray<LayersBackend>& aHints)
 {
+#ifndef XP_WIN
   for (size_t i = 0; i < aHints.Length(); ++i) {
     if (aHints[i] == LayersBackend::LAYERS_BASIC &&
         !Preferences::GetBool("layers.offmainthreadcomposition.force-basic", false)) {
@@ -881,6 +883,7 @@ CheckForBasicBackends(nsTArray<LayersBackend>& aHints)
       aHints[i] = LayersBackend::LAYERS_NONE;
     }
   }
+#endif
 }
 
 void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
@@ -1129,6 +1132,14 @@ NS_METHOD nsBaseWidget::GetBounds(nsIntRect &aRect)
 NS_METHOD nsBaseWidget::GetScreenBounds(nsIntRect &aRect)
 {
   return GetBounds(aRect);
+}
+
+NS_METHOD nsBaseWidget::GetRestoredBounds(nsIntRect &aRect)
+{
+  if (SizeMode() != nsSizeMode_Normal) {
+    return NS_ERROR_FAILURE;
+  }
+  return GetScreenBounds(aRect);
 }
 
 nsIntPoint nsBaseWidget::GetClientOffset()
@@ -1718,7 +1729,7 @@ class Debug_PrefObserver MOZ_FINAL : public nsIObserver {
     NS_DECL_NSIOBSERVER
 };
 
-NS_IMPL_ISUPPORTS1(Debug_PrefObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(Debug_PrefObserver, nsIObserver)
 
 NS_IMETHODIMP
 Debug_PrefObserver::Observe(nsISupports* subject, const char* topic,

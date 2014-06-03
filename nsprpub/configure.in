@@ -16,7 +16,7 @@ dnl = Defaults
 dnl ========================================================
 MOD_MAJOR_VERSION=4
 MOD_MINOR_VERSION=10
-MOD_PATCH_VERSION=5
+MOD_PATCH_VERSION=6
 NSPR_MODNAME=nspr20
 _HAVE_PTHREADS=
 USE_PTHREADS=
@@ -384,6 +384,8 @@ AC_ARG_ENABLE(debug-rtl,
     [  --enable-debug-rtl      Use the MSVC debug runtime library],
     [ if test "$enableval" = "yes"; then
 	    USE_DEBUG_RTL=1
+      else
+	    USE_DEBUG_RTL=0
       fi ])
 
 AC_ARG_ENABLE(n32,
@@ -570,11 +572,7 @@ if test -z "$SKIP_COMPILER_CHECKS"; then
 dnl ========================================================
 dnl Checks for compilers.
 dnl ========================================================
-
-dnl Explicitly honor $CROSS_COMPILE to allow cross-compiling
-dnl between toolkits on the same architecture, as when
-dnl targeting the iOS Simulator from OS X.
-if test "$target" != "$host" -o -n "$CROSS_COMPILE"; then
+if test "$target" != "$host"; then
     echo "cross compiling from $host to $target"
     cross_compiling=yes
 
@@ -613,7 +611,7 @@ dnl and before invoking AC_TRY_COMPILE (which requires AC_PROG_CC).
 AC_PROG_CC
 
 dnl Reenter the conditional blocks after invoking AC_PROG_CC.
-if test "$target" != "$host" -o -n "$CROSS_COMPILE"; then
+if test "$target" != "$host"; then
     if test -n "$USE_CPLUS"; then
         AC_CHECK_PROGS(CXX, $CXX "${target_alias}-g++" "${target}-g++", echo)
         unset ac_cv_prog_CXX
@@ -985,7 +983,7 @@ esac
 
 if test -n "$MOZILLA_CLIENT" && test "$OS_ARCH" = "WINNT"; then
     OS_TARGET=WIN95
-    if test -n "$MOZ_DEBUG"; then
+    if test -n "$MOZ_DEBUG" -a -z "$USE_DEBUG_RTL"; then
         USE_DEBUG_RTL=1
     fi
 fi
@@ -2005,7 +2003,7 @@ tools are selected during the Xcode/Developer Tools installation.])
             CFLAGS="$CFLAGS -Od"
         fi
 
-        if test -n "$USE_DEBUG_RTL"; then
+        if test "$USE_DEBUG_RTL" = 1; then
             CFLAGS="$CFLAGS -MDd"
         else
             CFLAGS="$CFLAGS -MD"
@@ -2061,7 +2059,7 @@ tools are selected during the Xcode/Developer Tools installation.])
         CPU_ARCH_TAG=$CPU_ARCH
     fi
 
-    if test -n "$USE_DEBUG_RTL"; then
+    if test "$USE_DEBUG_RTL" = 1; then
         OBJDIR_SUFFIX=OBJD
     fi
 

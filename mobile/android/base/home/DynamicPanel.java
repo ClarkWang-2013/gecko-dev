@@ -15,6 +15,7 @@ import org.mozilla.gecko.db.DBUtils;
 import org.mozilla.gecko.db.HomeProvider;
 import org.mozilla.gecko.home.HomeConfig.PanelConfig;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
+import org.mozilla.gecko.home.PanelLayout.ContextMenuRegistry;
 import org.mozilla.gecko.home.PanelLayout.DatasetHandler;
 import org.mozilla.gecko.home.PanelLayout.DatasetRequest;
 import org.mozilla.gecko.util.GeckoEventListener;
@@ -61,6 +62,9 @@ public class DynamicPanel extends HomeFragment {
 
     // Dataset ID to be used by the loader
     private static final String DATASET_REQUEST = "dataset_request";
+
+    // Max number of items to display in the panel
+    private static final int RESULT_LIMIT = 100;
 
     // The main view for this fragment. This contains the PanelLayout and PanelAuthLayout.
     private FrameLayout mView;
@@ -226,10 +230,18 @@ public class DynamicPanel extends HomeFragment {
      * Lazily creates layout for panel data.
      */
     private void createPanelLayout() {
+        final ContextMenuRegistry contextMenuRegistry = new ContextMenuRegistry() {
+            @Override
+            public void register(View view) {
+                registerForContextMenu(view);
+            }
+        };
+
         switch(mPanelConfig.getLayoutType()) {
             case FRAME:
                 final PanelDatasetHandler datasetHandler = new PanelDatasetHandler();
-                mPanelLayout = new FramePanelLayout(getActivity(), mPanelConfig, datasetHandler, mUrlOpenListener);
+                mPanelLayout = new FramePanelLayout(getActivity(), mPanelConfig, datasetHandler,
+                        mUrlOpenListener, contextMenuRegistry);
                 break;
 
             default:
@@ -372,6 +384,8 @@ public class DynamicPanel extends HomeFragment {
             final Uri queryUri = HomeItems.CONTENT_URI.buildUpon()
                                                       .appendQueryParameter(BrowserContract.PARAM_DATASET_ID,
                                                                             mRequest.getDatasetId())
+                                                      .appendQueryParameter(BrowserContract.PARAM_LIMIT,
+                                                                            String.valueOf(RESULT_LIMIT))
                                                       .build();
 
             // XXX: You can use HomeItems.CONTENT_FAKE_URI for development

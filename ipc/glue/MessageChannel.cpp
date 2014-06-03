@@ -211,6 +211,7 @@ MessageChannel::MessageChannel(MessageListener *aListener)
 
 #ifdef OS_WIN
     mTopFrame = nullptr;
+    mIsSyncWaitingOnNonMainThread = false;
 #endif
 
     mDequeueOneTask = new RefCountedTask(NewRunnableMethod(
@@ -282,6 +283,15 @@ MessageChannel::Clear()
     if (mChannelErrorTask) {
         mChannelErrorTask->Cancel();
         mChannelErrorTask = nullptr;
+    }
+
+    // Free up any memory used by pending messages.
+    mPending.clear();
+    mPendingUrgentRequest = nullptr;
+    mPendingRPCCall = nullptr;
+    mOutOfTurnReplies.clear();
+    while (!mDeferred.empty()) {
+        mDeferred.pop();
     }
 }
 

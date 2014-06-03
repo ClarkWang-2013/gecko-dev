@@ -245,6 +245,10 @@ public:
   virtual void RemoveTextureFromCompositable(CompositableClient* aCompositable,
                                              TextureClient* aTexture) MOZ_OVERRIDE;
 
+  virtual void RemoveTextureFromCompositableAsync(AsyncTransactionTracker* aAsyncTransactionTracker,
+                                                  CompositableClient* aCompositable,
+                                                  TextureClient* aTexture) MOZ_OVERRIDE;
+
   virtual void RemoveTexture(TextureClient* aTexture) MOZ_OVERRIDE;
 
   /**
@@ -291,13 +295,23 @@ public:
    */
   bool EndTransaction(InfallibleTArray<EditReply>* aReplies,
                       const nsIntRegion& aRegionToClear,
+                      uint64_t aId,
                       bool aScheduleComposite,
+                      uint32_t aPaintSequenceNumber,
                       bool* aSent);
 
   /**
    * Set an actor through which layer updates will be pushed.
    */
   void SetShadowManager(PLayerTransactionChild* aShadowManager);
+
+  void StopReceiveAsyncParentMessge();
+
+  void ClearCachedResources();
+
+  void Composite();
+
+  void SendPendingAsyncMessge();
 
   /**
    * True if this is forwarding to a LayerManagerComposite.
@@ -375,16 +389,6 @@ protected:
 #endif
 
   RefPtr<LayerTransactionChild> mShadowManager;
-
-#ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
-  // from ISurfaceAllocator
-  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfx::IntSize& aSize,
-                                                  uint32_t aFormat,
-                                                  uint32_t aUsage,
-                                                  MaybeMagicGrallocBufferHandle* aHandle) MOZ_OVERRIDE;
-
-  virtual void DeallocGrallocBuffer(PGrallocBufferChild* aChild) MOZ_OVERRIDE;
-#endif
 
 private:
 

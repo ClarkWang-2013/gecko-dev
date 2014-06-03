@@ -32,7 +32,7 @@ protected:
     nsIOutputStream* mOut;
 };
 
-NS_IMPL_ISUPPORTS1(TriplesVisitor, rdfITripleVisitor)
+NS_IMPL_ISUPPORTS(TriplesVisitor, rdfITripleVisitor)
 
 nsresult
 TriplesVisitor::writeResource(nsIRDFResource *aResource)
@@ -77,7 +77,7 @@ TriplesVisitor::Visit(nsIRDFNode *aSubject, nsIRDFResource *aPredicate,
         const char16_t *value;
         lit->GetValueConst(&value);
         nsAutoCString object;
-        object.AppendLiteral("\"");
+        object.Append('"');
         AppendUTF16toUTF8(value, object);
         object.AppendLiteral("\" ");
         uint32_t writeCount = object.Length();
@@ -124,7 +124,7 @@ NS_NewTriplesSerializer(rdfISerializer** aResult)
     return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS1(rdfTriplesSerializer, rdfISerializer)
+NS_IMPL_ISUPPORTS(rdfTriplesSerializer, rdfISerializer)
 
 rdfTriplesSerializer::rdfTriplesSerializer()
 {

@@ -10,8 +10,9 @@
 #include "gfxXlibSurface.h"
 #include "gfx2DGlue.h"
 
-using namespace mozilla;
-using namespace mozilla::layers;
+namespace mozilla {
+namespace layers {
+
 using namespace mozilla::gfx;
 
 X11TextureSourceOGL::X11TextureSourceOGL(CompositorOGL* aCompositor, gfxXlibSurface* aSurface)
@@ -54,7 +55,7 @@ X11TextureSourceOGL::BindTexture(GLenum aTextureUnit, gfx::Filter aFilter)
     gl::sGLXLibrary.UpdateTexImage(mSurface->XDisplay(), mSurface->GetGLXPixmap());
   }
 
-  ApplyFilterToBoundTexture(gl(), aFilter, LOCAL_GL_TEXTURE_RECTANGLE_ARB);
+  ApplyFilterToBoundTexture(gl(), aFilter, LOCAL_GL_TEXTURE_2D);
 }
 
 IntSize
@@ -102,3 +103,6 @@ X11TextureSourceOGL::ContentTypeToSurfaceFormat(gfxContentType aType)
 }
 
 #endif
+
+}
+}

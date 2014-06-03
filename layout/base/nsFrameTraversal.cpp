@@ -8,6 +8,7 @@
 #include "nsFrameTraversal.h"
 #include "nsFrameList.h"
 #include "nsPlaceholderFrame.h"
+#include "nsContainerFrame.h"
 
 
 class nsFrameIterator : public nsIFrameEnumerator
@@ -165,7 +166,7 @@ nsFrameTraversal::~nsFrameTraversal()
 {
 }
 
-NS_IMPL_ISUPPORTS1(nsFrameTraversal,nsIFrameTraversal)
+NS_IMPL_ISUPPORTS(nsFrameTraversal,nsIFrameTraversal)
 
 NS_IMETHODIMP 
  nsFrameTraversal::NewFrameTraversal(nsIFrameEnumerator **aEnumerator,
@@ -183,7 +184,7 @@ NS_IMETHODIMP
 
 // nsFrameIterator implementation
 
-NS_IMPL_ISUPPORTS1(nsFrameIterator, nsIFrameEnumerator)
+NS_IMPL_ISUPPORTS(nsFrameIterator, nsIFrameEnumerator)
 
 nsFrameIterator::nsFrameIterator(nsPresContext* aPresContext, nsIFrame *aStart,
                                  nsIteratorType aType, bool aLockInScrollView,

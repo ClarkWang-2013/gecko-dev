@@ -5,6 +5,7 @@
 
 #include "mozilla/dom/TimeEvent.h"
 #include "mozilla/BasicEvents.h"
+#include "nsIDocShell.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsPresContext.h"
 
@@ -34,18 +35,15 @@ TimeEvent::TimeEvent(EventTarget* aOwner,
   mEvent->mFlags.mCancelable = false;
 
   if (mPresContext) {
-    nsISupports* container = mPresContext->GetContainerWeak();
-    if (container) {
-      nsCOMPtr<nsIDOMWindow> window = do_GetInterface(container);
-      if (window) {
-        mView = do_QueryInterface(window);
-      }
+    nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
+    if (docShell) {
+      mView = docShell->GetWindow();
     }
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(TimeEvent, Event,
-                                     mView)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(TimeEvent, Event,
+                                   mView)
 
 NS_IMPL_ADDREF_INHERITED(TimeEvent, Event)
 NS_IMPL_RELEASE_INHERITED(TimeEvent, Event)

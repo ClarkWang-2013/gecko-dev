@@ -43,9 +43,9 @@ nsFileControlFrame::nsFileControlFrame(nsStyleContext* aContext)
 
 
 void
-nsFileControlFrame::Init(nsIContent* aContent,
-                         nsIFrame*   aParent,
-                         nsIFrame*   aPrevInFlow)
+nsFileControlFrame::Init(nsIContent*       aContent,
+                         nsContainerFrame* aParent,
+                         nsIFrame*         aPrevInFlow)
 {
   nsBlockFrame::Init(aContent, aParent, aPrevInFlow);
 
@@ -324,5 +324,5 @@ nsFileControlFrame::AccessibleType()
 ////////////////////////////////////////////////////////////
 // Mouse listener implementation
 
-NS_IMPL_ISUPPORTS1(nsFileControlFrame::MouseListener,
-                   nsIDOMEventListener)
+NS_IMPL_ISUPPORTS(nsFileControlFrame::MouseListener,
+                  nsIDOMEventListener)

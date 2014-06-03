@@ -50,7 +50,6 @@
         './include',
         './src/sipcc/include',
         './src/sipcc/cpr/include',
-        '../../../ipc/chromium/src',
         '../../../ipc/chromium/src/base/third_party/nspr',
         '../../../xpcom/base',
         '../../../dom/base',
@@ -63,9 +62,7 @@
         '../trunk/webrtc/modules/interface',
         '../trunk/webrtc/peerconnection',
         '../../libyuv/include',
-        '../../../netwerk/srtp/src/include',
-        '../../../netwerk/srtp/src/crypto/include',
-        '../../../ipc/chromium/src',
+        '../../mtransport/third_party/nrappkit/src/util/libekr',
       ],
 
       #
@@ -93,6 +90,7 @@
         './src/common/NullDeleter.h',
         './src/common/Wrapper.h',
         './src/common/NullTransport.h',
+        './src/common/YuvStamper.cpp',
         # Browser Logging
         './src/common/browser_logging/CSFLog.cpp',
         './src/common/browser_logging/CSFLog.h',
@@ -158,8 +156,6 @@
         './src/mediapipeline/MediaPipeline.cpp',
         './src/mediapipeline/MediaPipelineFilter.h',
         './src/mediapipeline/MediaPipelineFilter.cpp',
-        './src/mediapipeline/SrtpFlow.h',
-        './src/mediapipeline/SrtpFlow.cpp',
       ],
 
       #
@@ -192,12 +188,28 @@
       # Conditionals
       #
       'conditions': [
-        ['moz_omx_encoder==1', {
+        # hack so I can change the include flow for SrtpFlow
+        ['build_with_mozilla==1', {
+          'sources': [
+            './src/mediapipeline/SrtpFlow.h',
+            './src/mediapipeline/SrtpFlow.cpp',
+          ],
+          'include_dirs!': [
+            '../trunk/webrtc',
+          ],
+          'include_dirs': [
+            '../../../netwerk/srtp/src/include',
+            '../../../netwerk/srtp/src/crypto/include',
+          ],
+        }],
+        ['moz_webrtc_omx==1', {
           'sources': [
             './src/media-conduit/WebrtcOMXH264VideoCodec.cpp',
             './src/media-conduit/OMXVideoCodec.cpp',
           ],
           'include_dirs': [
+            # hack on hack to re-add it after SrtpFlow removes it
+            '../../webrtc/trunk/webrtc',
             '../../../content/media/omx',
             '../../../gfx/layers/client',
           ],
@@ -209,7 +221,7 @@
             '-I$(ANDROID_SOURCE)/frameworks/native/opengl/include',
           ],
           'defines' : [
-            'MOZ_OMX_ENCODER'
+            'MOZ_WEBRTC_OMX'
           ],
         }],
         ['build_for_test==0', {
@@ -236,6 +248,7 @@
           ],
 
           'defines': [
+            'OS_LINUX',
             'SIP_OS_LINUX',
             '_GNU_SOURCE',
             'LINUX',
@@ -250,6 +263,7 @@
           'include_dirs': [
           ],
           'defines': [
+            'OS_WIN',
             'SIP_OS_WINDOWS',
             'WIN32',
             'GIPS_VER=3480',
@@ -277,6 +291,7 @@
           'include_dirs': [
           ],
           'defines': [
+            'OS_MACOSX',
             'SIP_OS_OSX',
             'OSX',
             '_FORTIFY_SOURCE=2',

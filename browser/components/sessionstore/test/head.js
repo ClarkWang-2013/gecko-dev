@@ -88,6 +88,12 @@ function provideWindow(aCallback, aURL, aFeatures) {
 
 // This assumes that tests will at least have some state/entries
 function waitForBrowserState(aState, aSetStateCallback) {
+  if (typeof aState == "string") {
+    aState = JSON.parse(aState);
+  }
+  if (typeof aState != "object") {
+    throw new TypeError("Argument must be an object or a JSON representation of an object");
+  }
   let windows = [window];
   let tabsRestored = 0;
   let expectedTabsRestored = 0;
@@ -165,8 +171,15 @@ function waitForBrowserState(aState, aSetStateCallback) {
   listening = true;
   gBrowser.tabContainer.addEventListener("SSTabRestored", onSSTabRestored, true);
 
+  // Ensure setBrowserState() doesn't remove the initial tab.
+  gBrowser.selectedTab = gBrowser.tabs[0];
+
   // Finally, call setBrowserState
   ss.setBrowserState(JSON.stringify(aState));
+}
+
+function promiseBrowserState(aState) {
+  return new Promise(resolve => waitForBrowserState(aState, resolve));
 }
 
 // Doesn't assume that the tab needs to be closed in a cleanup function.
@@ -478,6 +491,9 @@ function whenDelayedStartupFinished(aWindow, aCallback) {
     }
   }, "browser-delayed-startup-finished", false);
 }
+function promiseDelayedStartupFinished(aWindow) {
+  return new Promise((resolve) => whenDelayedStartupFinished(aWindow, resolve));
+}
 
 /**
  * The test runner that controls the execution flow of our tests.
@@ -520,6 +536,7 @@ let TestRunner = {
    */
   finish: function () {
     closeAllButPrimaryWindow();
+    gBrowser.selectedTab = gBrowser.tabs[0];
     waitForBrowserState(this.backupState, finish);
   }
 };

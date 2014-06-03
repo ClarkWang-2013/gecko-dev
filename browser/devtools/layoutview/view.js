@@ -18,8 +18,10 @@ Cu.import("resource://gre/modules/devtools/Console.jsm");
 const {Promise: promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
 const {InplaceEditor, editableItem} = devtools.require("devtools/shared/inplace-editor");
 const {parseDeclarations} = devtools.require("devtools/styleinspector/css-parsing-utils");
+const {ReflowFront} = devtools.require("devtools/server/actors/layout");
 
 const NUMERIC = /^-?[\d\.]+$/;
+const LONG_TEXT_ROTATE_LIMIT = 3;
 
 /**
  * An instance of EditingSession tracks changes that have been made during the
@@ -89,13 +91,16 @@ EditingSession.prototype = {
     let modifications = this._rules[0].startModifyingProperties();
 
     for (let property of properties) {
-      if (!this._modifications.has(property.name))
-        this._modifications.set(property.name, this.getPropertyFromRule(this._rules[0], property.name));
+      if (!this._modifications.has(property.name)) {
+        this._modifications.set(property.name,
+          this.getPropertyFromRule(this._rules[0], property.name));
+      }
 
-      if (property.value == "")
+      if (property.value == "") {
         modifications.removeProperty(property.name);
-      else
+      } else {
         modifications.setProperty(property.name, property.value, "");
+      }
     }
 
     return modifications.apply().then(null, console.error);
@@ -109,26 +114,33 @@ EditingSession.prototype = {
     let modifications = this._rules[0].startModifyingProperties();
 
     for (let [property, value] of this._modifications) {
-      if (value != "")
+      if (value != "") {
         modifications.setProperty(property, value, "");
-      else
+      } else {
         modifications.removeProperty(property);
+      }
     }
 
     return modifications.apply().then(null, console.error);
+  },
+
+  destroy: function() {
+    this._doc = null;
+    this._rules = null;
+    this._modifications.clear();
   }
 };
 
-function LayoutView(aInspector, aWindow)
-{
-  this.inspector = aInspector;
+/**
+ * The layout-view panel
+ * @param {InspectorPanel} inspector An instance of the inspector-panel
+ * currently loaded in the toolbox
+ * @param {Window} win The window containing the panel
+ */
+function LayoutView(inspector, win) {
+  this.inspector = inspector;
 
-  // <browser> is not always available (for Chrome targets for example)
-  if (this.inspector.target.tab) {
-    this.browser = aInspector.target.tab.linkedBrowser;
-  }
-
-  this.doc = aWindow.document;
+  this.doc = win.document;
   this.sizeLabel = this.doc.querySelector(".size > span");
   this.sizeHeadingLabel = this.doc.getElementById("element-size");
 
@@ -136,12 +148,17 @@ function LayoutView(aInspector, aWindow)
 }
 
 LayoutView.prototype = {
-  init: function LV_init() {
+  init: function() {
     this.update = this.update.bind(this);
-    this.onNewNode = this.onNewNode.bind(this);
+
     this.onNewSelection = this.onNewSelection.bind(this);
     this.inspector.selection.on("new-node-front", this.onNewSelection);
+
+    this.onNewNode = this.onNewNode.bind(this);
     this.inspector.sidebar.on("layoutview-selected", this.onNewNode);
+
+    this.onSidebarSelect = this.onSidebarSelect.bind(this);
+    this.inspector.sidebar.on("select", this.onSidebarSelect);
 
     // Store for the different dimensions of the node.
     // 'selector' refers to the element that holds the value in view.xhtml;
@@ -205,7 +222,9 @@ LayoutView.prototype = {
         continue;
 
       let dimension = this.map[i];
-      editableItem({ element: this.doc.querySelector(dimension.selector) }, (element, event) => {
+      editableItem({
+        element: this.doc.querySelector(dimension.selector)
+      }, (element, event) => {
         this.initEditor(element, event, dimension);
       });
     }
@@ -214,39 +233,78 @@ LayoutView.prototype = {
   },
 
   /**
+   * Start listening to reflows in the current tab.
+   */
+  trackReflows: function() {
+    if (!this.reflowFront) {
+      let toolbox = this.inspector.toolbox;
+      if (toolbox.target.form.reflowActor) {
+        this.reflowFront = ReflowFront(toolbox.target.client, toolbox.target.form);
+      } else {
+        return;
+      }
+    }
+
+    this.reflowFront.on("reflows", this.update);
+    this.reflowFront.start();
+  },
+
+  /**
+   * Stop listening to reflows in the current tab.
+   */
+  untrackReflows: function() {
+    if (!this.reflowFront) {
+      return;
+    }
+
+    this.reflowFront.off("reflows", this.update);
+    this.reflowFront.stop();
+  },
+
+  /**
    * Called when the user clicks on one of the editable values in the layoutview
    */
-  initEditor: function LV_initEditor(element, event, dimension) {
+  initEditor: function(element, event, dimension) {
     let { property, realProperty } = dimension;
     if (!realProperty)
       realProperty = property;
     let session = new EditingSession(document, this.elementRules);
     let initialValue = session.getProperty(realProperty);
 
-    new InplaceEditor({
+    let editor = new InplaceEditor({
       element: element,
       initial: initialValue,
 
+      start: (editor) => {
+        editor.elt.parentNode.classList.add("editing");
+      },
+
       change: (value) => {
-        if (NUMERIC.test(value))
+        if (NUMERIC.test(value)) {
           value += "px";
+        }
+
         let properties = [
           { name: property, value: value }
-        ]
+        ];
 
         if (property.substring(0, 7) == "border-") {
           let bprop = property.substring(0, property.length - 5) + "style";
           let style = session.getProperty(bprop);
-          if (!style || style == "none" || style == "hidden")
+          if (!style || style == "none" || style == "hidden") {
             properties.push({ name: bprop, value: "solid" });
+          }
         }
 
         session.setProperties(properties);
       },
 
       done: (value, commit) => {
-        if (!commit)
+        editor.elt.parentNode.classList.remove("editing");
+        if (!commit) {
           session.revert();
+          session.destroy();
+        }
       }
     }, event);
   },
@@ -254,23 +312,35 @@ LayoutView.prototype = {
   /**
    * Is the layoutview visible in the sidebar?
    */
-  isActive: function LV_isActive() {
-    return this.inspector.sidebar.getCurrentTabID() == "layoutview";
+  isActive: function() {
+    return this.inspector &&
+           this.inspector.sidebar.getCurrentTabID() == "layoutview";
   },
 
   /**
    * Destroy the nodes. Remove listeners.
    */
-  destroy: function LV_destroy() {
+  destroy: function() {
     this.inspector.sidebar.off("layoutview-selected", this.onNewNode);
     this.inspector.selection.off("new-node-front", this.onNewSelection);
-    if (this.browser) {
-      this.browser.removeEventListener("MozAfterPaint", this.update, true);
-    }
+    this.inspector.sidebar.off("select", this.onSidebarSelect);
+
     this.sizeHeadingLabel = null;
     this.sizeLabel = null;
     this.inspector = null;
     this.doc = null;
+
+    if (this.reflowFront) {
+      this.untrackReflows();
+      this.reflowFront.destroy();
+      this.reflowFront = null;
+    }
+  },
+
+  onSidebarSelect: function(e, sidebar) {
+    if (sidebar !== "layoutview") {
+      this.dim();
+    }
   },
 
   /**
@@ -281,7 +351,10 @@ LayoutView.prototype = {
     this.onNewNode().then(done, (err) => { console.error(err); done() });
   },
 
-  onNewNode: function LV_onNewNode() {
+  /**
+   * @return a promise that resolves when the view has been updated
+   */
+  onNewNode: function() {
     if (this.isActive() &&
         this.inspector.selection.isConnected() &&
         this.inspector.selection.isElementNode()) {
@@ -289,41 +362,36 @@ LayoutView.prototype = {
     } else {
       this.dim();
     }
+
     return this.update();
   },
 
   /**
-   * Hide the layout boxes. No node are selected.
+   * Hide the layout boxes and stop refreshing on reflows. No node is selected
+   * or the layout-view sidebar is inactive.
    */
-  dim: function LV_dim() {
-    if (this.browser) {
-      this.browser.removeEventListener("MozAfterPaint", this.update, true);
-    }
-    this.trackingPaint = false;
+  dim: function() {
+    this.untrackReflows();
     this.doc.body.classList.add("dim");
     this.dimmed = true;
   },
 
   /**
-   * Show the layout boxes. A node is selected.
+   * Show the layout boxes and start refreshing on reflows. A node is selected
+   * and the layout-view side is active.
    */
-  undim: function LV_undim() {
-    if (!this.trackingPaint) {
-      if (this.browser) {
-        this.browser.addEventListener("MozAfterPaint", this.update, true);
-      }
-      this.trackingPaint = true;
-    }
+  undim: function() {
+    this.trackReflows();
     this.doc.body.classList.remove("dim");
     this.dimmed = false;
   },
 
   /**
    * Compute the dimensions of the node and update the values in
-   * the layoutview/view.xhtml document. Returns a promise that will be resolved
-   * when complete.
+   * the layoutview/view.xhtml document.
+   * @return a promise that will be resolved when complete.
    */
-  update: function LV_update() {
+  update: function() {
     let lastRequest = Task.spawn((function*() {
       if (!this.isActive() ||
           !this.inspector.selection.isConnected() ||
@@ -387,6 +455,7 @@ LayoutView.prototype = {
           continue;
         }
         span.textContent = this.map[i].value;
+        this.manageOverflowingText(span);
       }
 
       width -= this.map.borderLeft.value + this.map.borderRight.value +
@@ -408,6 +477,10 @@ LayoutView.prototype = {
     return this._lastRequest = lastRequest;
   },
 
+  /**
+   * Show the box-model highlighter on the currently selected element
+   * @param {Object} options Options passed to the highlighter actor
+   */
   showBoxModel: function(options={}) {
     let toolbox = this.inspector.toolbox;
     let nodeFront = this.inspector.selection.nodeFront;
@@ -415,11 +488,23 @@ LayoutView.prototype = {
     toolbox.highlighterUtils.highlightNodeFront(nodeFront, options);
   },
 
+  /**
+   * Hide the box-model highlighter on the currently selected element
+   */
   hideBoxModel: function() {
     let toolbox = this.inspector.toolbox;
 
     toolbox.highlighterUtils.unhighlight();
   },
+
+  manageOverflowingText: function(span) {
+    let classList = span.parentNode.classList;
+
+    if (classList.contains("left") || classList.contains("right")) {
+      let force = span.textContent.length > LONG_TEXT_ROTATE_LIMIT;
+      classList.toggle("rotate", force);
+    }
+  }
 };
 
 let elts;

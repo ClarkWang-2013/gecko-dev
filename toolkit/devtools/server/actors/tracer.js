@@ -5,7 +5,7 @@
 "use strict";
 
 const { Cu } = require("chrome");
-const { DebuggerServer } = Cu.import("resource://gre/modules/devtools/dbg-server.jsm", {});
+const { DebuggerServer } = require("devtools/server/main");
 const { DevToolsUtils } = Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm", {});
 
 Cu.import("resource://gre/modules/jsdebugger.jsm");
@@ -505,7 +505,7 @@ MapStack.prototype = {
    *        The key whose associated value is to be returned.
    */
   get: function(aKey) {
-    return this._map[aKey];
+    return this._map[aKey] || undefined;
   },
 
   /**

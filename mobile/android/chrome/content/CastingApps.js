@@ -12,9 +12,9 @@ var CastingApps = {
     }
 
     // Register a service target
-    SimpleServiceDiscovery.registerTarget("roku:ecp", function(aService, aApp) {
+    SimpleServiceDiscovery.registerTarget("roku:ecp", function(aService) {
       Cu.import("resource://gre/modules/RokuApp.jsm");
-      return new RokuApp(aService, "FirefoxTest");
+      return new RokuApp(aService);
     });
 
     // Search for devices continuously every 120 seconds
@@ -29,9 +29,19 @@ var CastingApps = {
     Services.obs.addObserver(this, "Casting:Play", false);
     Services.obs.addObserver(this, "Casting:Pause", false);
     Services.obs.addObserver(this, "Casting:Stop", false);
+
+    BrowserApp.deck.addEventListener("TabSelect", this, true);
+    BrowserApp.deck.addEventListener("pageshow", this, true);
+    BrowserApp.deck.addEventListener("playing", this, true);
+    BrowserApp.deck.addEventListener("ended", this, true);
   },
 
   uninit: function ca_uninit() {
+    BrowserApp.deck.removeEventListener("TabSelect", this, true);
+    BrowserApp.deck.removeEventListener("pageshow", this, true);
+    BrowserApp.deck.removeEventListener("playing", this, true);
+    BrowserApp.deck.removeEventListener("ended", this, true);
+
     Services.obs.removeObserver(this, "Casting:Play");
     Services.obs.removeObserver(this, "Casting:Pause");
     Services.obs.removeObserver(this, "Casting:Stop");
@@ -63,6 +73,30 @@ var CastingApps = {
     }
   },
 
+  handleEvent: function(aEvent) {
+    switch (aEvent.type) {
+      case "TabSelect": {
+        let tab = BrowserApp.getTabForBrowser(aEvent.target);
+        this._updatePageActionForTab(tab, aEvent);
+        break;
+      }
+      case "pageshow": {
+        let tab = BrowserApp.getTabForWindow(aEvent.originalTarget.defaultView);
+        this._updatePageActionForTab(tab, aEvent);
+        break;
+      }
+      case "playing":
+      case "ended": {
+        let video = aEvent.target;
+        if (video instanceof HTMLVideoElement) {
+          // If playing, send the <video>, but if ended we send nothing to shutdown the pageaction
+          this._updatePageActionForVideo(aEvent.type === "playing" ? video : null);
+        }
+        break;
+      }
+    }
+  },
+
   _sendEventToVideo: function _sendEventToVideo(aElement, aData) {
     let event = aElement.ownerDocument.createEvent("CustomEvent");
     event.initCustomEvent("media-videoCasting", false, true, JSON.stringify(aData));
@@ -73,7 +107,7 @@ var CastingApps = {
     // Let's figure out if we have everything needed to cast a video. The binding
     // defaults to |false| so we only need to send an event if |true|.
     let video = aEvent.target;
-    if (!video instanceof HTMLVideoElement) {
+    if (!(video instanceof HTMLVideoElement)) {
       return;
     }
 
@@ -92,7 +126,7 @@ var CastingApps = {
   handleVideoBindingCast: function handleVideoBindingCast(aTab, aEvent) {
     // The binding wants to start a casting session
     let video = aEvent.target;
-    if (!video instanceof HTMLVideoElement) {
+    if (!(video instanceof HTMLVideoElement)) {
       return;
     }
 
@@ -138,11 +172,11 @@ var CastingApps = {
   },
 
   _getVideo: function(aElement) {
-    // Given the hardware support for H264, let's only look for 'mp4' sources
-    if (!aElement instanceof HTMLVideoElement) {
+    if (!(aElement instanceof HTMLVideoElement)) {
       return null;
     }
 
+    // Given the hardware support for H264, let's only look for 'mp4' sources
     function allowableExtension(aURI) {
       if (aURI && aURI instanceof Ci.nsIURL) {
         return (aURI.fileExtension == "mp4");
@@ -197,6 +231,104 @@ var CastingApps = {
     }
   },
 
+  pageAction: {
+    click: function() {
+      // Since this is a pageaction, we use the selected browser
+      let browser = BrowserApp.selectedBrowser;
+      if (!browser) {
+        return;
+      }
+
+      // Look for a castable <video> that is playing, and start casting it
+      let videos = browser.contentDocument.querySelectorAll("video");
+      for (let video of videos) {
+        let unwrappedVideo = XPCNativeWrapper.unwrap(video);
+        if (!video.paused && unwrappedVideo.mozAllowCasting) {
+          CastingApps.openExternal(video, 0, 0);
+          return;
+        }
+      }
+    }
+  },
+
+  _findCastableVideo: function _findCastableVideo(aBrowser) {
+      // Scan for a <video> being actively cast. Also look for a castable <video>
+      // on the page.
+      let castableVideo = null;
+      let videos = aBrowser.contentDocument.querySelectorAll("video");
+      for (let video of videos) {
+        let unwrappedVideo = XPCNativeWrapper.unwrap(video);
+        if (unwrappedVideo.mozIsCasting) {
+          // This <video> is cast-active. Break out of loop.
+          return video;
+        }
+
+        if (!video.paused && unwrappedVideo.mozAllowCasting) {
+          // This <video> is cast-ready. Keep looking so cast-active could be found.
+          castableVideo = video;
+        }
+      }
+
+      // Could be null
+      return castableVideo;
+  },
+
+  _updatePageActionForTab: function _updatePageActionForTab(aTab, aEvent) {
+    // We only care about events on the selected tab
+    if (aTab != BrowserApp.selectedTab) {
+      return;
+    }
+
+    // Update the page action, scanning for a castable <video>
+    this._updatePageAction();
+  },
+
+  _updatePageActionForVideo: function _updatePageActionForVideo(aVideo) {
+    this._updatePageAction(aVideo);
+  },
+
+  _updatePageAction: function _updatePageAction(aVideo) {
+    // Remove any exising pageaction first, in case state changes or we don't have
+    // a castable video
+    if (this.pageAction.id) {
+      NativeWindow.pageactions.remove(this.pageAction.id);
+      delete this.pageAction.id;
+    }
+
+    if (!aVideo) {
+      aVideo = this._findCastableVideo(BrowserApp.selectedBrowser);
+      if (!aVideo) {
+        return;
+      }
+    }
+
+    // We only show pageactions if the <video> is from the selected tab
+    if (BrowserApp.selectedTab != BrowserApp.getTabForWindow(aVideo.ownerDocument.defaultView.top)) {
+      return;
+    }
+
+    // We check for two state here:
+    // 1. The video is actively being cast
+    // 2. The video is allowed to be cast and is currently playing
+    // Both states have the same action: Show the cast page action
+    let unwrappedVideo = XPCNativeWrapper.unwrap(aVideo);
+    if (unwrappedVideo.mozIsCasting) {
+      this.pageAction.id = NativeWindow.pageactions.add({
+        title: Strings.browser.GetStringFromName("contextmenu.castToScreen"),
+        icon: "drawable://casting_active",
+        clickCallback: this.pageAction.click,
+        important: true
+      });
+    } else if (unwrappedVideo.mozAllowCasting) {
+      this.pageAction.id = NativeWindow.pageactions.add({
+        title: Strings.browser.GetStringFromName("contextmenu.castToScreen"),
+        icon: "drawable://casting",
+        clickCallback: this.pageAction.click,
+        important: true
+      });
+    }
+  },
+
   prompt: function(aCallback) {
     let items = [];
     SimpleServiceDiscovery.services.forEach(function(aService) {
@@ -229,7 +361,7 @@ var CastingApps = {
         return;
 
       // Make sure we have a player app for the given service
-      let app = SimpleServiceDiscovery.findAppForService(aService, "video-sharing");
+      let app = SimpleServiceDiscovery.findAppForService(aService);
       if (!app)
         return;
 
@@ -282,6 +414,7 @@ var CastingApps = {
     let video = this.session.videoRef.get();
     if (video) {
       this._sendEventToVideo(video, { active: false });
+      this._updatePageAction();
     }
 
     delete this.session;
@@ -299,6 +432,7 @@ var CastingApps = {
     let video = this.session.videoRef.get();
     if (video) {
       this._sendEventToVideo(video, { active: true });
+      this._updatePageAction(video);
     }
   },
 

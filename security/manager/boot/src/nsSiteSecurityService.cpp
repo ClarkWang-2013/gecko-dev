@@ -80,9 +80,9 @@ nsSiteSecurityService::~nsSiteSecurityService()
 {
 }
 
-NS_IMPL_ISUPPORTS2(nsSiteSecurityService,
-                   nsIObserver,
-                   nsISiteSecurityService)
+NS_IMPL_ISUPPORTS(nsSiteSecurityService,
+                  nsIObserver,
+                  nsISiteSecurityService)
 
 nsresult
 nsSiteSecurityService::Init()
@@ -461,7 +461,7 @@ nsSiteSecurityService::IsSecureURI(uint32_t aType, nsIURI* aURI,
   }
 
   // Holepunch chart.apis.google.com and subdomains.
-  if (host.Equals(NS_LITERAL_CSTRING("chart.apis.google.com")) ||
+  if (host.EqualsLiteral("chart.apis.google.com") ||
       StringEndsWith(host, NS_LITERAL_CSTRING(".chart.apis.google.com"))) {
     return NS_OK;
   }

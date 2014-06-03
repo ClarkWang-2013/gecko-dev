@@ -288,7 +288,7 @@ public:
   nsCOMPtr<nsIDNSRecord>  mResponse;
   nsCOMPtr<nsITimer>      mTimer;
 };
-NS_IMPL_ISUPPORTS2(PACResolver, nsIDNSListener, nsITimerCallback)
+NS_IMPL_ISUPPORTS(PACResolver, nsIDNSListener, nsITimerCallback)
 
 static
 void PACLogToConsole(nsString &aMessage)
@@ -544,7 +544,7 @@ private:
 
   nsresult Init()
   {
-    mRuntime = JS_NewRuntime(sRuntimeHeapSize, JS_NO_HELPER_THREADS);
+    mRuntime = JS_NewRuntime(sRuntimeHeapSize);
     NS_ENSURE_TRUE(mRuntime, NS_ERROR_OUT_OF_MEMORY);
 
     /*

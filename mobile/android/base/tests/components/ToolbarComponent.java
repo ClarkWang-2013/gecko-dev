@@ -20,6 +20,7 @@ import android.widget.ImageButton;
 import android.widget.TextView;
 
 import com.jayway.android.robotium.solo.Condition;
+import com.jayway.android.robotium.solo.Solo;
 
 /**
  * A class representing any interactions that take place on the Toolbar.
@@ -69,13 +70,6 @@ public class ToolbarComponent extends BaseComponent {
         return (TextView) getToolbarView().findViewById(R.id.url_bar_title);
     }
 
-    /**
-     * Returns the View for the go button in the browser toolbar.
-     */
-    private ImageButton getGoButton() {
-        return (ImageButton) getToolbarView().findViewById(R.id.go);
-    }
-
     private ImageButton getBackButton() {
         DeviceHelper.assertIsTablet();
         return (ImageButton) getToolbarView().findViewById(R.id.back);
@@ -86,6 +80,10 @@ public class ToolbarComponent extends BaseComponent {
         return (ImageButton) getToolbarView().findViewById(R.id.forward);
     }
 
+    private ImageButton getReloadButton() {
+        DeviceHelper.assertIsTablet();
+        return (ImageButton) getToolbarView().findViewById(R.id.reload);
+    }
     /**
      * Returns the View for the edit cancel button in the browser toolbar.
      */
@@ -141,7 +139,7 @@ public class ToolbarComponent extends BaseComponent {
         WaitHelper.waitForPageLoad(new Runnable() {
             @Override
             public void run() {
-                mSolo.clickOnView(getGoButton());
+                mSolo.sendKey(Solo.ENTER);
             }
         });
         waitForNotEditing();
@@ -194,6 +192,11 @@ public class ToolbarComponent extends BaseComponent {
     public ToolbarComponent pressForwardButton() {
         final ImageButton forwardButton = getForwardButton();
         return pressButton(forwardButton, "forward");
+    }
+
+    public ToolbarComponent pressReloadButton() {
+        final ImageButton reloadButton = getReloadButton();
+        return pressButton(reloadButton, "reload");
     }
 
     private ToolbarComponent pressButton(final View view, final String buttonName) {

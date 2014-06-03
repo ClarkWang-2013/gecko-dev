@@ -1,6 +1,13 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=8 sts=2 et sw=2 tw=80: */
-/* Copyright 2013 Mozilla Foundation
+/* This code is made available to you under your choice of the following sets
+ * of licensing terms:
+ */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+/* Copyright 2013 Mozilla Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +25,7 @@
 #ifndef mozilla_pkix__pkixutil_h
 #define mozilla_pkix__pkixutil_h
 
+#include "pkix/enumclass.h"
 #include "pkix/pkixtypes.h"
 #include "prerror.h"
 #include "seccomon.h"
@@ -81,14 +89,13 @@ MapSECStatus(SECStatus srv)
 class BackCert
 {
 public:
-  // ExcludeCN means that GetConstrainedNames won't include the subject CN in
-  // its results. IncludeCN means that GetConstrainedNames will include the
-  // subject CN in its results.
-  enum ConstrainedNameOptions { ExcludeCN = 0, IncludeCN = 1 };
+  // IncludeCN::No means that GetConstrainedNames won't include the subject CN
+  // in its results. IncludeCN::Yes means that GetConstrainedNames will include
+  // the subject CN in its results.
+  MOZILLA_PKIX_ENUM_CLASS IncludeCN { No = 0, Yes = 1 };
 
   // nssCert and childCert must be valid for the lifetime of BackCert
-  BackCert(CERTCertificate* nssCert, BackCert* childCert,
-           ConstrainedNameOptions cnOptions)
+  BackCert(CERTCertificate* nssCert, BackCert* childCert, IncludeCN includeCN)
     : encodedBasicConstraints(nullptr)
     , encodedCertificatePolicies(nullptr)
     , encodedExtendedKeyUsage(nullptr)
@@ -98,7 +105,7 @@ public:
     , childCert(childCert)
     , nssCert(nssCert)
     , constrainedNames(nullptr)
-    , cnOptions(cnOptions)
+    , includeCN(includeCN)
   {
   }
 
@@ -137,7 +144,7 @@ private:
 
   ScopedPLArenaPool arena;
   CERTGeneralName* constrainedNames;
-  ConstrainedNameOptions cnOptions;
+  IncludeCN includeCN;
 
   BackCert(const BackCert&) /* = delete */;
   void operator=(const BackCert&); /* = delete */;

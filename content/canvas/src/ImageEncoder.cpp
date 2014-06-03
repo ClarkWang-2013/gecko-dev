@@ -81,7 +81,7 @@ private:
   bool mFailed;
 };
 
-NS_IMPL_ISUPPORTS1(EncodingCompleteEvent, nsIRunnable);
+NS_IMPL_ISUPPORTS(EncodingCompleteEvent, nsIRunnable);
 
 class EncodingRunnable : public nsRunnable
 {
@@ -154,7 +154,7 @@ public:
     } else {
       mEncodingCompleteEvent->SetMembers(imgData, imgSize, mType);
     }
-    rv = NS_DispatchToMainThread(mEncodingCompleteEvent, NS_DISPATCH_NORMAL);
+    rv = NS_DispatchToMainThread(mEncodingCompleteEvent);
     if (NS_FAILED(rv)) {
       // Better to leak than to crash.
       mEncodingCompleteEvent.forget();
@@ -175,7 +175,7 @@ private:
   bool mUsingCustomOptions;
 };
 
-NS_IMPL_ISUPPORTS1(EncodingRunnable, nsIRunnable)
+NS_IMPL_ISUPPORTS(EncodingRunnable, nsIRunnable)
 
 /* static */
 nsresult

@@ -6,7 +6,9 @@
 
 #include "AudioDestinationNode.h"
 #include "mozilla/dom/AudioDestinationNodeBinding.h"
+#include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Services.h"
 #include "AudioChannelAgent.h"
 #include "AudioChannelService.h"
 #include "AudioNodeEngine.h"
@@ -124,21 +126,26 @@ public:
     // which is strongly referenced by the runnable that called
     // AudioDestinationNode::FireOfflineCompletionEvent.
 
-    AutoPushJSContext cx(context->GetJSContext());
-    if (!cx) {
+    // We need the global for the context so that we can enter its compartment.
+    JSObject* global = context->GetGlobalJSObject();
+    if (NS_WARN_IF(!global)) {
       return;
     }
-    JSAutoRequest ar(cx);
+
+    AutoJSAPI jsapi;
+    JSContext* cx = jsapi.cx();
+    JSAutoCompartment ac(cx, global);
 
     // Create the input buffer
-    nsRefPtr<AudioBuffer> renderedBuffer = new AudioBuffer(context,
-                                                           mLength,
-                                                           mSampleRate);
-    if (!renderedBuffer->InitializeBuffers(mInputChannels.Length(), cx)) {
+    ErrorResult rv;
+    nsRefPtr<AudioBuffer> renderedBuffer =
+      AudioBuffer::Create(context, mInputChannels.Length(),
+                          mLength, mSampleRate, cx, rv);
+    if (rv.Failed()) {
       return;
     }
     for (uint32_t i = 0; i < mInputChannels.Length(); ++i) {
-      renderedBuffer->SetRawChannelContents(cx, i, mInputChannels[i]);
+      renderedBuffer->SetRawChannelContents(i, mInputChannels[i]);
     }
 
     nsRefPtr<OfflineAudioCompletionEvent> event =
@@ -214,8 +221,8 @@ static bool UseAudioChannelService()
   return Preferences::GetBool("media.useAudioChannelService");
 }
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(AudioDestinationNode, AudioNode,
-                                     mAudioChannelAgent)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(AudioDestinationNode, AudioNode,
+                                   mAudioChannelAgent)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(AudioDestinationNode)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
@@ -228,6 +235,7 @@ NS_IMPL_RELEASE_INHERITED(AudioDestinationNode, AudioNode)
 
 AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
                                            bool aIsOffline,
+                                           AudioChannel aChannel,
                                            uint32_t aNumberOfChannels,
                                            uint32_t aLength,
                                            float aSampleRate)
@@ -244,7 +252,7 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
   , mExtraCurrentTimeUpdatedSinceLastStableState(false)
 {
   MediaStreamGraph* graph = aIsOffline ?
-                            MediaStreamGraph::CreateNonRealtimeInstance() :
+                            MediaStreamGraph::CreateNonRealtimeInstance(aSampleRate) :
                             MediaStreamGraph::GetInstance();
   AudioNodeEngine* engine = aIsOffline ?
                             new OfflineDestinationNodeEngine(this, aNumberOfChannels,
@@ -252,13 +260,13 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
                             static_cast<AudioNodeEngine*>(new DestinationNodeEngine(this));
 
   mStream = graph->CreateAudioNodeStream(engine, MediaStreamGraph::EXTERNAL_STREAM);
+  mStream->SetAudioChannelType(aChannel);
   mStream->AddMainThreadListener(this);
   mStream->AddAudioOutput(&gWebAudioOutputKey);
 
-  AudioChannel channel = AudioChannelService::GetDefaultAudioChannel();
-  if (channel != AudioChannel::Normal) {
+  if (aChannel != AudioChannel::Normal) {
     ErrorResult rv;
-    SetMozAudioChannelType(channel, rv);
+    SetMozAudioChannelType(aChannel, rv);
   }
 
   if (!aIsOffline && UseAudioChannelService()) {
@@ -481,7 +489,7 @@ AudioDestinationNode::CheckAudioChannelPermissions(AudioChannel aValue)
   }
 
   nsCOMPtr<nsIPermissionManager> permissionManager =
-    do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+    services::GetPermissionManager();
   if (!permissionManager) {
     return false;
   }

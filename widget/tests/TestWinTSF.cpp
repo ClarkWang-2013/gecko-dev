@@ -1412,8 +1412,8 @@ TSFDocumentMgrImpl::Release(void)
   return 0;
 }
 
-NS_IMPL_ISUPPORTS2(TestApp, nsIWebProgressListener,
-                            nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(TestApp, nsIWebProgressListener,
+                  nsISupportsWeakReference)
 
 nsresult
 TestApp::Run(void)
@@ -2903,7 +2903,7 @@ TestApp::TestScrollMessages(void)
 #define DO_CHECK(aFailureCondition, aDescription) \
   if (aFailureCondition) { \
     nsAutoCString str(aDescription); \
-    str.Append(": "); \
+    str.AppendLiteral(": "); \
     str.Append(#aFailureCondition); \
     fail(str.get()); \
     mTextArea->SetAttribute(NS_LITERAL_STRING("style"), EmptyString()); \

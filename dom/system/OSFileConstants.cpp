@@ -33,6 +33,9 @@
 #if defined(XP_WIN)
 #include <windows.h>
 #include <accctrl.h>
+
+#define PATH_MAX MAX_PATH
+
 #endif // defined(XP_WIN)
 
 #include "jsapi.h"
@@ -46,6 +49,7 @@
 #include "nsIObserver.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsIXULRuntime.h"
+#include "nsIPropertyBag2.h"
 #include "nsXPCOMCIDInternal.h"
 #include "nsServiceManagerUtils.h"
 #include "nsString.h"
@@ -163,6 +167,12 @@ struct Paths {
  */
 Paths* gPaths = nullptr;
 
+/**
+ * (Unix) the umask, which goes in OS.Constants.Sys but
+ * can only be looked up (via the system-info service)
+ * on the main thread.
+ */
+uint32_t gUserUmask = 0;
 }
 
 /**
@@ -201,7 +211,7 @@ class DelayedPathSetter MOZ_FINAL: public nsIObserver
   DelayedPathSetter() {}
 };
 
-NS_IMPL_ISUPPORTS1(DelayedPathSetter, nsIObserver)
+NS_IMPL_ISUPPORTS(DelayedPathSetter, nsIObserver)
 
 NS_IMETHODIMP
 DelayedPathSetter::Observe(nsISupports*, const char * aTopic, const char16_t*)
@@ -297,6 +307,19 @@ nsresult InitOSFileConstants()
 #endif // defined(XP_MACOSX)
 
   gPaths = paths.forget();
+
+  // Get the umask from the system-info service.
+  // The property will always be present, but it will be zero on
+  // non-Unix systems.
+  nsCOMPtr<nsIPropertyBag2> infoService =
+    do_GetService("@mozilla.org/system-info;1");
+  MOZ_ASSERT(infoService, "Could not access the system information service");
+  rv = infoService->GetPropertyAsUint32(NS_LITERAL_STRING("umask"),
+                                        &gUserUmask);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
   return NS_OK;
 }
 
@@ -520,6 +543,8 @@ static const dom::ConstantSpec gLibcProperties[] =
   INT_CONSTANT(S_IFSOCK),
 #endif // defined(S_IFIFO)
 
+  INT_CONSTANT(PATH_MAX),
+
   // Constants used to define data structures
   //
   // Many data structures have different fields/sizes/etc. on
@@ -721,6 +746,7 @@ static const dom::ConstantSpec gWinProperties[] =
   INT_CONSTANT(ERROR_NO_MORE_FILES),
   INT_CONSTANT(ERROR_PATH_NOT_FOUND),
   INT_CONSTANT(ERROR_BAD_ARGUMENTS),
+  INT_CONSTANT(ERROR_SHARING_VIOLATION),
   INT_CONSTANT(ERROR_NOT_SUPPORTED),
 
   PROP_END
@@ -750,7 +776,7 @@ JSObject *GetOrCreateObjectProperty(JSContext *cx, JS::Handle<JSObject*> aObject
       JSMSG_UNEXPECTED_TYPE, aProperty, "not an object");
     return nullptr;
   }
-  return JS_DefineObject(cx, aObject, aProperty, nullptr, nullptr,
+  return JS_DefineObject(cx, aObject, aProperty, nullptr, JS::NullPtr(),
                          JSPROP_ENUMERATE);
 }
 
@@ -853,6 +879,14 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   }
 #endif
 
+  dom::ConstantSpec umask_cs[] = {
+    { "umask", UINT_TO_JSVAL(gUserUmask) },
+    PROP_END
+  };
+  if (!dom::DefineConstants(cx, objSys, umask_cs)) {
+      return false;
+  }
+
   // Build OS.Constants.Path
 
   JS::Rooted<JSObject*> objPath(cx);
@@ -869,14 +903,14 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   // and we need to provide the full path.
   nsAutoString libxul;
   libxul.Append(gPaths->libDir);
-  libxul.Append(NS_LITERAL_STRING("/XUL"));
+  libxul.AppendLiteral("/XUL");
 #else
   // On other platforms, libxul is a library "xul" with regular
   // library prefix/suffix.
   nsAutoString libxul;
-  libxul.Append(NS_LITERAL_STRING(DLL_PREFIX));
-  libxul.Append(NS_LITERAL_STRING("xul"));
-  libxul.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+  libxul.AppendLiteral(DLL_PREFIX);
+  libxul.AppendLiteral("xul");
+  libxul.AppendLiteral(DLL_SUFFIX);
 #endif // defined(XP_MACOSX)
 
   if (!SetStringProperty(cx, objPath, "libxul", libxul)) {
@@ -939,14 +973,14 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   nsAutoString libsqlite3;
 #if defined(ANDROID)
   // On Android, we use the system's libsqlite3
-  libsqlite3.Append(NS_LITERAL_STRING(DLL_PREFIX));
-  libsqlite3.Append(NS_LITERAL_STRING("sqlite3"));
-  libsqlite3.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+  libsqlite3.AppendLiteral(DLL_PREFIX);
+  libsqlite3.AppendLiteral("sqlite3");
+  libsqlite3.AppendLiteral(DLL_SUFFIX);
 #elif defined(XP_WIN)
   // On Windows, for some reason, this is part of nss3.dll
-  libsqlite3.Append(NS_LITERAL_STRING(DLL_PREFIX));
-  libsqlite3.Append(NS_LITERAL_STRING("nss3"));
-  libsqlite3.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+  libsqlite3.AppendLiteral(DLL_PREFIX);
+  libsqlite3.AppendLiteral("nss3");
+  libsqlite3.AppendLiteral(DLL_SUFFIX);
 #else
     // On other platforms, we link sqlite3 into libxul
   libsqlite3 = libxul;
@@ -959,7 +993,7 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   return true;
 }
 
-NS_IMPL_ISUPPORTS1(OSFileConstantsService, nsIOSFileConstantsService)
+NS_IMPL_ISUPPORTS(OSFileConstantsService, nsIOSFileConstantsService)
 
 OSFileConstantsService::OSFileConstantsService()
 {

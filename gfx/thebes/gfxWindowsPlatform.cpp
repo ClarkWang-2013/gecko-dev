@@ -109,7 +109,7 @@ public:
     }
 };
 
-NS_IMPL_ISUPPORTS1(GfxD2DSurfaceReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(GfxD2DSurfaceReporter, nsIMemoryReporter)
 
 #endif
 
@@ -139,7 +139,7 @@ public:
     }
 };
 
-NS_IMPL_ISUPPORTS1(GfxD2DVramReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(GfxD2DVramReporter, nsIMemoryReporter)
 
 #define GFX_USE_CLEARTYPE_ALWAYS "gfx.font_rendering.cleartype.always_use_for_content"
 #define GFX_DOWNLOADABLE_FONTS_USE_CLEARTYPE "gfx.font_rendering.cleartype.use_for_downloadable_fonts"
@@ -239,14 +239,15 @@ public:
                         queryStatistics.hProcess = ProcessHandle;
                         queryStatistics.QueryProcessSegment.SegmentId = i;
                         if (NT_SUCCESS(queryD3DKMTStatistics(&queryStatistics))) {
-                            if (aperture)
-                                sharedBytesUsed += queryStatistics.QueryResult
-                                                                  .ProcessSegmentInfo
-                                                                  .BytesCommitted;
+                            ULONGLONG bytesCommitted;
+                            if (!IsWin8OrLater())
+                                bytesCommitted = queryStatistics.QueryResult.ProcessSegmentInfo.Win7.BytesCommitted;
                             else
-                                dedicatedBytesUsed += queryStatistics.QueryResult
-                                                                     .ProcessSegmentInfo
-                                                                     .BytesCommitted;
+                                bytesCommitted = queryStatistics.QueryResult.ProcessSegmentInfo.Win8.BytesCommitted;
+                            if (aperture)
+                                sharedBytesUsed += bytesCommitted;
+                            else
+                                dedicatedBytesUsed += bytesCommitted;
                         }
                     }
                 }
@@ -280,7 +281,7 @@ public:
     }
 };
 
-NS_IMPL_ISUPPORTS1(GPUAdapterReporter, nsIMemoryReporter)
+NS_IMPL_ISUPPORTS(GPUAdapterReporter, nsIMemoryReporter)
 
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
@@ -312,9 +313,7 @@ gfxWindowsPlatform::gfxWindowsPlatform()
 
     UpdateRenderMode();
 
-    // This reporter is disabled because it frequently gives bogus values.  See
-    // bug 917496.
-    //RegisterStrongMemoryReporter(new GPUAdapterReporter());
+    RegisterStrongMemoryReporter(new GPUAdapterReporter());
 }
 
 gfxWindowsPlatform::~gfxWindowsPlatform()
@@ -765,6 +764,7 @@ static const char kFontNirmalaUI[] = "Nirmala UI";
 static const char kFontNyala[] = "Nyala";
 static const char kFontPlantagenetCherokee[] = "Plantagenet Cherokee";
 static const char kFontSegoeUI[] = "Segoe UI";
+static const char kFontSegoeUIEmoji[] = "Segoe UI Emoji";
 static const char kFontSegoeUISymbol[] = "Segoe UI Symbol";
 static const char kFontSylfaen[] = "Sylfaen";
 static const char kFontTraditionalArabic[] = "Traditional Arabic";
@@ -782,6 +782,7 @@ gfxWindowsPlatform::GetCommonFallbackFonts(const uint32_t aCh,
     if (!IS_IN_BMP(aCh)) {
         uint32_t p = aCh >> 16;
         if (p == 1) { // SMP plane
+            aFontList.AppendElement(kFontSegoeUIEmoji);
             aFontList.AppendElement(kFontSegoeUISymbol);
             aFontList.AppendElement(kFontEbrima);
             aFontList.AppendElement(kFontNirmalaUI);
@@ -860,6 +861,7 @@ gfxWindowsPlatform::GetCommonFallbackFonts(const uint32_t aCh,
         case 0x2b:
         case 0x2c:
             aFontList.AppendElement(kFontSegoeUI);
+            aFontList.AppendElement(kFontSegoeUIEmoji);
             aFontList.AppendElement(kFontSegoeUISymbol);
             aFontList.AppendElement(kFontCambria);
             aFontList.AppendElement(kFontMeiryo);
@@ -1131,7 +1133,7 @@ gfxWindowsPlatform::GetDLLVersion(char16ptr_t aDLLPath, nsAString& aVersion)
 {
     DWORD versInfoSize, vers[4] = {0};
     // version info not available case
-    aVersion.Assign(NS_LITERAL_STRING("0.0.0.0"));
+    aVersion.AssignLiteral(MOZ_UTF16("0.0.0.0"));
     versInfoSize = GetFileVersionInfoSizeW(aDLLPath, nullptr);
     nsAutoTArray<BYTE,512> versionInfo;
     
@@ -1487,7 +1489,18 @@ gfxWindowsPlatform::GetD3D11Device()
 bool
 gfxWindowsPlatform::IsOptimus()
 {
-  return GetModuleHandleA("nvumdshim.dll");
+    static int knowIsOptimus = -1;
+    if (knowIsOptimus == -1) {
+        // other potential optimus -- nvd3d9wrapx.dll & nvdxgiwrap.dll
+        if (GetModuleHandleA("nvumdshim.dll") ||
+            GetModuleHandleA("nvumdshimx.dll"))
+        {
+            knowIsOptimus = 1;
+        } else {
+            knowIsOptimus = 0;
+        }
+    }
+    return knowIsOptimus;
 }
 
 int

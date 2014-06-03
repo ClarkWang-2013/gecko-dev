@@ -301,7 +301,7 @@ public:
     Data mData;
 };
 
-NS_IMPL_ISUPPORTS2(BlobImpl, nsIRDFNode, nsIRDFBlob)
+NS_IMPL_ISUPPORTS(BlobImpl, nsIRDFNode, nsIRDFBlob)
 
 NS_IMETHODIMP
 BlobImpl::EqualsNode(nsIRDFNode *aNode, bool *aEquals)
@@ -827,7 +827,7 @@ RDFServiceImpl::CreateSingleton(nsISupports* aOuter,
     return serv->QueryInterface(aIID, aResult);
 }
 
-NS_IMPL_ISUPPORTS2(RDFServiceImpl, nsIRDFService, nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(RDFServiceImpl, nsIRDFService, nsISupportsWeakReference)
 
 // Per RFC2396.
 static const uint8_t
@@ -1009,7 +1009,7 @@ static int32_t kShift = 6;
         // service. Now that it's a member we can be more cleverer.
 
         s.Truncate();
-        s.Append("rdf:#$");
+        s.AppendLiteral("rdf:#$");
 
         uint32_t id = ++gCounter;
         while (id) {

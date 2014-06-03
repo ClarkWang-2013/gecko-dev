@@ -26,6 +26,8 @@ CurrentThreadCanAccessZone(JS::Zone *zone);
 
 namespace gc {
 
+struct Cell;
+
 const size_t ArenaShift = 12;
 const size_t ArenaSize = size_t(1) << ArenaShift;
 const size_t ArenaMask = ArenaSize - 1;
@@ -39,9 +41,10 @@ const size_t CellSize = size_t(1) << CellShift;
 const size_t CellMask = CellSize - 1;
 
 /* These are magic constants derived from actual offsets in gc/Heap.h. */
-const size_t ChunkMarkBitmapOffset = 1032368;
+const size_t ChunkMarkBitmapOffset = 1032352;
 const size_t ChunkMarkBitmapBits = 129024;
 const size_t ChunkRuntimeOffset = ChunkSize - sizeof(void*);
+const size_t ChunkLocationOffset = ChunkSize - 2 * sizeof(void*) - sizeof(uint64_t);
 
 /*
  * Live objects are marked black. How many other additional colors are available
@@ -51,14 +54,72 @@ const size_t ChunkRuntimeOffset = ChunkSize - sizeof(void*);
 static const uint32_t BLACK = 0;
 static const uint32_t GRAY = 1;
 
+/*
+ * Constants used to indicate whether a chunk is part of the tenured heap or the
+ * nusery.
+ */
+const uintptr_t ChunkLocationNursery = 0;
+const uintptr_t ChunkLocationTenuredHeap = 1;
+
+#ifdef JS_DEBUG
+/* When downcasting, ensure we are actually the right type. */
+extern JS_FRIEND_API(void)
+AssertGCThingHasType(js::gc::Cell *cell, JSGCTraceKind kind);
+#else
+inline void
+AssertGCThingHasType(js::gc::Cell *cell, JSGCTraceKind kind) {}
+#endif
+
 } /* namespace gc */
 } /* namespace js */
 
 namespace JS {
 struct Zone;
-} /* namespace JS */
 
-namespace JS {
+/*
+ * We cannot expose the class hierarchy: the implementation is hidden. Instead
+ * we provide cast functions with strong debug-mode assertions.
+ */
+static MOZ_ALWAYS_INLINE js::gc::Cell *
+AsCell(JSObject *obj)
+{
+    js::gc::Cell *cell = reinterpret_cast<js::gc::Cell *>(obj);
+    AssertGCThingHasType(cell, JSTRACE_OBJECT);
+    return cell;
+}
+
+static MOZ_ALWAYS_INLINE js::gc::Cell *
+AsCell(JSFunction *fun)
+{
+    js::gc::Cell *cell = reinterpret_cast<js::gc::Cell *>(fun);
+    AssertGCThingHasType(cell, JSTRACE_OBJECT);
+    return cell;
+}
+
+static MOZ_ALWAYS_INLINE js::gc::Cell *
+AsCell(JSString *str)
+{
+    js::gc::Cell *cell = reinterpret_cast<js::gc::Cell *>(str);
+    AssertGCThingHasType(cell, JSTRACE_STRING);
+    return cell;
+}
+
+static MOZ_ALWAYS_INLINE js::gc::Cell *
+AsCell(JSFlatString *flat)
+{
+    js::gc::Cell *cell = reinterpret_cast<js::gc::Cell *>(flat);
+    AssertGCThingHasType(cell, JSTRACE_STRING);
+    return cell;
+}
+
+static MOZ_ALWAYS_INLINE js::gc::Cell *
+AsCell(JSScript *script)
+{
+    js::gc::Cell *cell = reinterpret_cast<js::gc::Cell *>(script);
+    AssertGCThingHasType(cell, JSTRACE_SCRIPT);
+    return cell;
+}
+
 namespace shadow {
 
 struct ArenaHeader
@@ -155,10 +216,18 @@ GetGCThingArena(void *thing)
 }
 
 MOZ_ALWAYS_INLINE bool
-IsInsideNursery(const JS::shadow::Runtime *runtime, const void *p)
+IsInsideNursery(const js::gc::Cell *cell)
 {
 #ifdef JSGC_GENERATIONAL
-    return uintptr_t(p) >= runtime->gcNurseryStart_ && uintptr_t(p) < runtime->gcNurseryEnd_;
+    if (!cell)
+        return false;
+    uintptr_t addr = uintptr_t(cell);
+    addr &= ~js::gc::ChunkMask;
+    addr |= js::gc::ChunkLocationOffset;
+    uint32_t location = *reinterpret_cast<uint32_t *>(addr);
+    JS_ASSERT(location == gc::ChunkLocationNursery ||
+              location == gc::ChunkLocationTenuredHeap);
+    return location == gc::ChunkLocationNursery;
 #else
     return false;
 #endif
@@ -192,8 +261,7 @@ GCThingIsMarkedGray(void *thing)
      * All live objects in the nursery are moved to tenured at the beginning of
      * each GC slice, so the gray marker never sees nursery things.
      */
-    JS::shadow::Runtime *rt = js::gc::GetGCThingRuntime(thing);
-    if (js::gc::IsInsideNursery(rt, thing))
+    if (js::gc::IsInsideNursery((js::gc::Cell *)thing))
         return false;
 #endif
     uintptr_t *word, mask;

@@ -55,8 +55,11 @@ class Promise MOZ_FINAL : public nsISupports,
   friend class PromiseResolverTask;
   friend class PromiseTask;
   friend class PromiseReportRejectFeature;
+  friend class PromiseWorkerProxy;
+  friend class PromiseWorkerProxyRunnable;
   friend class RejectPromiseCallback;
   friend class ResolvePromiseCallback;
+  friend class ThenableResolverMixin;
   friend class WorkerPromiseResolverTask;
   friend class WorkerPromiseTask;
   friend class WrapperPromiseCallback;

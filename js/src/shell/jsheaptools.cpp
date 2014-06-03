@@ -432,7 +432,7 @@ ReferenceFinder::visit(void *cell, Path *path)
     /* Is |cell| a representable cell, reached via a non-empty path? */
     if (path != nullptr) {
         jsval representation = representable(cell, node->kind);
-        if (!JSVAL_IS_VOID(representation))
+        if (!representation.isUndefined())
             return addReferrer(representation, path);
     }
 
@@ -509,7 +509,7 @@ ReferenceFinder::addReferrer(jsval referrerArg, Path *path)
         return false;
     if (v.isUndefined()) {
         /* Create an array to accumulate referents under this path. */
-        JSObject *array = JS_NewArrayObject(context, referrer);
+        JSObject *array = JS_NewArrayObject(context, HandleValueArray(referrer));
         if (!array)
             return false;
         v.setObject(*array);

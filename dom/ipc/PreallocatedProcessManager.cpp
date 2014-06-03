@@ -54,6 +54,7 @@ public:
   void DelayedNuwaFork();
   void PublishSpareProcess(ContentParent* aContent);
   void MaybeForgetSpare(ContentParent* aContent);
+  bool IsNuwaReady();
   void OnNuwaReady();
   bool PreallocatedProcessReady();
   already_AddRefed<ContentParent> GetSpareProcess();
@@ -109,7 +110,7 @@ PreallocatedProcessManagerImpl::Singleton()
   return sSingleton;
 }
 
-NS_IMPL_ISUPPORTS1(PreallocatedProcessManagerImpl, nsIObserver)
+NS_IMPL_ISUPPORTS(PreallocatedProcessManagerImpl, nsIObserver)
 
 PreallocatedProcessManagerImpl::PreallocatedProcessManagerImpl()
   : mEnabled(false)
@@ -336,8 +337,19 @@ PreallocatedProcessManagerImpl::MaybeForgetSpare(ContentParent* aContent)
   if (aContent == mPreallocatedAppProcess) {
     mPreallocatedAppProcess = nullptr;
     mIsNuwaReady = false;
+    while (mSpareProcesses.Length() > 0) {
+      nsRefPtr<ContentParent> process = mSpareProcesses[mSpareProcesses.Length() - 1];
+      process->Close();
+      mSpareProcesses.RemoveElementAt(mSpareProcesses.Length() - 1);
+    }
     ScheduleDelayedNuwaFork();
   }
+}
+
+bool
+PreallocatedProcessManagerImpl::IsNuwaReady()
+{
+  return mIsNuwaReady;
 }
 
 void
@@ -480,6 +492,12 @@ PreallocatedProcessManager::MaybeForgetSpare(ContentParent* aContent)
 PreallocatedProcessManager::OnNuwaReady()
 {
   GetPPMImpl()->OnNuwaReady();
+}
+
+/* static */ bool
+PreallocatedProcessManager::IsNuwaReady()
+{
+  return GetPPMImpl()->IsNuwaReady();
 }
 
 /*static */ bool

@@ -56,7 +56,8 @@ JitFrameIterator::isFakeExitFrame() const
 {
     bool res = (prevType() == JitFrame_Unwound_Rectifier ||
                 prevType() == JitFrame_Unwound_IonJS ||
-                prevType() == JitFrame_Unwound_BaselineStub);
+                prevType() == JitFrame_Unwound_BaselineStub ||
+                (prevType() == JitFrame_Entry && type() == JitFrame_Exit));
     JS_ASSERT_IF(res, type() == JitFrame_Exit || type() == JitFrame_BaselineJS);
     return res;
 }
@@ -84,13 +85,13 @@ GetTopBaselineFrame(JSContext *cx)
 inline JSScript *
 GetTopIonJSScript(JSContext *cx, void **returnAddrOut = nullptr)
 {
-    return GetTopIonJSScript(cx->mainThread().ionTop, returnAddrOut, SequentialExecution);
+    return GetTopIonJSScript(cx->mainThread().jitTop, returnAddrOut, SequentialExecution);
 }
 
 inline JSScript *
 GetTopIonJSScript(ForkJoinContext *cx, void **returnAddrOut = nullptr)
 {
-    return GetTopIonJSScript(cx->perThreadData->ionTop, returnAddrOut, ParallelExecution);
+    return GetTopIonJSScript(cx->perThreadData->jitTop, returnAddrOut, ParallelExecution);
 }
 
 } // namespace jit

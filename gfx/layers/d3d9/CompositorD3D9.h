@@ -7,6 +7,7 @@
 #define MOZILLA_GFX_COMPOSITORD3D9_H
 
 #include "mozilla/gfx/2D.h"
+#include "gfx2DGlue.h"
 #include "mozilla/layers/Compositor.h"
 #include "mozilla/layers/TextureD3D9.h"
 #include "DeviceManagerD3D9.h"
@@ -30,11 +31,6 @@ public:
 
   virtual bool CanUseCanvasLayerForSize(const gfx::IntSize &aSize) MOZ_OVERRIDE;
   virtual int32_t GetMaxTextureSize() const MOZ_FINAL;
-
-  virtual void SetTargetContext(gfx::DrawTarget *aTarget) MOZ_OVERRIDE
-  {
-    mTarget = aTarget;
-  }
 
   virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) MOZ_OVERRIDE {}
 
@@ -122,7 +118,7 @@ public:
   }
 
   virtual TemporaryRef<DataTextureSource>
-    CreateDataTextureSource(TextureFlags aFlags = 0) MOZ_OVERRIDE;
+    CreateDataTextureSource(TextureFlags aFlags = TextureFlags::NO_FLAGS) MOZ_OVERRIDE;
 private:
   // ensure mSize is up to date with respect to mWidget
   void EnsureSize();
@@ -153,6 +149,11 @@ private:
 
   void ReportFailure(const nsACString &aMsg, HRESULT aCode);
 
+  virtual gfx::IntSize GetWidgetSize() const MOZ_OVERRIDE
+  {
+    return gfx::ToIntSize(mSize);
+  }
+
   /* Device manager instance for this compositor */
   nsRefPtr<DeviceManagerD3D9> mDeviceManager;
 
@@ -161,11 +162,6 @@ private:
 
   /* Widget associated with this layer manager */
   nsIWidget *mWidget;
-
-  /*
-   * Context target, nullptr when drawing directly to our swap chain.
-   */
-  RefPtr<gfx::DrawTarget> mTarget;
 
   RefPtr<CompositingRenderTargetD3D9> mDefaultRT;
   RefPtr<CompositingRenderTargetD3D9> mCurrentRT;

@@ -58,11 +58,7 @@ struct ICONENTRY {
 // Match stock icons with names
 static SHSTOCKICONID GetStockIconIDForName(const nsACString &aStockName)
 {
-  // UAC shield icon
-  if (aStockName == NS_LITERAL_CSTRING("uac-shield"))
-    return SIID_SHIELD;
-
-  return SIID_INVALID;
+  return aStockName.EqualsLiteral("uac-shield") ? SIID_SHIELD : SIID_INVALID;
 }
 
 // nsIconChannel methods
@@ -73,11 +69,11 @@ nsIconChannel::nsIconChannel()
 nsIconChannel::~nsIconChannel() 
 {}
 
-NS_IMPL_ISUPPORTS4(nsIconChannel, 
-                              nsIChannel, 
-                              nsIRequest,
-                              nsIRequestObserver,
-                              nsIStreamListener)
+NS_IMPL_ISUPPORTS(nsIconChannel, 
+                  nsIChannel, 
+                  nsIRequest,
+                  nsIRequestObserver,
+                  nsIStreamListener)
 
 nsresult nsIconChannel::Init(nsIURI* uri)
 {

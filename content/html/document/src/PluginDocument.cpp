@@ -73,7 +73,8 @@ private:
 NS_IMETHODIMP
 PluginStreamListener::OnStartRequest(nsIRequest* request, nsISupports *ctxt)
 {
-  PROFILER_LABEL("PluginStreamListener", "OnStartRequest");
+  PROFILER_LABEL("PluginStreamListener", "OnStartRequest",
+    js::ProfileEntry::Category::NETWORK);
 
   nsCOMPtr<nsIContent> embed = mPluginDoc->GetPluginContent();
   nsCOMPtr<nsIObjectLoadingContent> objlc = do_QueryInterface(embed);
@@ -109,14 +110,14 @@ PluginDocument::~PluginDocument()
 {}
 
 
-NS_IMPL_CYCLE_COLLECTION_INHERITED_1(PluginDocument, MediaDocument,
-                                     mPluginContent)
+NS_IMPL_CYCLE_COLLECTION_INHERITED(PluginDocument, MediaDocument,
+                                   mPluginContent)
 
 NS_IMPL_ADDREF_INHERITED(PluginDocument, MediaDocument)
 NS_IMPL_RELEASE_INHERITED(PluginDocument, MediaDocument)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(PluginDocument)
-  NS_INTERFACE_TABLE_INHERITED1(PluginDocument, nsIPluginDocument)
+  NS_INTERFACE_TABLE_INHERITED(PluginDocument, nsIPluginDocument)
 NS_INTERFACE_TABLE_TAIL_INHERITING(MediaDocument)
 
 void

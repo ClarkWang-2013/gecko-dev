@@ -29,7 +29,7 @@
 #include "nsTextFragment.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/Selection.h"
+#include "mozilla/dom/Selection.h"
 #include <algorithm>
 
 // The bidi indicator hangs off the caret to one side, to show which
@@ -236,7 +236,7 @@ void nsCaret::Terminate()
 }
 
 //-----------------------------------------------------------------------------
-NS_IMPL_ISUPPORTS1(nsCaret, nsISelectionListener)
+NS_IMPL_ISUPPORTS(nsCaret, nsISelectionListener)
 
 //-----------------------------------------------------------------------------
 nsISelection* nsCaret::GetCaretDOMSelection()
@@ -301,8 +301,12 @@ nsCaret::GetGeometryForFrame(nsIFrame* aFrame,
   if (NS_FAILED(rv))
     return rv;
 
-  nsIFrame *frame = aFrame->GetContentInsertionFrame();
-  NS_ASSERTION(frame, "We should not be in the middle of reflow");
+  nsIFrame* frame = aFrame->GetContentInsertionFrame();
+  if (!frame) {
+    frame = aFrame;
+  }
+  NS_ASSERTION(!(frame->GetStateBits() & NS_FRAME_IN_REFLOW),
+               "We should not be in the middle of reflow");
   nscoord baseline = frame->GetCaretBaseline();
   nscoord ascent = 0, descent = 0;
   nsRefPtr<nsFontMetrics> fm;
@@ -1101,7 +1105,7 @@ nsCaret::GetFrameSelection()
   if (!sel)
     return nullptr;
 
-  return static_cast<Selection*>(sel.get())->GetFrameSelection();
+  return static_cast<dom::Selection*>(sel.get())->GetFrameSelection();
 }
 
 void

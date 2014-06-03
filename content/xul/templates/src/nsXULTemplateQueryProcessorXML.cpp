@@ -28,14 +28,14 @@
 
 using namespace mozilla::dom;
 
-NS_IMPL_ISUPPORTS1(nsXMLQuery, nsXMLQuery)
+NS_IMPL_ISUPPORTS(nsXMLQuery, nsXMLQuery)
 
 //----------------------------------------------------------------------
 //
 // nsXULTemplateResultSetXML
 //
 
-NS_IMPL_ISUPPORTS1(nsXULTemplateResultSetXML, nsISimpleEnumerator)
+NS_IMPL_ISUPPORTS(nsXULTemplateResultSetXML, nsISimpleEnumerator)
 
 NS_IMETHODIMP
 nsXULTemplateResultSetXML::HasMoreElements(bool *aResult)
@@ -251,7 +251,7 @@ nsXULTemplateQueryProcessorXML::CompileQuery(nsIXULTemplateBuilder* aBuilder,
     // if an expression is not specified, then the default is to
     // just take all of the children
     if (expr.IsEmpty())
-        expr.AssignLiteral("*");
+        expr.Assign('*');
 
     nsCOMPtr<nsIDOMXPathExpression> compiledexpr;
     rv = CreateExpression(expr, aQueryNode, getter_AddRefs(compiledexpr));

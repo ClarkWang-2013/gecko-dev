@@ -24,15 +24,15 @@ using mozilla::dom::EncodingUtils;
 
 static NS_DEFINE_CID(kParserCID, NS_PARSER_CID);
 
-NS_IMPL_CYCLE_COLLECTION_8(nsSAXXMLReader,
-                           mContentHandler,
-                           mDTDHandler,
-                           mErrorHandler,
-                           mLexicalHandler,
-                           mDeclarationHandler,
-                           mBaseURI,
-                           mListener,
-                           mParserObserver)
+NS_IMPL_CYCLE_COLLECTION(nsSAXXMLReader,
+                         mContentHandler,
+                         mDTDHandler,
+                         mErrorHandler,
+                         mLexicalHandler,
+                         mDeclarationHandler,
+                         mBaseURI,
+                         mListener,
+                         mParserObserver)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsSAXXMLReader)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsSAXXMLReader)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsSAXXMLReader)
@@ -81,7 +81,6 @@ NS_IMETHODIMP
 nsSAXXMLReader::HandleStartElement(const char16_t *aName,
                                    const char16_t **aAtts,
                                    uint32_t aAttsCount,
-                                   int32_t aIndex,
                                    uint32_t aLineNumber)
 {
   if (!mContentHandler)

@@ -200,6 +200,10 @@ const PanelUI = {
     }
   },
 
+  get isReady() {
+    return !!this._isReady;
+  },
+
   /**
    * Registering the menu panel is done lazily for performance reasons. This
    * method is exposed so that CustomizationMode can force panel-readyness in the
@@ -263,6 +267,7 @@ const PanelUI = {
       }
       this._updateQuitTooltip();
       this.panel.hidden = false;
+      this._isReady = true;
     }.bind(this)).then(null, Cu.reportError);
 
     return this._readyPromise;
@@ -323,6 +328,9 @@ const PanelUI = {
       tempPanel.setAttribute("type", "arrow");
       tempPanel.setAttribute("id", "customizationui-widget-panel");
       tempPanel.setAttribute("class", "cui-widget-panel");
+      if (this._disableAnimations) {
+        tempPanel.setAttribute("animate", "false");
+      }
       tempPanel.setAttribute("context", "");
       document.getElementById(CustomizableUI.AREA_NAVBAR).appendChild(tempPanel);
       // If the view has a footer, set a convenience class on the panel.
@@ -359,14 +367,16 @@ const PanelUI = {
   },
 
   /**
-   * Open a dialog window that allow the user to customize listed character sets.
+   * NB: The enable- and disableSingleSubviewPanelAnimations methods only
+   * affect the hiding/showing animations of single-subview panels (tempPanel
+   * in the showSubView method).
    */
-  onCharsetCustomizeCommand: function() {
-    this.hide();
-    window.openDialog("chrome://global/content/customizeCharset.xul",
-                      "PrefWindow",
-                      "chrome,modal=yes,resizable=yes",
-                      "browser");
+  disableSingleSubviewPanelAnimations: function() {
+    this._disableAnimations = true;
+  },
+
+  enableSingleSubviewPanelAnimations: function() {
+    this._disableAnimations = false;
   },
 
   onWidgetAfterDOMChange: function(aNode, aNextNode, aContainer, aWasRemoval) {

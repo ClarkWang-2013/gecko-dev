@@ -67,7 +67,7 @@ struct CopyFrameArgs
 {
     AbstractFramePtr frame_;
 
-    CopyFrameArgs(AbstractFramePtr frame)
+    explicit CopyFrameArgs(AbstractFramePtr frame)
       : frame_(frame)
     { }
 
@@ -129,7 +129,7 @@ struct CopyScriptFrameIterArgs
 {
     ScriptFrameIter &iter_;
 
-    CopyScriptFrameIterArgs(ScriptFrameIter &iter)
+    explicit CopyScriptFrameIterArgs(ScriptFrameIter &iter)
       : iter_(iter)
     { }
 
@@ -173,7 +173,7 @@ ArgumentsObject::create(JSContext *cx, HandleScript script, HandleFunction calle
     bool strict = callee->strict();
     const Class *clasp = strict ? &StrictArgumentsObject::class_ : &NormalArgumentsObject::class_;
 
-    RootedTypeObject type(cx, cx->getNewType(clasp, proto.get()));
+    RootedTypeObject type(cx, cx->getNewType(clasp, TaggedProto(proto.get())));
     if (!type)
         return nullptr;
 
@@ -358,8 +358,7 @@ ArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, MutableHand
 }
 
 static bool
-args_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-             MutableHandleObject objp)
+args_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObject objp)
 {
     objp.set(nullptr);
 
@@ -476,8 +475,7 @@ StrictArgSetter(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
 }
 
 static bool
-strictargs_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-                   MutableHandleObject objp)
+strictargs_resolve(JSContext *cx, HandleObject obj, HandleId id, MutableHandleObject objp)
 {
     objp.set(nullptr);
 

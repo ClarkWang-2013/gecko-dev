@@ -111,7 +111,8 @@ endef
 # before evaluation. $(shell) replacing newlines with spaces, || is always
 # followed by a space (since sed doesn't remove newlines), except on the
 # last line, so replace both '|| ' and '||'.
-MOZCONFIG_CONTENT := $(subst ||,$(CR),$(subst || ,$(CR),$(shell $(TOPSRCDIR)/$(MOZCONFIG_LOADER) $(TOPSRCDIR) | sed 's/$$/||/')))
+# Also, make MOZ_PGO available to mozconfig when passed on make command line.
+MOZCONFIG_CONTENT := $(subst ||,$(CR),$(subst || ,$(CR),$(shell MOZ_PGO=$(MOZ_PGO) $(TOPSRCDIR)/$(MOZCONFIG_LOADER) $(TOPSRCDIR) | sed 's/$$/||/')))
 $(eval $(MOZCONFIG_CONTENT))
 
 export FOUND_MOZCONFIG
@@ -395,14 +396,14 @@ endif
 # Build it
 
 realbuild::  $(OBJDIR)/Makefile $(OBJDIR)/config.status
-	$(MOZ_MAKE)
+	+$(MOZ_MAKE)
 
 ####################################
 # Other targets
 
 # Pass these target onto the real build system
 $(OBJDIR_TARGETS):: $(OBJDIR)/Makefile $(OBJDIR)/config.status
-	$(MOZ_MAKE) $@
+	+$(MOZ_MAKE) $@
 
 ####################################
 # Postflight

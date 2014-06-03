@@ -83,7 +83,7 @@ BGRIntToRGBString(DWORD color, nsAString& aResult)
   BYTE g = GetGValue(color);
   BYTE b = GetBValue(color);
 
-  aResult.AssignLiteral("#");
+  aResult.Assign('#');
   aResult.Append(ToHexString(r));
   aResult.Append(ToHexString(g));
   aResult.Append(ToHexString(b));
@@ -150,7 +150,7 @@ nsColorPicker::~nsColorPicker()
 {
 }
 
-NS_IMPL_ISUPPORTS1(nsColorPicker, nsIColorPicker)
+NS_IMPL_ISUPPORTS(nsColorPicker, nsIColorPicker)
 
 NS_IMETHODIMP
 nsColorPicker::Init(nsIDOMWindow* parent,

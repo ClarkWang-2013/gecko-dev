@@ -474,6 +474,9 @@ public:
     MOZ_ASSERT(NS_IsMainThread());
   }
 
+protected:
+  virtual void ActorDestroy(ActorDestroyReason aWhy) MOZ_OVERRIDE;
+
 private:
   // This method is only called by the IPDL message machinery.
   virtual bool
@@ -601,7 +604,7 @@ private:
       NS_WARNING("Available failed on this stream!");
     }
 
-    nsresult rv = NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL);
+    nsresult rv = NS_DispatchToMainThread(this);
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -990,7 +993,7 @@ private:
  * BlobChild::RemoteBlob Implementation
  ******************************************************************************/
 
-NS_IMPL_ISUPPORTS_INHERITED1(BlobChild::RemoteBlob, nsDOMFile, nsIRemoteBlob)
+NS_IMPL_ISUPPORTS_INHERITED(BlobChild::RemoteBlob, nsDOMFile, nsIRemoteBlob)
 
 already_AddRefed<nsIDOMBlob>
 BlobChild::
@@ -1683,7 +1686,7 @@ private:
  * BlobChild::RemoteBlob Implementation
  ******************************************************************************/
 
-NS_IMPL_ISUPPORTS_INHERITED1(BlobParent::RemoteBlob, nsDOMFile, nsIRemoteBlob)
+NS_IMPL_ISUPPORTS_INHERITED(BlobParent::RemoteBlob, nsDOMFile, nsIRemoteBlob)
 
 already_AddRefed<nsIDOMBlob>
 BlobParent::
@@ -1818,10 +1821,15 @@ BlobParent::Create(ContentParent* aManager,
 
   const ChildBlobConstructorParams& blobParams = aParams.blobParams();
 
+  MOZ_ASSERT(blobParams.type() !=
+             ChildBlobConstructorParams::TMysteryBlobConstructorParams);
+
   switch (blobParams.type()) {
+    case ChildBlobConstructorParams::TMysteryBlobConstructorParams:
+      return nullptr;
+
     case ChildBlobConstructorParams::TNormalBlobConstructorParams:
     case ChildBlobConstructorParams::TFileBlobConstructorParams:
-    case ChildBlobConstructorParams::TMysteryBlobConstructorParams:
       return new BlobParent(aManager, aParams);
 
     case ChildBlobConstructorParams::TSlicedBlobConstructorParams: {
@@ -2158,6 +2166,12 @@ InputStreamChild::Recv__delete__(const InputStreamParams& aParams,
 
   mRemoteStream->SetStream(stream);
   return true;
+}
+
+void
+InputStreamParent::ActorDestroy(ActorDestroyReason aWhy)
+{
+  // Implement me! Bug 1005150
 }
 
 bool

@@ -34,8 +34,8 @@
 using namespace mozilla;
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHtml5TreeOpExecutor)
-  NS_INTERFACE_TABLE_INHERITED1(nsHtml5TreeOpExecutor, 
-                                nsIContentSink)
+  NS_INTERFACE_TABLE_INHERITED(nsHtml5TreeOpExecutor, 
+                               nsIContentSink)
 NS_INTERFACE_TABLE_TAIL_INHERITING(nsHtml5DocumentBuilder)
 
 NS_IMPL_ADDREF_INHERITED(nsHtml5TreeOpExecutor, nsContentSink)
@@ -338,7 +338,9 @@ class nsHtml5FlushLoopGuard
 void
 nsHtml5TreeOpExecutor::RunFlushLoop()
 {
-  PROFILER_LABEL("html5", "RunFlushLoop");
+  PROFILER_LABEL("nsHtml5TreeOpExecutor", "RunFlushLoop",
+    js::ProfileEntry::Category::OTHER);
+
   if (mRunFlushLoopOnStack) {
     // There's already a RunFlushLoop() on the call stack.
     return;

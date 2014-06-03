@@ -40,7 +40,7 @@
 #include "nsPresState.h"
 #include "nsContentList.h"
 #include "nsAttrValueInlines.h"
-#include "mozilla/Selection.h"
+#include "mozilla/dom/Selection.h"
 #include "nsContentUtils.h"
 #include "nsTextNode.h"
 #include "nsStyleSet.h"
@@ -462,7 +462,7 @@ nsTextControlFrame::ComputeAutoSize(nsRenderingContext *aRenderingContext,
   return autoSize;
 }
 
-nsresult
+void
 nsTextControlFrame::Reflow(nsPresContext*   aPresContext,
                            nsHTMLReflowMetrics&     aDesiredSize,
                            const nsHTMLReflowState& aReflowState,
@@ -490,10 +490,8 @@ nsTextControlFrame::Reflow(nsPresContext*   aPresContext,
                                                    NS_AUTOHEIGHT, inflation);
   }
   nsRefPtr<nsFontMetrics> fontMet;
-  nsresult rv = nsLayoutUtils::GetFontMetricsForFrame(this, 
-                                                      getter_AddRefs(fontMet), 
-                                                      inflation);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fontMet),
+                                        inflation);
   // now adjust for our borders and padding
   aDesiredSize.SetTopAscent( 
         nsLayoutUtils::GetCenteredFontBaseline(fontMet, lineHeight) 
@@ -513,7 +511,6 @@ nsTextControlFrame::Reflow(nsPresContext*   aPresContext,
 
   aStatus = NS_FRAME_COMPLETE;
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
-  return NS_OK;
 }
 
 void
@@ -1015,7 +1012,7 @@ nsTextControlFrame::GetSelectionRange(int32_t* aSelectionStart,
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(selection, NS_ERROR_FAILURE);
 
-  Selection* sel = static_cast<Selection*>(selection.get());
+  dom::Selection* sel = static_cast<dom::Selection*>(selection.get());
   if (aDirection) {
     nsDirection direction = sel->GetSelectionDirection();
     if (direction == eDirNext) {
@@ -1187,11 +1184,11 @@ nsTextControlFrame::GetMaxLength(int32_t* aSize)
 
 // END IMPLEMENTING NS_IFORMCONTROLFRAME
 
-nsresult
+void
 nsTextControlFrame::SetInitialChildList(ChildListID     aListID,
                                         nsFrameList&    aChildList)
 {
-  nsresult rv = nsContainerFrame::SetInitialChildList(aListID, aChildList);
+  nsContainerFrame::SetInitialChildList(aListID, aChildList);
 
   nsIFrame* first = GetFirstPrincipalChild();
 
@@ -1219,7 +1216,6 @@ nsTextControlFrame::SetInitialChildList(ChildListID     aListID,
       delete contentScrollPos;
     }
   }
-  return rv;
 }
 
 void

@@ -65,7 +65,7 @@ nsLayoutDebugger::~nsLayoutDebugger()
 {
 }
 
-NS_IMPL_ISUPPORTS1(nsLayoutDebugger, nsILayoutDebugger)
+NS_IMPL_ISUPPORTS(nsLayoutDebugger, nsILayoutDebugger)
 
 NS_IMETHODIMP
 nsLayoutDebugger::SetShowFrameBorders(bool aEnable)
@@ -153,7 +153,7 @@ PrintDisplayItemTo(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem,
   }
   if (aDumpHtml && aItem->Painted()) {
     nsCString string(aItem->Name());
-    string.Append("-");
+    string.Append('-');
     string.AppendInt((uint64_t)aItem);
     str += nsPrintfCString("<a href=\"javascript:ViewImage('%s')\">", string.BeginReading());
   }

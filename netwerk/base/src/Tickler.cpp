@@ -18,7 +18,7 @@
 namespace mozilla {
 namespace net {
 
-NS_IMPL_ISUPPORTS2(Tickler, nsISupportsWeakReference, Tickler)
+NS_IMPL_ISUPPORTS(Tickler, nsISupportsWeakReference, Tickler)
 
 Tickler::Tickler()
     : mLock("Tickler::mLock")
@@ -145,8 +145,7 @@ void Tickler::MaybeStartTickler()
   mLock.AssertCurrentThreadOwns();
   if (!NS_IsMainThread()) {
     NS_DispatchToMainThread(
-      NS_NewRunnableMethod(this, &Tickler::MaybeStartTicklerUnlocked),
-      NS_DISPATCH_NORMAL);
+      NS_NewRunnableMethod(this, &Tickler::MaybeStartTicklerUnlocked));
     return;
   }
 
@@ -257,7 +256,7 @@ void Tickler::SetIPV4Port(uint16_t port)
   mAddr.inet.port = port;
 }
 
-NS_IMPL_ISUPPORTS1(TicklerTimer, nsITimerCallback)
+NS_IMPL_ISUPPORTS(TicklerTimer, nsITimerCallback)
 
 NS_IMETHODIMP TicklerTimer::Notify(nsITimer *timer)
 {

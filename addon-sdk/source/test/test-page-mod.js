@@ -24,11 +24,14 @@ const { isTabPBSupported, isWindowPBSupported, isGlobalPBSupported } = require('
 const promise = require("sdk/core/promise");
 const { pb } = require('./private-browsing/helper');
 const { URL } = require("sdk/url");
+const { LoaderWithHookedConsole } = require('sdk/test/loader');
 
 const { waitUntil } = require("sdk/test/utils");
 const data = require("./fixtures");
 
-const { gDevToolsExtensions } = Cu.import("resource://gre/modules/devtools/DevToolsExtensions.jsm", {});
+const { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+const { require: devtoolsRequire } = devtools;
+const contentGlobals = devtoolsRequire("devtools/server/content-globals");
 
 const testPageURI = data.url("test.html");
 
@@ -131,16 +134,61 @@ exports.testPageModIncludes = function(assert, done) {
       createPageModTest(testPageURI, true)
     ],
     function (win, done) {
-      waitUntil(function () win.localStorage[testPageURI],
-                     testPageURI + " page-mod to be executed")
-          .then(function () {
-            asserts.forEach(function(fn) {
-              fn(assert, win);
-            });
-            done();
-          });
-    }
-    );
+      waitUntil(() => win.localStorage[testPageURI],
+          testPageURI + " page-mod to be executed")
+        .then(() => {
+          asserts.forEach(fn => fn(assert, win));
+          win.localStorage.clear();
+          done();
+        });
+    });
+};
+
+exports.testPageModExcludes = function(assert, done) {
+  var asserts = [];
+  function createPageModTest(include, exclude, expectedMatch) {
+    // Create an 'onload' test function...
+    asserts.push(function(test, win) {
+      var matches = JSON.stringify([include, exclude]) in win.localStorage;
+      assert.ok(expectedMatch ? matches : !matches,
+          "[include, exclude] = [" + include + ", " + exclude +
+          "] match test, expected: " + expectedMatch);
+    });
+    // ...and corresponding PageMod options
+    return {
+      include: include,
+      exclude: exclude,
+      contentScript: 'new ' + function() {
+        self.on("message", function(msg) {
+          // The key in localStorage is "[<include>, <exclude>]".
+          window.localStorage[JSON.stringify(msg)] = true;
+        });
+      },
+      // The testPageMod callback with test assertions is called on 'end',
+      // and we want this page mod to be attached before it gets called,
+      // so we attach it on 'start'.
+      contentScriptWhen: 'start',
+      onAttach: function(worker) {
+        worker.postMessage([this.include[0], this.exclude[0]]);
+      }
+    };
+  }
+
+  testPageMod(assert, done, testPageURI, [
+      createPageModTest("*", testPageURI, false),
+      createPageModTest(testPageURI, testPageURI, false),
+      createPageModTest(testPageURI, "resource://*", false),
+      createPageModTest(testPageURI, "*.google.com", true)
+    ],
+    function (win, done) {
+      waitUntil(() => win.localStorage[JSON.stringify([testPageURI, "*.google.com"])],
+          testPageURI + " page-mod to be executed")
+        .then(() => {
+          asserts.forEach(fn => fn(assert, win));
+          win.localStorage.clear();
+          done();
+        });
+    });
 };
 
 exports.testPageModValidationAttachTo = function(assert) {
@@ -183,6 +231,27 @@ exports.testPageModValidationInclude = function(assert) {
    { val: ['*.validation111'], type: 'array with length > 0'}].forEach((include) => {
     new PageMod({ include: include.val });
     assert.pass("PageMod() does not throw when include option is " + include.type);
+  });
+};
+
+exports.testPageModValidationExclude = function(assert) {
+  let includeVal = '*.validation111';
+
+  [{ val: {}, type: 'object' },
+   { val: [], type: 'empty array'},
+   { val: [/regexp/, 1], type: 'array with non string/regexp' },
+   { val: 1, type: 'number' }].forEach((exclude) => {
+    assert.throws(() => new PageMod({ include: includeVal, exclude: exclude.val }),
+      /If set, the `exclude` option must always contain at least one rule as a string, regular expression, or an array of strings and regular expressions./,
+      "PageMod() throws when 'exclude' option is " + exclude.type + ".");
+  });
+
+  [{ val: undefined, type: 'undefined' },
+   { val: '*.validation111', type: 'string' },
+   { val: /validation111/, type: 'regexp' },
+   { val: ['*.validation111'], type: 'array with length > 0'}].forEach((exclude) => {
+    new PageMod({ include: includeVal, exclude: exclude.val });
+    assert.pass("PageMod() does not throw when exclude option is " + exclude.type);
   });
 };
 
@@ -1425,7 +1494,7 @@ exports.testDevToolsExtensionsGetContentGlobals = function(assert, done) {
       contentScriptWhen: "start",
       contentScript: "null;",
     }], function(win, done) {
-      assert.equal(gDevToolsExtensions.getContentGlobals({ 'inner-window-id': getInnerId(win) }).length, 1);
+      assert.equal(contentGlobals.getContentGlobals({ 'inner-window-id': getInnerId(win) }).length, 1);
       done();
     }
   );
@@ -1529,6 +1598,41 @@ exports.testDetachOnUnload = function(assert, done) {
     url: TEST_URL,
     onOpen: t => tab = t
   })
+}
+
+exports.testConsole = function(assert, done) {
+  let innerID;
+  const TEST_URL = 'data:text/html;charset=utf-8,console';
+  const { loader } = LoaderWithHookedConsole(module, onMessage);
+  const { PageMod } = loader.require('sdk/page-mod');
+  const system = require("sdk/system/events");
+
+  let seenMessage = false;
+  function onMessage(type, msg, msgID) {
+    seenMessage = true;
+    innerID = msgID;
+  }
+
+  let mod = PageMod({
+    include: TEST_URL,
+    contentScriptWhen: "ready",
+    contentScript: Isolate(function() {
+      console.log("Hello from the page mod");
+      self.port.emit("done");
+    }),
+    onAttach: function(worker) {
+      worker.port.on("done", function() {
+        let window = getTabContentWindow(tab);
+        let id = getInnerId(window);
+        assert.ok(seenMessage, "Should have seen the console message");
+        assert.equal(innerID, id, "Should have seen the right inner ID");
+        closeTab(tab);
+        done();
+      });
+    },
+  });
+
+  let tab = openTab(getMostRecentBrowserWindow(), TEST_URL);
 }
 
 exports.testSyntaxErrorInContentScript = function(assert, done) {

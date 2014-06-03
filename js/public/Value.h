@@ -15,6 +15,7 @@
 
 #include <limits> /* for std::numeric_limits */
 
+#include "js-config.h"
 #include "jstypes.h"
 
 #include "js/Anchor.h"
@@ -46,7 +47,7 @@ namespace JS { class Value; }
 # define JSVAL_ALIGNMENT
 #endif
 
-#if JS_BITS_PER_WORD == 64
+#if defined(JS_PUNBOX64)
 # define JSVAL_TAG_SHIFT 47
 #endif
 
@@ -84,7 +85,7 @@ JS_ENUM_HEADER(JSValueType, uint8_t)
 
 JS_STATIC_ASSERT(sizeof(JSValueType) == 1);
 
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
 
 /* Remember to propagate changes to the C defines below. */
 JS_ENUM_HEADER(JSValueTag, uint32_t)
@@ -101,7 +102,7 @@ JS_ENUM_HEADER(JSValueTag, uint32_t)
 
 JS_STATIC_ASSERT(sizeof(JSValueTag) == 4);
 
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
 
 /* Remember to propagate changes to the C defines below. */
 JS_ENUM_HEADER(JSValueTag, uint32_t)
@@ -147,7 +148,7 @@ typedef uint8_t JSValueType;
 #define JSVAL_TYPE_OBJECT            ((uint8_t)0x07)
 #define JSVAL_TYPE_UNKNOWN           ((uint8_t)0x20)
 
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
 
 typedef uint32_t JSValueTag;
 #define JSVAL_TAG_CLEAR              ((uint32_t)(0xFFFFFF80))
@@ -159,7 +160,7 @@ typedef uint32_t JSValueTag;
 #define JSVAL_TAG_NULL               ((uint32_t)(JSVAL_TAG_CLEAR | JSVAL_TYPE_NULL))
 #define JSVAL_TAG_OBJECT             ((uint32_t)(JSVAL_TAG_CLEAR | JSVAL_TYPE_OBJECT))
 
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
 
 typedef uint32_t JSValueTag;
 #define JSVAL_TAG_MAX_DOUBLE         ((uint32_t)(0x1FFF0))
@@ -181,7 +182,7 @@ typedef uint64_t JSValueShiftedTag;
 #define JSVAL_SHIFTED_TAG_NULL       (((uint64_t)JSVAL_TAG_NULL)       << JSVAL_TAG_SHIFT)
 #define JSVAL_SHIFTED_TAG_OBJECT     (((uint64_t)JSVAL_TAG_OBJECT)     << JSVAL_TAG_SHIFT)
 
-#endif  /* JS_BITS_PER_WORD */
+#endif  /* JS_PUNBOX64 */
 #endif  /* !defined(__SUNPRO_CC) && !defined(__xlC__) */
 
 #define JSVAL_LOWER_INCL_TYPE_OF_OBJ_OR_NULL_SET        JSVAL_TYPE_NULL
@@ -189,7 +190,7 @@ typedef uint64_t JSValueShiftedTag;
 #define JSVAL_UPPER_INCL_TYPE_OF_NUMBER_SET             JSVAL_TYPE_INT32
 #define JSVAL_LOWER_INCL_TYPE_OF_PTR_PAYLOAD_SET        JSVAL_TYPE_MAGIC
 
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
 
 #define JSVAL_TYPE_TO_TAG(type)      ((JSValueTag)(JSVAL_TAG_CLEAR | (type)))
 
@@ -198,7 +199,7 @@ typedef uint64_t JSValueShiftedTag;
 #define JSVAL_UPPER_INCL_TAG_OF_NUMBER_SET              JSVAL_TAG_INT32
 #define JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET             JSVAL_TAG_STRING
 
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
 
 #define JSVAL_PAYLOAD_MASK           0x00007FFFFFFFFFFFLL
 #define JSVAL_TAG_MASK               0xFFFF800000000000LL
@@ -215,7 +216,7 @@ typedef uint64_t JSValueShiftedTag;
 #define JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET       JSVAL_SHIFTED_TAG_UNDEFINED
 #define JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET      JSVAL_SHIFTED_TAG_STRING
 
-#endif /* JS_BITS_PER_WORD */
+#endif /* JS_PUNBOX64 */
 
 typedef enum JSWhyMagic
 {
@@ -236,12 +237,13 @@ typedef enum JSWhyMagic
     JS_BLOCK_NEEDS_CLONE,        /* value of static block object slot */
     JS_HASH_KEY_EMPTY,           /* see class js::HashableValue */
     JS_ION_ERROR,                /* error while running Ion code */
-    JS_ION_BAILOUT,              /* status code to signal EnterIon will OSR into Interpret */
+    JS_ION_BAILOUT,              /* missing recover instruction result */
+    JS_OPTIMIZED_OUT,            /* optimized out slot */
     JS_GENERIC_MAGIC             /* for local use */
 } JSWhyMagic;
 
 #if defined(IS_LITTLE_ENDIAN)
-# if JS_BITS_PER_WORD == 32
+# if defined(JS_NUNBOX32)
 typedef union jsval_layout
 {
     uint64_t asBits;
@@ -262,7 +264,7 @@ typedef union jsval_layout
     double asDouble;
     void *asPtr;
 } JSVAL_ALIGNMENT jsval_layout;
-# elif JS_BITS_PER_WORD == 64
+# elif defined(JS_PUNBOX64)
 typedef union jsval_layout
 {
     uint64_t asBits;
@@ -285,9 +287,9 @@ typedef union jsval_layout
     size_t asWord;
     uintptr_t asUIntPtr;
 } JSVAL_ALIGNMENT jsval_layout;
-# endif  /* JS_BITS_PER_WORD */
+# endif  /* JS_PUNBOX64 */
 #else   /* defined(IS_LITTLE_ENDIAN) */
-# if JS_BITS_PER_WORD == 32
+# if defined(JS_NUNBOX32)
 typedef union jsval_layout
 {
     uint64_t asBits;
@@ -308,7 +310,7 @@ typedef union jsval_layout
     double asDouble;
     void *asPtr;
 } JSVAL_ALIGNMENT jsval_layout;
-# elif JS_BITS_PER_WORD == 64
+# elif defined(JS_PUNBOX64)
 typedef union jsval_layout
 {
     uint64_t asBits;
@@ -329,7 +331,7 @@ typedef union jsval_layout
     size_t asWord;
     uintptr_t asUIntPtr;
 } JSVAL_ALIGNMENT jsval_layout;
-# endif /* JS_BITS_PER_WORD */
+# endif /* JS_PUNBOX64 */
 #endif  /* defined(IS_LITTLE_ENDIAN) */
 
 JS_STATIC_ASSERT(sizeof(jsval_layout) == 8);
@@ -377,7 +379,7 @@ JS_STATIC_ASSERT(sizeof(jsval_layout) == 8);
 #  define JS_VALUE_CONSTEXPR_VAR const
 #endif
 
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
 
 /*
  * N.B. GCC, in some but not all cases, chooses to emit signed comparison of
@@ -584,7 +586,7 @@ JSVAL_IS_SPECIFIC_INT32_IMPL(jsval_layout l, int32_t i32)
 }
 
 static inline bool
-JSVAL_IS_SPECIFIC_BOOLEAN(jsval_layout l, bool b)
+JSVAL_IS_SPECIFIC_BOOLEAN_IMPL(jsval_layout l, bool b)
 {
     return (l.s.tag == JSVAL_TAG_BOOLEAN) && (l.s.payload.boo == uint32_t(b));
 }
@@ -622,7 +624,7 @@ JSVAL_EXTRACT_NON_DOUBLE_TYPE_IMPL(jsval_layout l)
     return (JSValueType)type;
 }
 
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
 
 static inline JS_VALUE_CONSTEXPR jsval_layout
 BUILD_JSVAL(JSValueTag tag, uint64_t payload)
@@ -820,7 +822,7 @@ JSVAL_IS_SPECIFIC_INT32_IMPL(jsval_layout l, int32_t i32)
 }
 
 static inline bool
-JSVAL_IS_SPECIFIC_BOOLEAN(jsval_layout l, bool b)
+JSVAL_IS_SPECIFIC_BOOLEAN_IMPL(jsval_layout l, bool b)
 {
     return l.asBits == (((uint64_t)(uint32_t)b) | JSVAL_SHIFTED_TAG_BOOLEAN);
 }
@@ -857,7 +859,7 @@ JSVAL_EXTRACT_NON_DOUBLE_TYPE_IMPL(jsval_layout l)
    return (JSValueType)type;
 }
 
-#endif  /* JS_BITS_PER_WORD */
+#endif  /* JS_PUNBOX64 */
 
 static inline jsval_layout JSVAL_TO_IMPL(JS::Value v);
 static inline JS_VALUE_CONSTEXPR JS::Value IMPL_TO_JSVAL(jsval_layout l);
@@ -913,11 +915,7 @@ CanonicalizeNaN(double d)
  * - The JS::Value operations are preferred.  The JSVAL_* operations remain for
  *   compatibility; they may be removed at some point.  These operations mostly
  *   provide similar functionality.  But there are a few key differences.  One
- *   is that JS::Value gives null a separate type. Thus
- *
- *           JSVAL_IS_OBJECT(v) === v.isObjectOrNull()
- *       !JSVAL_IS_PRIMITIVE(v) === v.isObject()
- *
+ *   is that JS::Value gives null a separate type.
  *   Also, to help prevent mistakenly boxing a nullable JSObject* as an object,
  *   Value::setObject takes a JSObject&. (Conversely, Value::toObject returns a
  *   JSObject&.)  A convenience member Value::setObjectOrNull is provided.
@@ -1083,11 +1081,11 @@ class Value
     }
 
     bool isTrue() const {
-        return JSVAL_IS_SPECIFIC_BOOLEAN(data, true);
+        return JSVAL_IS_SPECIFIC_BOOLEAN_IMPL(data, true);
     }
 
     bool isFalse() const {
-        return JSVAL_IS_SPECIFIC_BOOLEAN(data, false);
+        return JSVAL_IS_SPECIFIC_BOOLEAN_IMPL(data, false);
     }
 
     bool isMagic() const {
@@ -1227,17 +1225,17 @@ class Value
     }
 
     const size_t *payloadWord() const {
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
         return &data.s.payload.word;
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
         return &data.asWord;
 #endif
     }
 
     const uintptr_t *payloadUIntPtr() const {
-#if JS_BITS_PER_WORD == 32
+#if defined(JS_NUNBOX32)
         return &data.s.payload.uintptr;
-#elif JS_BITS_PER_WORD == 64
+#elif defined(JS_PUNBOX64)
         return &data.asUIntPtr;
 #endif
     }
@@ -1253,7 +1251,7 @@ class Value
 
   private:
 #if defined(JS_VALUE_IS_CONSTEXPR)
-    JS_VALUE_CONSTEXPR Value(jsval_layout layout) : data(layout) {}
+    MOZ_IMPLICIT JS_VALUE_CONSTEXPR Value(jsval_layout layout) : data(layout) {}
 #endif
 
     void staticAssertions() {
@@ -1275,6 +1273,16 @@ IsPoisonedValue(const Value &v)
         return IsPoisonedPtr(v.toString());
     if (v.isObject())
         return IsPoisonedPtr(&v.toObject());
+    return false;
+}
+
+inline bool
+IsOptimizedPlaceholderMagicValue(const Value &v)
+{
+    if (v.isMagic()) {
+        MOZ_ASSERT(v.whyMagic() == JS_OPTIMIZED_ARGUMENTS || v.whyMagic() == JS_OPTIMIZED_OUT);
+        return true;
+    }
     return false;
 }
 
@@ -1549,7 +1557,9 @@ template <> struct GCMethods<JS::Value>
     static JS::Value initial() { return JS::UndefinedValue(); }
     static ThingRootKind kind() { return THING_ROOT_VALUE; }
     static bool poisoned(const JS::Value &v) { return JS::IsPoisonedValue(v); }
-    static bool needsPostBarrier(const JS::Value &v) { return v.isMarkable(); }
+    static bool needsPostBarrier(const JS::Value &v) {
+        return v.isObject() && gc::IsInsideNursery(reinterpret_cast<gc::Cell*>(&v.toObject()));
+    }
 #ifdef JSGC_GENERATIONAL
     static void postBarrier(JS::Value *v) { JS::HeapValuePostBarrier(v); }
     static void relocate(JS::Value *v) { JS::HeapValueRelocate(v); }
@@ -1599,6 +1609,7 @@ class ValueOperations
     JSObject &toObject() const { return value()->toObject(); }
     JSObject *toObjectOrNull() const { return value()->toObjectOrNull(); }
     void *toGCThing() const { return value()->toGCThing(); }
+    uint64_t asRawBits() const { return value()->asRawBits(); }
 
     JSValueType extractNonDoubleType() const { return value()->extractNonDoubleType(); }
     uint32_t toPrivateUint32() const { return value()->toPrivateUint32(); }
@@ -1809,50 +1820,10 @@ static_assert(sizeof(jsval_layout) == sizeof(JS::Value),
 
 /************************************************************************/
 
-static inline bool
-JSVAL_IS_NULL(jsval v)
-{
-    return JSVAL_IS_NULL_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline bool
-JSVAL_IS_VOID(jsval v)
-{
-    return JSVAL_IS_UNDEFINED_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline bool
-JSVAL_IS_INT(jsval v)
-{
-    return JSVAL_IS_INT32_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline int32_t
-JSVAL_TO_INT(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_INT(v));
-    return JSVAL_TO_INT32_IMPL(JSVAL_TO_IMPL(v));
-}
-
 static inline JS_VALUE_CONSTEXPR jsval
 INT_TO_JSVAL(int32_t i)
 {
     return IMPL_TO_JSVAL(INT32_TO_JSVAL_IMPL(i));
-}
-
-static inline bool
-JSVAL_IS_DOUBLE(jsval v)
-{
-    return JSVAL_IS_DOUBLE_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline double
-JSVAL_TO_DOUBLE(jsval v)
-{
-    jsval_layout l;
-    MOZ_ASSERT(JSVAL_IS_DOUBLE(v));
-    l = JSVAL_TO_IMPL(v);
-    return l.asDouble;
 }
 
 static inline JS_VALUE_CONSTEXPR jsval
@@ -1886,36 +1857,10 @@ UINT_TO_JSVAL(uint32_t i)
             : DOUBLE_TO_JSVAL((double)i));
 }
 
-static inline bool
-JSVAL_IS_NUMBER(jsval v)
-{
-    return JSVAL_IS_NUMBER_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline bool
-JSVAL_IS_STRING(jsval v)
-{
-    return JSVAL_IS_STRING_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline JSString *
-JSVAL_TO_STRING(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_STRING(v));
-    return JSVAL_TO_STRING_IMPL(JSVAL_TO_IMPL(v));
-}
-
 static inline jsval
 STRING_TO_JSVAL(JSString *str)
 {
     return IMPL_TO_JSVAL(STRING_TO_JSVAL_IMPL(str));
-}
-
-static inline JSObject *
-JSVAL_TO_OBJECT(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_OBJECT_OR_NULL_IMPL(JSVAL_TO_IMPL(v)));
-    return JSVAL_TO_OBJECT_IMPL(JSVAL_TO_IMPL(v));
 }
 
 static inline jsval
@@ -1926,42 +1871,10 @@ OBJECT_TO_JSVAL(JSObject *obj)
     return IMPL_TO_JSVAL(BUILD_JSVAL(JSVAL_TAG_NULL, 0));
 }
 
-static inline bool
-JSVAL_IS_BOOLEAN(jsval v)
-{
-    return JSVAL_IS_BOOLEAN_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline bool
-JSVAL_TO_BOOLEAN(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_BOOLEAN(v));
-    return JSVAL_TO_BOOLEAN_IMPL(JSVAL_TO_IMPL(v));
-}
-
 static inline jsval
 BOOLEAN_TO_JSVAL(bool b)
 {
     return IMPL_TO_JSVAL(BOOLEAN_TO_JSVAL_IMPL(b));
-}
-
-static inline bool
-JSVAL_IS_PRIMITIVE(jsval v)
-{
-    return JSVAL_IS_PRIMITIVE_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline bool
-JSVAL_IS_GCTHING(jsval v)
-{
-    return JSVAL_IS_GCTHING_IMPL(JSVAL_TO_IMPL(v));
-}
-
-static inline void *
-JSVAL_TO_GCTHING(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_GCTHING(v));
-    return JSVAL_TO_GCTHING_IMPL(JSVAL_TO_IMPL(v));
 }
 
 /* To be GC-safe, privates are tagged as doubles. */
@@ -1970,13 +1883,6 @@ static inline jsval
 PRIVATE_TO_JSVAL(void *ptr)
 {
     return IMPL_TO_JSVAL(PRIVATE_PTR_TO_JSVAL_IMPL(ptr));
-}
-
-static inline void *
-JSVAL_TO_PRIVATE(jsval v)
-{
-    MOZ_ASSERT(JSVAL_IS_DOUBLE(v));
-    return JSVAL_TO_PRIVATE_PTR_IMPL(JSVAL_TO_IMPL(v));
 }
 
 // JS constants. For efficiency, prefer predicates (e.g. v.isNull()) and
@@ -1994,6 +1900,8 @@ namespace JS {
 
 extern JS_PUBLIC_DATA(const HandleValue) NullHandleValue;
 extern JS_PUBLIC_DATA(const HandleValue) UndefinedHandleValue;
+extern JS_PUBLIC_DATA(const HandleValue) TrueHandleValue;
+extern JS_PUBLIC_DATA(const HandleValue) FalseHandleValue;
 
 }
 

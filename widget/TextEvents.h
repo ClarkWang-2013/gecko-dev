@@ -87,6 +87,7 @@ public:
     , mIsRepeat(false)
     , mIsComposing(false)
     , mKeyNameIndex(mozilla::KEY_NAME_INDEX_Unidentified)
+    , mCodeNameIndex(CODE_NAME_INDEX_UNKNOWN)
     , mNativeKeyEvent(nullptr)
     , mUniqueId(0)
   {
@@ -128,8 +129,13 @@ public:
   bool mIsComposing;
   // DOM KeyboardEvent.key
   KeyNameIndex mKeyNameIndex;
+  // DOM KeyboardEvent.code
+  CodeNameIndex mCodeNameIndex;
   // DOM KeyboardEvent.key only when mKeyNameIndex is KEY_NAME_INDEX_USE_STRING.
   nsString mKeyValue;
+  // DOM KeyboardEvent.code only when mCodeNameIndex is
+  // CODE_NAME_INDEX_USE_STRING.
+  nsString mCodeValue;
   // OS-specific native event can optionally be preserved
   void* mNativeKeyEvent;
   // Unique id associated with a keydown / keypress event. Used in identifing
@@ -146,9 +152,19 @@ public:
     }
     GetDOMKeyName(mKeyNameIndex, aKeyName);
   }
+  void GetDOMCodeName(nsAString& aCodeName)
+  {
+    if (mCodeNameIndex == CODE_NAME_INDEX_USE_STRING) {
+      aCodeName = mCodeValue;
+      return;
+    }
+    GetDOMCodeName(mCodeNameIndex, aCodeName);
+  }
 
-  static void GetDOMKeyName(mozilla::KeyNameIndex aKeyNameIndex,
+  static void GetDOMKeyName(KeyNameIndex aKeyNameIndex,
                             nsAString& aKeyName);
+  static void GetDOMCodeName(CodeNameIndex aCodeNameIndex,
+                             nsAString& aCodeName);
 
   static const char* GetCommandStr(Command aCommand);
 
@@ -164,7 +180,9 @@ public:
     mIsRepeat = aEvent.mIsRepeat;
     mIsComposing = aEvent.mIsComposing;
     mKeyNameIndex = aEvent.mKeyNameIndex;
+    mCodeNameIndex = aEvent.mCodeNameIndex;
     mKeyValue = aEvent.mKeyValue;
+    mCodeValue = aEvent.mCodeValue;
     // Don't copy mNativeKeyEvent because it may be referred after its instance
     // is destroyed.
     mNativeKeyEvent = nullptr;
@@ -337,9 +355,11 @@ public:
   }
 
   WidgetQueryContentEvent(bool aIsTrusted, uint32_t aMessage,
-                          nsIWidget* aWidget) :
-    WidgetGUIEvent(aIsTrusted, aMessage, aWidget, NS_QUERY_CONTENT_EVENT),
-    mSucceeded(false), mWasAsync(false)
+                          nsIWidget* aWidget)
+    : WidgetGUIEvent(aIsTrusted, aMessage, aWidget, NS_QUERY_CONTENT_EVENT)
+    , mSucceeded(false)
+    , mWasAsync(false)
+    , mUseNativeLineBreak(true)
   {
   }
 
@@ -352,27 +372,33 @@ public:
     return nullptr;
   }
 
-  void InitForQueryTextContent(uint32_t aOffset, uint32_t aLength)
+  void InitForQueryTextContent(uint32_t aOffset, uint32_t aLength,
+                               bool aUseNativeLineBreak = true)
   {
     NS_ASSERTION(message == NS_QUERY_TEXT_CONTENT,
                  "wrong initializer is called");
     mInput.mOffset = aOffset;
     mInput.mLength = aLength;
+    mUseNativeLineBreak = aUseNativeLineBreak;
   }
 
-  void InitForQueryCaretRect(uint32_t aOffset)
+  void InitForQueryCaretRect(uint32_t aOffset,
+                             bool aUseNativeLineBreak = true)
   {
     NS_ASSERTION(message == NS_QUERY_CARET_RECT,
                  "wrong initializer is called");
     mInput.mOffset = aOffset;
+    mUseNativeLineBreak = aUseNativeLineBreak;
   }
 
-  void InitForQueryTextRect(uint32_t aOffset, uint32_t aLength)
+  void InitForQueryTextRect(uint32_t aOffset, uint32_t aLength,
+                            bool aUseNativeLineBreak = true)
   {
     NS_ASSERTION(message == NS_QUERY_TEXT_RECT,
                  "wrong initializer is called");
     mInput.mOffset = aOffset;
     mInput.mLength = aLength;
+    mUseNativeLineBreak = aUseNativeLineBreak;
   }
 
   void InitForQueryDOMWidgetHittest(const mozilla::LayoutDeviceIntPoint& aPoint)
@@ -398,6 +424,7 @@ public:
 
   bool mSucceeded;
   bool mWasAsync;
+  bool mUseNativeLineBreak;
   struct
   {
     uint32_t mOffset;
@@ -473,6 +500,7 @@ public:
     , mReversed(false)
     , mExpandToClusterBoundary(true)
     , mSucceeded(false)
+    , mUseNativeLineBreak(true)
   {
   }
 
@@ -495,6 +523,8 @@ public:
   bool mExpandToClusterBoundary;
   // true if setting selection succeeded.
   bool mSucceeded;
+  // true if native line breaks are used for mOffset and mLength
+  bool mUseNativeLineBreak;
 };
 
 /******************************************************************************

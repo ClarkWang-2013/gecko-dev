@@ -56,6 +56,10 @@ class StyleRule;
 }
 }
 
+namespace JS {
+class SourceBufferHolder;
+}
+
 ////////////////////////////////////////////////////////////////////////
 
 #ifdef XUL_PROTOTYPE_ATTRIBUTE_METERING
@@ -231,10 +235,14 @@ public:
     nsresult DeserializeOutOfLine(nsIObjectInputStream* aInput,
                                   nsXULPrototypeDocument* aProtoDoc);
 
+    nsresult Compile(JS::SourceBufferHolder& aSrcBuf,
+                     nsIURI* aURI, uint32_t aLineNo,
+                     nsIDocument* aDocument,
+                     nsIOffThreadScriptReceiver *aOffThreadReceiver = nullptr);
+
     nsresult Compile(const char16_t* aText, int32_t aTextLength,
                      nsIURI* aURI, uint32_t aLineNo,
                      nsIDocument* aDocument,
-                     nsXULPrototypeDocument* aProtoDoc,
                      nsIOffThreadScriptReceiver *aOffThreadReceiver = nullptr);
 
     void UnlinkJSObjects();
@@ -371,8 +379,7 @@ public:
 
     // nsISupports
     NS_DECL_ISUPPORTS_INHERITED
-    NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsXULElement,
-                                                       mozilla::dom::Element)
+    NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULElement, nsStyledElement)
 
     // nsINode
     virtual nsresult PreHandleEvent(

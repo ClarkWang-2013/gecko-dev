@@ -166,10 +166,6 @@ protected:
 public:
   static jsid sLocation_id;
   static jsid sConstructor_id;
-  static jsid sLength_id;
-  static jsid sItem_id;
-  static jsid sNamedItem_id;
-  static jsid sEnumerate_id;
   static jsid sTop_id;
   static jsid sDocument_id;
   static jsid sWrappedJSObject_id;
@@ -269,8 +265,8 @@ public:
   NS_IMETHOD Enumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                        JSObject *obj, bool *_retval) MOZ_OVERRIDE;
   NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
+                        JSObject *obj, jsid id, JSObject **objp,
+                        bool *_retval) MOZ_OVERRIDE;
   NS_IMETHOD OuterObject(nsIXPConnectWrappedNative *wrapper, JSContext * cx,
                          JSObject * obj, JSObject * *_retval) MOZ_OVERRIDE;
 
@@ -310,87 +306,6 @@ public:
 };
 
 
-// Generic array scriptable helper
-
-class nsGenericArraySH : public nsDOMClassInfo
-{
-protected:
-  nsGenericArraySH(nsDOMClassInfoData* aData) : nsDOMClassInfo(aData)
-  {
-  }
-
-  virtual ~nsGenericArraySH()
-  {
-  }
-
-public:
-  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
-  NS_IMETHOD Enumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                       JSObject *obj, bool *_retval) MOZ_OVERRIDE;
-
-  virtual nsresult GetLength(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                             JS::Handle<JSObject*> obj, uint32_t *length);
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsGenericArraySH(aData);
-  }
-};
-
-
-// Array scriptable helper
-
-class nsArraySH : public nsGenericArraySH
-{
-protected:
-  nsArraySH(nsDOMClassInfoData* aData) : nsGenericArraySH(aData)
-  {
-  }
-
-  virtual ~nsArraySH()
-  {
-  }
-
-  // Subclasses need to override this, if the implementation can't fail it's
-  // allowed to not set *aResult.
-  virtual nsISupports* GetItemAt(nsISupports *aNative, uint32_t aIndex,
-                                 nsWrapperCache **aCache, nsresult *aResult) = 0;
-
-public:
-  NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, JS::Value *vp, bool *_retval) MOZ_OVERRIDE;
-
-private:
-  // Not implemented, nothing should create an instance of this class.
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData);
-};
-
-
-// CSSRuleList helper
-
-class nsCSSRuleListSH : public nsArraySH
-{
-protected:
-  nsCSSRuleListSH(nsDOMClassInfoData* aData) : nsArraySH(aData)
-  {
-  }
-
-  virtual ~nsCSSRuleListSH()
-  {
-  }
-
-  virtual nsISupports* GetItemAt(nsISupports *aNative, uint32_t aIndex,
-                                 nsWrapperCache **aCache, nsresult *aResult) MOZ_OVERRIDE;
-
-public:
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsCSSRuleListSH(aData);
-  }
-};
-
 // WebApps Storage helpers
 
 class nsStorage2SH : public nsDOMGenericSH
@@ -405,8 +320,8 @@ protected:
   }
 
   NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
+                        JSObject *obj, jsid id, JSObject **objp,
+                        bool *_retval) MOZ_OVERRIDE;
   NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                          JSObject *obj, jsid id, JS::Value *vp, bool *_retval) MOZ_OVERRIDE;
   NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
@@ -464,8 +379,8 @@ public:
     return NS_OK;
   }
   NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
+                        JSObject *obj, jsid id, JSObject **objp,
+                        bool *_retval) MOZ_OVERRIDE;
   NS_IMETHOD Call(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                   JSObject *obj, const JS::CallArgs &args, bool *_retval) MOZ_OVERRIDE;
 

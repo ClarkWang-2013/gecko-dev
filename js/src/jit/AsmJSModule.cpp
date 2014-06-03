@@ -64,9 +64,6 @@ AsmJSModule::initHeap(Handle<ArrayBufferObject*> heap, JSContext *cx)
         jit::Assembler::updateBoundsCheck(heapLength,
                                           (jit::Instruction*)(heapAccesses_[i].offset() + code_));
     }
-    // We already know the exact extent of areas that need to be patched, just make sure we
-    // flush all of them at once.
-    jit::AutoFlushCache::updateTop(uintptr_t(code_), pod.codeBytes_);
 #endif
 }
 
@@ -167,10 +164,10 @@ InvokeFromAsmJS_ToNumber(JSContext *cx, int32_t exitIndex, int32_t argc, Value *
 #if defined(JS_CODEGEN_ARM)
 extern "C" {
 
-extern int64_t
+extern MOZ_EXPORT int64_t
 __aeabi_idivmod(int, int);
 
-extern int64_t
+extern MOZ_EXPORT int64_t
 __aeabi_uidivmod(int, int);
 
 }
@@ -280,7 +277,7 @@ AsmJSModule::restoreToInitialState(ArrayBufferObject *maybePrevBuffer, Exclusive
     // in staticallyLink are valid.
     for (size_t i = 0; i < staticLinkData_.absoluteLinks.length(); i++) {
         AbsoluteLink link = staticLinkData_.absoluteLinks[i];
-        Assembler::patchDataWithValueCheck(code_ + link.patchAt.offset(),
+        Assembler::patchDataWithValueCheck(CodeLocationLabel(code_ + link.patchAt.offset()),
                                            PatchedImmPtr((void*)-1),
                                            PatchedImmPtr(AddressOf(link.target, cx)));
     }
@@ -302,6 +299,12 @@ AsmJSModule::restoreToInitialState(ArrayBufferObject *maybePrevBuffer, Exclusive
 }
 
 void
+AsmJSModule::setAutoFlushICacheRange()
+{
+    AutoFlushICache::setRange(uintptr_t(code_), pod.codeBytes_);
+}
+
+void
 AsmJSModule::staticallyLink(ExclusiveContext *cx)
 {
     // Process staticLinkData_
@@ -310,22 +313,17 @@ AsmJSModule::staticallyLink(ExclusiveContext *cx)
 
     for (size_t i = 0; i < staticLinkData_.relativeLinks.length(); i++) {
         RelativeLink link = staticLinkData_.relativeLinks[i];
-#ifndef JS_CODEGEN_MIPS
-        *(void **)(code_ + link.patchAtOffset) = code_ + link.targetOffset;
-#else
-        if (link.isTableEntry) {
-            *(void **)(code_ + link.patchAtOffset) = code_ + link.targetOffset;
-        } else {
-            InstImm *inst = (InstImm *)(code_ + link.patchAtOffset);
-            Assembler::updateLuiOriValue(inst, inst->next(), (uint32_t)code_ + link.targetOffset);
-            AutoFlushCache::updateTop(uintptr_t(inst), 8);
-        }
-#endif
+        uint8_t *patchAt = code_ + link.patchAtOffset;
+        uint8_t *target = code_ + link.targetOffset;
+        if (link.isRawPointerPatch())
+            *(uint8_t **)(patchAt) = target;
+        else
+            Assembler::patchInstructionImmediate(patchAt, PatchedImmPtr(target));
     }
 
     for (size_t i = 0; i < staticLinkData_.absoluteLinks.length(); i++) {
         AbsoluteLink link = staticLinkData_.absoluteLinks[i];
-        Assembler::patchDataWithValueCheck(code_ + link.patchAt.offset(),
+        Assembler::patchDataWithValueCheck(CodeLocationLabel(code_ + link.patchAt.offset()),
                                            PatchedImmPtr(AddressOf(link.target, cx)),
                                            PatchedImmPtr((void*)-1));
     }
@@ -381,9 +379,6 @@ AsmJSModule::~AsmJSModule()
 
         DeallocateExecutableMemory(code_, pod.totalBytes_);
     }
-
-    for (size_t i = 0; i < numFunctionCounts(); i++)
-        js_delete(functionCounts(i));
 }
 
 void
@@ -395,6 +390,8 @@ AsmJSModule::addSizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModu
                         globals_.sizeOfExcludingThis(mallocSizeOf) +
                         exits_.sizeOfExcludingThis(mallocSizeOf) +
                         exports_.sizeOfExcludingThis(mallocSizeOf) +
+                        callSites_.sizeOfExcludingThis(mallocSizeOf) +
+                        functionNames_.sizeOfExcludingThis(mallocSizeOf) +
                         heapAccesses_.sizeOfExcludingThis(mallocSizeOf) +
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
                         profiledFunctions_.sizeOfExcludingThis(mallocSizeOf) +
@@ -402,7 +399,6 @@ AsmJSModule::addSizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModu
 #if defined(JS_ION_PERF)
                         perfProfiledBlocksFunctions_.sizeOfExcludingThis(mallocSizeOf) +
 #endif
-                        functionCounts_.sizeOfExcludingThis(mallocSizeOf) +
                         staticLinkData_.sizeOfExcludingThis(mallocSizeOf);
 }
 
@@ -491,6 +487,12 @@ SerializedNameSize(PropertyName *name)
            (name ? name->length() * sizeof(jschar) : 0);
 }
 
+size_t
+AsmJSModule::Name::serializedSize() const
+{
+    return SerializedNameSize(name_);
+}
+
 static uint8_t *
 SerializeName(uint8_t *cursor, PropertyName *name)
 {
@@ -502,6 +504,12 @@ SerializeName(uint8_t *cursor, PropertyName *name)
         cursor = WriteScalar<uint32_t>(cursor, 0);
     }
     return cursor;
+}
+
+uint8_t *
+AsmJSModule::Name::serialize(uint8_t *cursor) const
+{
+    return SerializeName(cursor, name_);
 }
 
 static const uint8_t *
@@ -533,6 +541,19 @@ DeserializeName(ExclusiveContext *cx, const uint8_t *cursor, PropertyName **name
 
     *name = atom->asPropertyName();
     return cursor + length * sizeof(jschar);
+}
+
+const uint8_t *
+AsmJSModule::Name::deserialize(ExclusiveContext *cx, const uint8_t *cursor)
+{
+    return DeserializeName(cx, cursor, &name_);
+}
+
+bool
+AsmJSModule::Name::clone(ExclusiveContext *cx, Name *out) const
+{
+    out->name_ = name_;
+    return true;
 }
 
 template <class T>
@@ -802,6 +823,8 @@ AsmJSModule::serializedSize() const
            SerializedVectorSize(globals_) +
            SerializedVectorSize(exits_) +
            SerializedVectorSize(exports_) +
+           SerializedPodVectorSize(callSites_) +
+           SerializedVectorSize(functionNames_) +
            SerializedPodVectorSize(heapAccesses_) +
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
            SerializedVectorSize(profiledFunctions_) +
@@ -820,6 +843,8 @@ AsmJSModule::serialize(uint8_t *cursor) const
     cursor = SerializeVector(cursor, globals_);
     cursor = SerializeVector(cursor, exits_);
     cursor = SerializeVector(cursor, exports_);
+    cursor = SerializePodVector(cursor, callSites_);
+    cursor = SerializeVector(cursor, functionNames_);
     cursor = SerializePodVector(cursor, heapAccesses_);
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
     cursor = SerializeVector(cursor, profiledFunctions_);
@@ -844,6 +869,8 @@ AsmJSModule::deserialize(ExclusiveContext *cx, const uint8_t *cursor)
     (cursor = DeserializeVector(cx, cursor, &globals_)) &&
     (cursor = DeserializeVector(cx, cursor, &exits_)) &&
     (cursor = DeserializeVector(cx, cursor, &exports_)) &&
+    (cursor = DeserializePodVector(cx, cursor, &callSites_)) &&
+    (cursor = DeserializeVector(cx, cursor, &functionNames_)) &&
     (cursor = DeserializePodVector(cx, cursor, &heapAccesses_)) &&
 #if defined(MOZ_VTUNE) || defined(JS_ION_PERF)
     (cursor = DeserializeVector(cx, cursor, &profiledFunctions_)) &&
@@ -851,6 +878,7 @@ AsmJSModule::deserialize(ExclusiveContext *cx, const uint8_t *cursor)
     (cursor = staticLinkData_.deserialize(cx, cursor));
 
     loadedFromCache_ = true;
+
     return cursor;
 }
 
@@ -911,6 +939,8 @@ AsmJSModule::clone(JSContext *cx, ScopedJSDeletePtr<AsmJSModule> *moduleOut) con
     if (!CloneVector(cx, globals_, &out.globals_) ||
         !CloneVector(cx, exits_, &out.exits_) ||
         !CloneVector(cx, exports_, &out.exports_) ||
+        !ClonePodVector(cx, callSites_, &out.callSites_) ||
+        !CloneVector(cx, functionNames_, &out.functionNames_) ||
         !ClonePodVector(cx, heapAccesses_, &out.heapAccesses_) ||
         !staticLinkData_.clone(cx, &out.staticLinkData_))
     {
@@ -918,6 +948,10 @@ AsmJSModule::clone(JSContext *cx, ScopedJSDeletePtr<AsmJSModule> *moduleOut) con
     }
 
     out.loadedFromCache_ = loadedFromCache_;
+
+    // We already know the exact extent of areas that need to be patched, just make sure we
+    // flush all of them at once.
+    out.setAutoFlushICacheRange();
 
     out.restoreToInitialState(maybeHeap_, cx);
     return true;
@@ -1055,7 +1089,7 @@ struct PropertyNameWrapper
     PropertyNameWrapper()
       : name(nullptr)
     {}
-    PropertyNameWrapper(PropertyName *name)
+    explicit PropertyNameWrapper(PropertyName *name)
       : name(name)
     {}
     size_t serializedSize() const {
@@ -1230,7 +1264,7 @@ struct ScopedCacheEntryOpenedForWrite
 
     ~ScopedCacheEntryOpenedForWrite() {
         if (memory)
-            cx->asmJSCacheOps().closeEntryForWrite(cx->global(), serializedSize, memory, handle);
+            cx->asmJSCacheOps().closeEntryForWrite(serializedSize, memory, handle);
     }
 };
 
@@ -1281,13 +1315,13 @@ struct ScopedCacheEntryOpenedForRead
     const uint8_t *memory;
     intptr_t handle;
 
-    ScopedCacheEntryOpenedForRead(ExclusiveContext *cx)
+    explicit ScopedCacheEntryOpenedForRead(ExclusiveContext *cx)
       : cx(cx), serializedSize(0), memory(nullptr), handle(0)
     {}
 
     ~ScopedCacheEntryOpenedForRead() {
         if (memory)
-            cx->asmJSCacheOps().closeEntryForRead(cx->global(), serializedSize, memory, handle);
+            cx->asmJSCacheOps().closeEntryForRead(serializedSize, memory, handle);
     }
 };
 
@@ -1336,6 +1370,13 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
     if (!module)
         return false;
     cursor = module->deserialize(cx, cursor);
+
+    // No need to flush the instruction cache now, it will be flushed when dynamically linking.
+    AutoFlushICache afc("LookupAsmJSModuleInCache", /* inhibit= */ true);
+    // We already know the exact extent of areas that need to be patched, just make sure we
+    // flush all of them at once.
+    module->setAutoFlushICacheRange();
+
     if (!cursor)
         return false;
 
@@ -1345,10 +1386,6 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
         return true;
 
     module->staticallyLink(cx);
-
-#ifdef JS_CODEGEN_MIPS
-    jit::AutoFlushCache::updateTop(uintptr_t(module->codeBase()), module->offsetOfGlobalData());
-#endif
 
     parser.tokenStream.advance(module->funcEndBeforeCurly());
 

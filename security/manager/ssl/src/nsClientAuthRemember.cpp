@@ -27,9 +27,9 @@
 using namespace mozilla;
 using namespace mozilla::psm;
 
-NS_IMPL_ISUPPORTS2(nsClientAuthRememberService,
-                   nsIObserver,
-                   nsISupportsWeakReference)
+NS_IMPL_ISUPPORTS(nsClientAuthRememberService,
+                  nsIObserver,
+                  nsISupportsWeakReference)
 
 nsClientAuthRememberService::nsClientAuthRememberService()
   : monitor("nsClientAuthRememberService.monitor")
@@ -205,7 +205,7 @@ nsClientAuthRememberService::GetHostWithCert(const nsACString & aHostName,
                                              nsACString& _retval)
 {
   nsAutoCString hostCert(aHostName);
-  hostCert.AppendLiteral(":");
+  hostCert.Append(':');
   hostCert.Append(fingerprint);
   
   _retval.Assign(hostCert);

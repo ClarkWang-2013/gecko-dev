@@ -145,9 +145,6 @@ const HISTORY_FORWARD = 1;
 // The indent of a console group in pixels.
 const GROUP_INDENT = 12;
 
-// The default indent in pixels, applied even without any groups.
-const GROUP_INDENT_DEFAULT = 6;
-
 // The number of messages to display in a single display update. If we display
 // too many messages at once we slow the Firefox UI too much.
 const MESSAGES_IN_INTERVAL = DEFAULT_LOG_LIMIT;
@@ -2449,15 +2446,18 @@ WebConsoleFrame.prototype = {
       aClipboardText = aBody.innerText;
     }
 
+    let indentNode = this.document.createElementNS(XHTML_NS, "span");
+    indentNode.className = "indent";
+
+    // Apply the current group by indenting appropriately.
+    let indent = this.groupDepth * GROUP_INDENT;
+    indentNode.style.width = indent + "px";
+
     // Make the icon container, which is a vertical box. Its purpose is to
     // ensure that the icon stays anchored at the top of the message even for
     // long multi-line messages.
     let iconContainer = this.document.createElementNS(XHTML_NS, "span");
     iconContainer.className = "icon";
-
-    // Apply the current group by indenting appropriately.
-    let iconMarginLeft = this.groupDepth * GROUP_INDENT + GROUP_INDENT_DEFAULT;
-    iconContainer.style.marginLeft = iconMarginLeft + "px";
 
     // Create the message body, which contains the actual text of the message.
     let bodyNode = this.document.createElementNS(XHTML_NS, "span");
@@ -2528,6 +2528,7 @@ WebConsoleFrame.prototype = {
     }
 
     node.appendChild(timestampNode);
+    node.appendChild(indentNode);
     node.appendChild(iconContainer);
 
     // Display the variables view after the message node.
@@ -3132,7 +3133,10 @@ JSTerm.prototype = {
       inputContainer.style.display = "none";
     }
     else {
+      this._onPaste = WebConsoleUtils.pasteHandlerGen(this.inputNode, doc.getElementById("webconsole-notificationbox"));
       this.inputNode.addEventListener("keypress", this._keyPress, false);
+      this.inputNode.addEventListener("paste", this._onPaste);
+      this.inputNode.addEventListener("drop", this._onPaste);
       this.inputNode.addEventListener("input", this._inputEventHandler, false);
       this.inputNode.addEventListener("keyup", this._inputEventHandler, false);
       this.inputNode.addEventListener("focus", this._focusEventHandler, false);
@@ -3271,6 +3275,7 @@ JSTerm.prototype = {
     // value that was not evaluated yet.
     this.history[this.historyIndex++] = aExecuteString;
     this.historyPlaceHolder = this.history.length;
+    WebConsoleUtils.usageCount++;
     this.setInputValue("");
     this.clearCompletion();
   },
@@ -4521,6 +4526,12 @@ JSTerm.prototype = {
                 .getElementById("webConsole_autocompletePopup");
     if (popup) {
       popup.parentNode.removeChild(popup);
+    }
+
+    if (this._onPaste) {
+      this.inputNode.removeEventListener("paste", this._onPaste, false);
+      this.inputNode.removeEventListener("drop", this._onPaste, false);
+      this._onPaste = null;
     }
 
     this.inputNode.removeEventListener("keypress", this._keyPress, false);

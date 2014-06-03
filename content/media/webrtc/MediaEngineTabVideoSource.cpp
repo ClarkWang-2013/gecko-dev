@@ -27,7 +27,7 @@ namespace mozilla {
 
 using namespace mozilla::gfx;
 
-NS_IMPL_ISUPPORTS2(MediaEngineTabVideoSource, nsIDOMEventListener, nsITimerCallback)
+NS_IMPL_ISUPPORTS(MediaEngineTabVideoSource, nsIDOMEventListener, nsITimerCallback)
 
 MediaEngineTabVideoSource::MediaEngineTabVideoSource()
 : mMonitor("MediaEngineTabVideoSource")
@@ -109,17 +109,18 @@ MediaEngineTabVideoSource::InitRunnable::Run()
 void
 MediaEngineTabVideoSource::GetName(nsAString_internal& aName)
 {
-  aName.Assign(NS_LITERAL_STRING("&getUserMedia.videoDevice.tabShare;"));
+  aName.AssignLiteral(MOZ_UTF16("&getUserMedia.videoSource.tabShare;"));
 }
 
 void
 MediaEngineTabVideoSource::GetUUID(nsAString_internal& aUuid)
 {
-  aUuid.Assign(NS_LITERAL_STRING("uuid"));
+  aUuid.AssignLiteral(MOZ_UTF16("uuid"));
 }
 
 nsresult
-MediaEngineTabVideoSource::Allocate(const mozilla::MediaEnginePrefs&)
+MediaEngineTabVideoSource::Allocate(const VideoTrackConstraintsN&,
+                                    const MediaEnginePrefs&)
 {
   return NS_OK;
 }

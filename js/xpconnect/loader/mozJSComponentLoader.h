@@ -1,6 +1,6 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: set ts=8 sts=4 et sw=4 tw=99: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -24,6 +24,7 @@ class nsIFile;
 class nsIJSRuntimeService;
 class nsIPrincipal;
 class nsIXPConnectJSObjectHolder;
+class ComponentLoaderInfo;
 
 /* 6bd13476-1dd2-11b2-bbef-f0ccb5fa64b6 (thanks, mozbot) */
 
@@ -71,8 +72,8 @@ class mozJSComponentLoader : public mozilla::ModuleLoader,
                                        bool aReuseLoaderGlobal,
                                        bool *aRealFile);
 
-    nsresult ObjectForLocation(nsIFile* aComponentFile,
-                               nsIURI *aComponent,
+    nsresult ObjectForLocation(ComponentLoaderInfo& aInfo,
+                               nsIFile* aComponentFile,
                                JS::MutableHandleObject aObject,
                                JS::MutableHandleScript aTableScript,
                                char **location,
