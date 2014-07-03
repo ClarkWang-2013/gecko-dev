@@ -1360,6 +1360,8 @@ js::math_hypot(JSContext *cx, unsigned argc, Value *vp)
 
         isInfinite |= mozilla::IsInfinite(x);
         isNaN |= mozilla::IsNaN(x);
+        if (isInfinite || isNaN)
+            continue;
 
         double xabs = mozilla::Abs(x);
 
