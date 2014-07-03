@@ -200,8 +200,8 @@ class MacroAssemblerMIPS : public Assembler
 
     // fast mod, uses scratch registers, and thus needs to be in the assembler
     // implicitly assumes that we can overwrite dest at the beginning of the sequence
-    void ma_mod_mask(Register src, Register dest, Register hold, int32_t shift,
-                     Label *negZero = nullptr);
+    void ma_mod_mask(Register src, Register dest, Register hold, Register remain,
+                     int32_t shift, Label *negZero = nullptr);
 
     // memory
     // shortcut for when we know we're transferring 32 bits of data
@@ -350,7 +350,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
 
     bool dynamicAlignment_;
 
-    bool enoughMemory_;
     // Compute space needed for the function call and set the properties of the
     // callee.  It returns the space which has to be allocated for calling the
     // function.
@@ -373,12 +372,8 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
   public:
     MacroAssemblerMIPSCompat()
       : inCall_(false),
-        enoughMemory_(true),
         framePushed_(0)
     { }
-    bool oom() const {
-        return Assembler::oom();
-    }
 
   public:
     using MacroAssemblerMIPS::call;
@@ -432,7 +427,9 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     }
 
     void appendCallSite(const CallSiteDesc &desc) {
-        enoughMemory_ &= append(CallSite(desc, currentOffset(), framePushed_));
+        // Add an extra sizeof(void*) to include the return address that was
+        // pushed by the call instruction (see CallSite::stackDepth).
+        enoughMemory_ &= append(CallSite(desc, currentOffset(), framePushed_ + AsmJSFrameSize));
     }
 
     void call(const CallSiteDesc &desc, const Register reg) {
@@ -704,6 +701,10 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void branchTestString(Condition cond, Register tag, Label *label);
     void branchTestString(Condition cond, const BaseIndex &src, Label *label);
 
+    void branchTestSymbol(Condition cond, const ValueOperand &value, Label *label);
+    void branchTestSymbol(Condition cond, const Register &tag, Label *label);
+    void branchTestSymbol(Condition cond, const BaseIndex &src, Label *label);
+
     void branchTestUndefined(Condition cond, const ValueOperand &value, Label *label);
     void branchTestUndefined(Condition cond, Register tag, Label *label);
     void branchTestUndefined(Condition cond, const BaseIndex &src, Label *label);
@@ -733,10 +734,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void branchTestBooleanTruthy(bool b, const ValueOperand &operand, Label *label);
 
     void branchTest32(Condition cond, Register lhs, Register rhs, Label *label) {
-        if (cond == Equal)
-            cond = Zero;
-        else if (cond == NotEqual)
-            cond = NonZero;
         MOZ_ASSERT(cond == Zero || cond == NonZero || cond == Signed || cond == NotSigned);
         if (lhs == rhs) {
             ma_b(lhs, rhs, label, cond);
@@ -1059,6 +1056,7 @@ public:
     void and32(Imm32 imm, Register dest);
     void and32(Imm32 imm, const Address &dest);
     void and32(const Address &src, Register dest);
+    void or32(Imm32 imm, Register dest);
     void or32(Imm32 imm, const Address &dest);
     void xor32(Imm32 imm, Register dest);
     void xorPtr(Imm32 imm, Register dest);
@@ -1096,8 +1094,6 @@ public:
     void load32(const Address &address, Register dest);
     void load32(const BaseIndex &address, Register dest);
     void load32(AbsoluteAddress address, Register dest);
-
-    void load32Unaligned(const BaseIndex &address, Register dest);
 
     void loadPtr(const Address &address, Register dest);
     void loadPtr(const BaseIndex &src, Register dest);
@@ -1211,7 +1207,16 @@ public:
 
     void checkStackAlignment();
 
-    void alignPointerUp(Register src, Register dest, uint32_t alignment);
+    void alignStack();
+    void restoreStackAlignment();
+    static void calculateAlignedStackPointer(void **stackPointer);
+
+    void alignStackForDoubleData() {
+        alignStack();
+    }
+    void restoreStackAlignedForDoubleData() {
+        restoreStackAlignment();
+    }
 
     void rshiftPtr(Imm32 imm, Register dest) {
         ma_srl(dest, dest, imm);
@@ -1266,7 +1271,7 @@ public:
     bool buildOOLFakeExitFrame(void *fakeReturnAddr);
 
   private:
-    void callWithABIPre(uint32_t *stackAdjust);
+    void callWithABIPre(uint32_t *stackAdjust, bool callFromAsmJS = false);
     void callWithABIPost(uint32_t stackAdjust, MoveOp::Type result);
 
   public:

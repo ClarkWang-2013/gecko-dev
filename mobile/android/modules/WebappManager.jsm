@@ -103,7 +103,13 @@ this.WebappManager = {
     sendMessageToJava({
       type: "Webapps:InstallApk",
       filePath: filePath,
-      data: JSON.stringify(aMessage),
+      data: aMessage,
+    }, (data, error) => {
+      if (!!error) {
+        aMessage.error = error;
+        aMessageManager.sendAsyncMessage("Webapps:Install:Return:KO", aMessage);
+        debug("error downloading APK: " + error);
+      }
     });
   }).bind(this)); },
 
@@ -152,35 +158,44 @@ this.WebappManager = {
     return deferred.promise;
   },
 
-  askInstall: function(aData) {
-    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
-    file.initWithPath(aData.profilePath);
-
+  _deleteAppcachePath: function(aManifest) {
     // We don't yet support pre-installing an appcache because it isn't clear
     // how to do it without degrading the user experience (since users expect
     // apps to be available after the system tells them they've been installed,
     // which has already happened) and because nsCacheService shuts down
     // when we trigger the native install dialog and doesn't re-init itself
     // afterward (TODO: file bug about this behavior).
-    if ("appcache_path" in aData.app.manifest) {
-      debug("deleting appcache_path from manifest: " + aData.app.manifest.appcache_path);
-      delete aData.app.manifest.appcache_path;
+    if ("appcache_path" in aManifest) {
+      debug("deleting appcache_path from manifest: " + aManifest.appcache_path);
+      delete aManifest.appcache_path;
     }
+  },
+
+  askInstall: function(aData) {
+    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+    file.initWithPath(aData.profilePath);
+
+    this._deleteAppcachePath(aData.app.manifest);
 
     DOMApplicationRegistry.registryReady.then(() => {
       DOMApplicationRegistry.confirmInstall(aData, file, (function(aManifest) {
-        let localeManifest = new ManifestHelper(aManifest, aData.app.origin);
-
-        // aData.app.origin may now point to the app: url that hosts this app.
-        sendMessageToJava({
-          type: "Webapps:Postinstall",
-          apkPackageName: aData.app.apkPackageName,
-          origin: aData.app.origin,
-        });
-
-        this.writeDefaultPrefs(file, localeManifest);
+        this._postInstall(aData.profilePath, aManifest, aData.app.origin, aData.app.apkPackageName);
       }).bind(this));
     });
+  },
+
+  _postInstall: function(aProfilePath, aNewManifest, aOrigin, aApkPackageName) {
+    // aOrigin may now point to the app: url that hosts this app.
+    sendMessageToJava({
+      type: "Webapps:Postinstall",
+      apkPackageName: aApkPackageName,
+      origin: aOrigin,
+    });
+
+    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+    file.initWithPath(aProfilePath);
+    let localeManifest = new ManifestHelper(aNewManifest, aOrigin);
+    this.writeDefaultPrefs(file, localeManifest);
   },
 
   launch: function({ manifestURL, origin }) {
@@ -193,23 +208,65 @@ this.WebappManager = {
     });
   },
 
-  uninstall: function(aData) {
+  uninstall: Task.async(function*(aData, aMessageManager) {
     debug("uninstall: " + aData.manifestURL);
 
+    yield DOMApplicationRegistry.registryReady;
+
     if (this._testing) {
-      // We don't have to do anything, as the registry does all the work.
+      // Go directly to DOM.  Do not uninstall APK, do not collect $200.
+      DOMApplicationRegistry.doUninstall(aData, aMessageManager);
       return;
     }
 
-    // TODO: uninstall the APK.
-  },
+    let app = DOMApplicationRegistry.getAppByManifestURL(aData.manifestURL);
+    if (!app) {
+      throw new Error("app not found in registry");
+    }
+
+    // If the APK is installed, then _getAPKVersions will return a version
+    // for it, so we can use that function to determine its install status.
+    let apkVersions = yield this._getAPKVersions([ app.apkPackageName ]);
+    if (app.apkPackageName in apkVersions) {
+      debug("APK is installed; requesting uninstallation");
+      sendMessageToJava({
+        type: "Webapps:UninstallApk",
+        apkPackageName: app.apkPackageName,
+      });
+
+      // We don't need to call DOMApplicationRegistry.doUninstall at this point,
+      // because the APK uninstall listener will call autoUninstall once the APK
+      // is uninstalled; and if the user cancels the APK uninstallation, then we
+      // shouldn't remove the app from the registry anyway.
+
+      // But we should tell the requesting document the result of their request.
+      // TODO: tell the requesting document if uninstallation succeeds or fails
+      // by storing weak references to the message/manager pair here and then
+      // using them in autoUninstall if they're still defined when it's called;
+      // and make EventListener.uninstallApk return an error when APK uninstall
+      // fails (which it should be able to detect reliably on Android 4+),
+      // which we observe here and use to notify the requester of failure.
+    } else {
+      // The APK isn't installed, but remove the app from the registry anyway,
+      // to ensure the user can always remove an app from the registry (and thus
+      // about:apps) even if it's out of sync with installed APKs.
+      debug("APK not installed; proceeding directly to removal from registry");
+      DOMApplicationRegistry.doUninstall(aData, aMessageManager);
+    }
+
+  }),
 
   autoInstall: function(aData) {
-    let oldApp = DOMApplicationRegistry.getAppByManifestURL(aData.manifestURL);
-    if (oldApp) {
-      // If the app is already installed, update the existing installation.
-      this._autoUpdate(aData, oldApp);
-      return;
+    debug("autoInstall " + aData.manifestURL);
+
+    // If the app is already installed, update the existing installation.
+    // We should be able to use DOMApplicationRegistry.getAppByManifestURL,
+    // but it returns a mozIApplication, while _autoUpdate needs the original
+    // object from DOMApplicationRegistry.webapps in order to modify it.
+    for (let [ , app] in Iterator(DOMApplicationRegistry.webapps)) {
+      if (app.manifestURL == aData.manifestURL) {
+        return this._autoUpdate(aData, app);
+      }
     }
 
     let mm = {
@@ -242,8 +299,8 @@ this.WebappManager = {
     message.app.manifest = aData.manifest;
     message.app.apkPackageName = aData.apkPackageName;
     message.profilePath = aData.profilePath;
-    message.autoInstall = true;
     message.mm = mm;
+    message.apkInstall = true;
 
     DOMApplicationRegistry.registryReady.then(() => {
       switch (aData.type) { // can be hosted or packaged.
@@ -270,12 +327,38 @@ this.WebappManager = {
     }
 
     if (aData.type == "hosted") {
+      this._deleteAppcachePath(aData.manifest);
       let oldManifest = yield DOMApplicationRegistry.getManifestFor(aData.manifestURL);
-      DOMApplicationRegistry.updateHostedApp(aData, aOldApp.id, aOldApp, oldManifest, aData.manifest);
+      yield DOMApplicationRegistry.updateHostedApp(aData, aOldApp.id, aOldApp, oldManifest, aData.manifest);
     } else {
-      DOMApplicationRegistry.updatePackagedApp(aData, aOldApp.id, aOldApp, aData.manifest);
+      yield this._autoUpdatePackagedApp(aData, aOldApp);
     }
+
+    this._postInstall(aData.profilePath, aData.manifest, aOldApp.origin, aOldApp.apkPackageName);
   }).bind(this)); },
+
+  _autoUpdatePackagedApp: Task.async(function*(aData, aOldApp) {
+    debug("_autoUpdatePackagedApp: " + aData.manifestURL);
+
+    if (aData.updateManifest && aData.zipFilePath) {
+      aData.updateManifest.package_path = aData.zipFilePath;
+    }
+
+    // updatePackagedApp just prepares the update, after which we must
+    // download the package via the misnamed startDownload and then apply it
+    // via applyDownload.
+    yield DOMApplicationRegistry.updatePackagedApp(aData, aOldApp.id, aOldApp, aData.updateManifest);
+
+    try {
+      yield DOMApplicationRegistry.startDownload(aData.manifestURL);
+    } catch (ex if ex.message == "PACKAGE_UNCHANGED") {
+      debug("package unchanged");
+      // If the package is unchanged, then there's nothing more to do.
+      return;
+    }
+
+    yield DOMApplicationRegistry.applyDownload(aData.manifestURL);
+  }),
 
   _checkingForUpdates: false,
 
@@ -493,7 +576,13 @@ this.WebappManager = {
         sendMessageToJava({
           type: "Webapps:InstallApk",
           filePath: apk.filePath,
-          data: JSON.stringify(msg),
+          data: msg,
+        }, (data, error) => {
+          if (!!error) {
+            // There's no page to report back to so drop the error.
+            // TODO: we should notify the user about this failure.
+            debug("APK install failed : " + returnError);
+          }
         });
       }
     } else {

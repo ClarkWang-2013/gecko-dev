@@ -16,7 +16,7 @@ public:
 
   nsFieldSetFrame(nsStyleContext* aContext);
 
-  NS_HIDDEN_(nscoord)
+  nscoord
     GetIntrinsicWidth(nsRenderingContext* aRenderingContext,
                       nsLayoutUtils::IntrinsicWidthType);
   virtual nscoord GetMinWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
@@ -25,7 +25,7 @@ public:
                              nsSize aCBSize, nscoord aAvailableWidth,
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
                              uint32_t aFlags) MOZ_OVERRIDE;
-  virtual nscoord GetBaseline() const MOZ_OVERRIDE;
+  virtual nscoord GetLogicalBaseline(mozilla::WritingMode aWritingMode) const MOZ_OVERRIDE;
 
   /**
    * The area to paint box-shadows around.  It's the border rect except

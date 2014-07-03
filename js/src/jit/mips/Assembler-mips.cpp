@@ -59,16 +59,18 @@ ABIArgGenerator::next(MIRType type)
             usedArgSlots_ += 2;
         }
 #elif defined(USES_N32_ABI)
-        FloatRegister destFReg;
-        if (0 == usedArgSlots_) {
-            firstArgFloat = true;
+        {
+            FloatRegister destFReg;
+            if (0 == usedArgSlots_) {
+                firstArgFloat = true;
+            }
+            if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+                current_ = ABIArg(destFReg);
+            } else {
+                current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
+            }
+            usedArgSlots_++;
         }
-        if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
-            current_ = ABIArg(destFReg);
-        } else {
-            current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
-        }
-        usedArgSlots_++;
 #endif
         break;
       default:
@@ -447,8 +449,8 @@ BOffImm16::BOffImm16(InstImm inst)
 bool
 Assembler::oom() const
 {
-    return m_buffer.oom() ||
-           !enoughMemory_ ||
+    return AssemblerShared::oom() ||
+           m_buffer.oom() ||
            jumpRelocations_.oom() ||
            dataRelocations_.oom() ||
            preBarriers_.oom();

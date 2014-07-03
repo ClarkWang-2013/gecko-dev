@@ -514,19 +514,9 @@ struct AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
  * version of Windows we support.  Therefore, we only provide operations
  * on 32-bit datatypes for 32-bit Windows versions; for 64-bit Windows
  * versions, we support 64-bit datatypes as well.
- *
- * To avoid namespace pollution issues, we declare whatever functions we
- * need ourselves.
  */
 
-extern "C" {
-long __cdecl _InterlockedExchangeAdd(long volatile* aDst, long aVal);
-long __cdecl _InterlockedOr(long volatile* aDst, long aVal);
-long __cdecl _InterlockedXor(long volatile* aDst, long aVal);
-long __cdecl _InterlockedAnd(long volatile* aDst, long aVal);
-long __cdecl _InterlockedExchange(long volatile *aDst, long aVal);
-long __cdecl _InterlockedCompareExchange(long volatile *aDst, long aNewVal, long aOldVal);
-}
+#  include <intrin.h>
 
 #  pragma intrinsic(_InterlockedExchangeAdd)
 #  pragma intrinsic(_InterlockedOr)
@@ -639,22 +629,6 @@ struct PrimitiveIntrinsics<4>
 
 #  if defined(_M_X64)
 
-extern "C" {
-long long __cdecl _InterlockedExchangeAdd64(long long volatile* aDst,
-                                            long long aVal);
-long long __cdecl _InterlockedOr64(long long volatile* aDst,
-                                   long long aVal);
-long long __cdecl _InterlockedXor64(long long volatile* aDst,
-                                    long long aVal);
-long long __cdecl _InterlockedAnd64(long long volatile* aDst,
-                                    long long aVal);
-long long __cdecl _InterlockedExchange64(long long volatile* aDst,
-                                         long long aVal);
-long long __cdecl _InterlockedCompareExchange64(long long volatile* aDst,
-                                                long long aNewVal,
-                                                long long aOldVal);
-}
-
 #    pragma intrinsic(_InterlockedExchangeAdd64)
 #    pragma intrinsic(_InterlockedOr64)
 #    pragma intrinsic(_InterlockedXor64)
@@ -712,8 +686,6 @@ struct PrimitiveIntrinsics<8>
 };
 
 #  endif
-
-extern "C" { void _ReadWriteBarrier(); }
 
 #  pragma intrinsic(_ReadWriteBarrier)
 
@@ -866,17 +838,18 @@ template<typename T>
 struct IntrinsicAddSub<T*> : public IntrinsicApplyHelper<T*>
 {
   typedef typename IntrinsicApplyHelper<T*>::ValueType ValueType;
+  typedef typename IntrinsicBase<T*>::Primitives Primitives;
 
   static ValueType add(ValueType& aPtr, ptrdiff_t aAmount)
   {
     return applyBinaryFunction(&Primitives::add, aPtr,
-                               (ValueType)(aAmount * sizeof(ValueType)));
+                               (ValueType)(aAmount * sizeof(T)));
   }
 
   static ValueType sub(ValueType& aPtr, ptrdiff_t aAmount)
   {
     return applyBinaryFunction(&Primitives::sub, aPtr,
-                               (ValueType)(aAmount * sizeof(ValueType)));
+                               (ValueType)(aAmount * sizeof(T)));
   }
 };
 
@@ -893,6 +866,7 @@ struct AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
                           public IntrinsicIncDec<T>
 {
   typedef typename IntrinsicIncDec<T>::ValueType ValueType;
+  typedef typename IntrinsicBase<T>::Primitives Primitives;
 
   static ValueType or_(ValueType& aPtr, T aVal)
   {
@@ -915,6 +889,9 @@ struct AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
                                      public IntrinsicIncDec<T*>
 {
   typedef typename IntrinsicMemoryOps<T*, Order>::ValueType ValueType;
+  // This is required to make us be able to build with MSVC10, for unknown
+  // reasons.
+  typedef typename IntrinsicBase<T*>::Primitives Primitives;
 };
 
 } // namespace detail
@@ -942,7 +919,7 @@ protected:
 
 public:
   MOZ_CONSTEXPR AtomicBase() : mValue() {}
-  MOZ_CONSTEXPR AtomicBase(T aInit) : mValue(aInit) {}
+  explicit MOZ_CONSTEXPR AtomicBase(T aInit) : mValue(aInit) {}
 
   // Note: we can't provide operator T() here because Atomic<bool> inherits
   // from AtomcBase with T=uint32_t and not T=bool. If we implemented
@@ -992,7 +969,7 @@ class AtomicBaseIncDec : public AtomicBase<T, Order>
 
 public:
   MOZ_CONSTEXPR AtomicBaseIncDec() : Base() {}
-  MOZ_CONSTEXPR AtomicBaseIncDec(T aInit) : Base(aInit) {}
+  explicit MOZ_CONSTEXPR AtomicBaseIncDec(T aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -1048,7 +1025,7 @@ class Atomic<T, Order, typename EnableIf<IsIntegral<T>::value &&
 
 public:
   MOZ_CONSTEXPR Atomic() : Base() {}
-  MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
+  explicit MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -1096,7 +1073,7 @@ class Atomic<T*, Order> : public detail::AtomicBaseIncDec<T*, Order>
 
 public:
   MOZ_CONSTEXPR Atomic() : Base() {}
-  MOZ_CONSTEXPR Atomic(T* aInit) : Base(aInit) {}
+  explicit MOZ_CONSTEXPR Atomic(T* aInit) : Base(aInit) {}
 
   using Base::operator=;
 
@@ -1127,7 +1104,7 @@ class Atomic<T, Order, typename EnableIf<IsEnum<T>::value>::Type>
 
 public:
   MOZ_CONSTEXPR Atomic() : Base() {}
-  MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
+  explicit MOZ_CONSTEXPR Atomic(T aInit) : Base(aInit) {}
 
   operator T() const { return Base::Intrinsics::load(Base::mValue); }
 
@@ -1161,7 +1138,7 @@ class Atomic<bool, Order>
 
 public:
   MOZ_CONSTEXPR Atomic() : Base() {}
-  MOZ_CONSTEXPR Atomic(bool aInit) : Base(aInit) {}
+  explicit MOZ_CONSTEXPR Atomic(bool aInit) : Base(aInit) {}
 
   // We provide boolean wrappers for the underlying AtomicBase methods.
   operator bool() const

@@ -19,9 +19,6 @@
 #include "vm/ErrorObject.h"
 
 extern JSObject *
-js_InitTypedArrayClasses(JSContext *cx, js::HandleObject obj);
-
-extern JSObject *
 js_InitSharedArrayBufferClass(JSContext *cx, js::HandleObject obj);
 
 namespace js {
@@ -245,15 +242,10 @@ class GlobalObject : public JSObject
     bool dataViewClassInitialized() const {
         return classIsInitialized(JSProto_DataView);
     }
-    bool typedArrayClassesInitialized() const {
-        // This alias exists only for clarity: in reality all the typed array
-        // classes constitute a (semi-)coherent whole.
-        return classIsInitialized(JSProto_DataView);
-    }
 
     Value createArrayFromBufferHelper(uint32_t slot) const {
-        JS_ASSERT(typedArrayClassesInitialized());
         JS_ASSERT(FROM_BUFFER_UINT8 <= slot && slot <= FROM_BUFFER_UINT8CLAMPED);
+        JS_ASSERT(!getSlot(slot).isUndefined());
         return getSlot(slot);
     }
 
@@ -345,6 +337,12 @@ class GlobalObject : public JSObject
         if (!ensureConstructor(cx, global, JSProto_String))
             return nullptr;
         return &global->getPrototype(JSProto_String).toObject();
+    }
+
+    static JSObject *getOrCreateSymbolPrototype(JSContext *cx, Handle<GlobalObject*> global) {
+        if (!ensureConstructor(cx, global, JSProto_Symbol))
+            return nullptr;
+        return &global->getPrototype(JSProto_Symbol).toObject();
     }
 
     static JSObject *getOrCreateRegExpPrototype(JSContext *cx, Handle<GlobalObject*> global) {
@@ -778,12 +776,12 @@ extern bool
 LinkConstructorAndPrototype(JSContext *cx, JSObject *ctor, JSObject *proto);
 
 /*
- * Define properties, then functions, on the object, then brand for tracing
- * benefits.
+ * Define properties and/or functions on any object. Either ps or fs, or both,
+ * may be null.
  */
 extern bool
-DefinePropertiesAndBrand(JSContext *cx, JSObject *obj,
-                         const JSPropertySpec *ps, const JSFunctionSpec *fs);
+DefinePropertiesAndFunctions(JSContext *cx, HandleObject obj,
+                             const JSPropertySpec *ps, const JSFunctionSpec *fs);
 
 typedef HashSet<GlobalObject *, DefaultHasher<GlobalObject *>, SystemAllocPolicy> GlobalObjectSet;
 

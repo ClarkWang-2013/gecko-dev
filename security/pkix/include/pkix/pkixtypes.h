@@ -25,26 +25,42 @@
 #ifndef mozilla_pkix__pkixtypes_h
 #define mozilla_pkix__pkixtypes_h
 
+#include "cert.h"
 #include "pkix/enumclass.h"
 #include "pkix/ScopedPtr.h"
-#include "plarena.h"
-#include "cert.h"
-#include "keyhi.h"
+#include "seccomon.h"
+#include "secport.h"
 #include "stdint.h"
 
 namespace mozilla { namespace pkix {
 
-typedef ScopedPtr<PLArenaPool, PL_FreeArenaPool> ScopedPLArenaPool;
+inline void
+PORT_FreeArena_false(PLArenaPool* arena) {
+  // PL_FreeArenaPool can't be used because it doesn't actually free the
+  // memory, which doesn't work well with memory analysis tools
+  return PORT_FreeArena(arena, PR_FALSE);
+}
+
+typedef ScopedPtr<PLArenaPool, PORT_FreeArena_false> ScopedPLArenaPool;
 
 typedef ScopedPtr<CERTCertificate, CERT_DestroyCertificate>
         ScopedCERTCertificate;
 typedef ScopedPtr<CERTCertList, CERT_DestroyCertList> ScopedCERTCertList;
-typedef ScopedPtr<SECKEYPublicKey, SECKEY_DestroyPublicKey>
-        ScopedSECKEYPublicKey;
 
 MOZILLA_PKIX_ENUM_CLASS EndEntityOrCA { MustBeEndEntity = 0, MustBeCA = 1 };
 
-typedef unsigned int KeyUsages;
+MOZILLA_PKIX_ENUM_CLASS KeyUsage : uint8_t {
+  digitalSignature = 0,
+  nonRepudiation   = 1,
+  keyEncipherment  = 2,
+  dataEncipherment = 3,
+  keyAgreement     = 4,
+  keyCertSign      = 5,
+  // cRLSign       = 6,
+  // encipherOnly  = 7,
+  // decipherOnly  = 8,
+  noParticularKeyUsageRequired = 0xff,
+};
 
 MOZILLA_PKIX_ENUM_CLASS KeyPurposeId {
   anyExtendedKeyUsage = 0,
@@ -72,6 +88,34 @@ MOZILLA_PKIX_ENUM_CLASS TrustLevel {
   InheritsTrust = 3       // certificate must chain to a trust anchor
 };
 
+// CertID references the information needed to do revocation checking for the
+// certificate issued by the given issuer with the given serial number.
+//
+// issuer must be the DER-encoded issuer field from the certificate for which
+// revocation checking is being done, **NOT** the subject field of the issuer
+// certificate. (Those two fields must be equal to each other, but they may not
+// be encoded exactly the same, and the encoding matters for OCSP.)
+// issuerSubjectPublicKeyInfo is the entire DER-encoded subjectPublicKeyInfo
+// field from the issuer's certificate. serialNumber is the entire DER-encoded
+// serial number from the subject certificate (the certificate for which we are
+// checking the revocation status).
+struct CertID
+{
+public:
+  CertID(const SECItem& issuer, const SECItem& issuerSubjectPublicKeyInfo,
+         const SECItem& serialNumber)
+    : issuer(issuer)
+    , issuerSubjectPublicKeyInfo(issuerSubjectPublicKeyInfo)
+    , serialNumber(serialNumber)
+  {
+  }
+  const SECItem& issuer;
+  const SECItem& issuerSubjectPublicKeyInfo;
+  const SECItem& serialNumber;
+private:
+  void operator=(const CertID&) /*= delete*/;
+};
+
 // Applications control the behavior of path building and verification by
 // implementing the TrustDomain interface. The TrustDomain is used for all
 // cryptography and for determining which certificates are trusted or
@@ -95,7 +139,7 @@ public:
   // (assuming the candidate cert is not actively distrusted).
   virtual SECStatus GetCertTrust(EndEntityOrCA endEntityOrCA,
                                  const CertPolicyId& policy,
-                                 const CERTCertificate* candidateCert,
+                                 const SECItem& candidateCertDER,
                          /*out*/ TrustLevel* trustLevel) = 0;
 
   // Find all certificates (intermediate and/or root) in the certificate
@@ -110,23 +154,19 @@ public:
                                          PRTime time,
                                  /*out*/ ScopedCERTCertList& results) = 0;
 
-  // Verify the given signature using the public key of the given certificate.
-  // The implementation should be careful to ensure that the given certificate
-  // has all the public key information needed--i.e. it should ensure that the
-  // certificate is not trying to use EC(DSA) parameter inheritance.
+  // Verify the given signature using the given public key.
   //
   // Most implementations of this function should probably forward the call
   // directly to mozilla::pkix::VerifySignedData.
   virtual SECStatus VerifySignedData(const CERTSignedData* signedData,
-                                     const CERTCertificate* cert) = 0;
+                                     const SECItem& subjectPublicKeyInfo) = 0;
 
   // issuerCertToDup is only non-const so CERT_DupCertificate can be called on
   // it.
   virtual SECStatus CheckRevocation(EndEntityOrCA endEntityOrCA,
-                                    const CERTCertificate* cert,
-                          /*const*/ CERTCertificate* issuerCertToDup,
-                                    PRTime time,
-                       /*optional*/ const SECItem* stapledOCSPresponse) = 0;
+                                    const CertID& certID, PRTime time,
+                       /*optional*/ const SECItem* stapledOCSPresponse,
+                       /*optional*/ const SECItem* aiaExtension) = 0;
 
   // Called as soon as we think we have a valid chain but before revocation
   // checks are done. Called to compute additional chain level checks, by the

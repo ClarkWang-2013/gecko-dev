@@ -1,4 +1,4 @@
-/* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -333,7 +333,7 @@ DebuggerClient.requester = function (aPacketSkeleton,
       outgoingPacket = before.call(this, outgoingPacket);
     }
 
-    this.request(outgoingPacket, DevToolsUtils.makeInfallible(function (aResponse) {
+    this.request(outgoingPacket, DevToolsUtils.makeInfallible((aResponse) => {
       if (after) {
         let { from } = aResponse;
         aResponse = after.call(this, aResponse);
@@ -351,7 +351,7 @@ DebuggerClient.requester = function (aPacketSkeleton,
       if (histogram) {
         histogram.add(+new Date - startTime);
       }
-    }.bind(this), "DebuggerClient.requester request callback"));
+    }, "DebuggerClient.requester request callback"));
 
   }, "DebuggerClient.requester");
 };
@@ -1128,7 +1128,7 @@ ProtocolCompatibility.prototype = {
   _shimPacket: function (aPacket) {
     let extraPackets = [];
 
-    let loop = function (aFeatures, aPacket) {
+    let loop = (aFeatures, aPacket) => {
       if (aFeatures.length === 0) {
         for (let packet of extraPackets) {
           this._client.onPacket(packet, true);
@@ -1151,7 +1151,7 @@ ProtocolCompatibility.prototype = {
                                                      keepPacket);
         return resolve(newPacket).then(loop.bind(null, aFeatures.slice(1)));
       }
-    }.bind(this);
+    };
 
     return loop([f for (f of this._featuresWithoutSupport)],
                 aPacket);
@@ -1261,9 +1261,17 @@ TabClient.prototype = {
 
   /**
    * Reload the page in this tab.
+   *
+   * @param [optional] object options
+   *        An object with a `force` property indicating whether or not
+   *        this reload should skip the cache
    */
-  reload: DebuggerClient.requester({
-    type: "reload"
+  reload: function(options = { force: false }) {
+    return this._reload(options);
+  },
+  _reload: DebuggerClient.requester({
+    type: "reload",
+    options: args(0)
   }, {
     telemetry: "RELOAD"
   }),
@@ -1671,7 +1679,7 @@ ThreadClient.prototype = {
    */
   setBreakpoint: function ({ url, line, column, condition }, aOnResponse) {
     // A helper function that sets the breakpoint.
-    let doSetBreakpoint = function (aCallback) {
+    let doSetBreakpoint = (aCallback) => {
       const location = {
         url: url,
         line: line,
@@ -1684,7 +1692,7 @@ ThreadClient.prototype = {
         location: location,
         condition: condition
       };
-      this.client.request(packet, function (aResponse) {
+      this.client.request(packet, (aResponse) => {
         // Ignoring errors, since the user may be setting a breakpoint in a
         // dead script that will reappear on a page reload.
         if (aOnResponse) {
@@ -1700,8 +1708,8 @@ ThreadClient.prototype = {
         if (aCallback) {
           aCallback();
         }
-      }.bind(this));
-    }.bind(this);
+      });
+    };
 
     // If the debuggee is paused, just set the breakpoint.
     if (this.paused) {
@@ -1709,14 +1717,14 @@ ThreadClient.prototype = {
       return;
     }
     // Otherwise, force a pause in order to set the breakpoint.
-    this.interrupt(function (aResponse) {
+    this.interrupt((aResponse) => {
       if (aResponse.error) {
         // Can't set the breakpoint if pausing failed.
         aOnResponse(aResponse);
         return;
       }
       doSetBreakpoint(this.resume.bind(this));
-    }.bind(this));
+    });
   },
 
   /**
@@ -1770,21 +1778,6 @@ ThreadClient.prototype = {
   }, {
     telemetry: "SOURCES"
   }),
-
-  _doInterrupted: function (aAction, aError) {
-    if (this.paused) {
-      aAction();
-      return;
-    }
-    this.interrupt(function (aResponse) {
-      if (aResponse) {
-        aError(aResponse);
-        return;
-      }
-      aAction();
-      this.resume();
-    }.bind(this));
-  },
 
   /**
    * Clear the thread's source script cache. A scriptscleared event

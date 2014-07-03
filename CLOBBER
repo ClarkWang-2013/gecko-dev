@@ -22,5 +22,4 @@
 # changes to stick? As of bug 928195, this shouldn't be necessary! Please
 # don't change CLOBBER for WebIDL changes any more.
 
-Bug 1014976 - Windows debug bustage from linking changes.
-
+Clobber to make sure any residual damage from bug 975011 is gone.

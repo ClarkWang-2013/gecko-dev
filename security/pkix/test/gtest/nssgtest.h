@@ -27,7 +27,10 @@
 
 #include "stdint.h"
 #include "gtest/gtest.h"
+#include "pkix/pkixtypes.h"
+#include "pkixtestutil.h"
 #include "prerror.h"
+#include "prtime.h"
 #include "seccomon.h"
 
 namespace mozilla { namespace pkix { namespace test {
@@ -41,7 +44,7 @@ public:
   {
   }
 
-  SECStatusWithPRErrorCode(SECStatus rv)
+  explicit SECStatusWithPRErrorCode(SECStatus rv)
     : mRv(rv)
     , mErrorCode(rv == SECSuccess ? 0 : PR_GetError())
   {
@@ -59,13 +62,11 @@ private:
   friend std::ostream& operator<<(std::ostream& os,
                                   SECStatusWithPRErrorCode const& value);
 
-  void operator=(const SECStatusWithPRErrorCode&) /*delete*/;
+  void operator=(const SECStatusWithPRErrorCode&) /*= delete*/;
 };
 
 ::std::ostream& operator<<(::std::ostream&,
                            SECStatusWithPRErrorCode const&);
-
-} } } // namespace mozilla::pkix::test
 
 #define ASSERT_SECSuccess(rv) \
   ASSERT_EQ(::mozilla::pkix::test::SECStatusWithPRErrorCode(SECSuccess, 0), \
@@ -82,5 +83,21 @@ private:
   EXPECT_EQ(::mozilla::pkix::test::SECStatusWithPRErrorCode(SECFailure, \
                                                             expectedError), \
             ::mozilla::pkix::test::SECStatusWithPRErrorCode(rv))
+
+class NSSTest : public ::testing::Test
+{
+public:
+  static void SetUpTestCase();
+
+protected:
+  NSSTest();
+
+  ScopedPLArenaPool arena;
+  static PRTime now;
+  static PRTime oneDayBeforeNow;
+  static PRTime oneDayAfterNow;
+};
+
+} } } // namespace mozilla::pkix::test
 
 #endif // mozilla_pkix__nssgtest_h

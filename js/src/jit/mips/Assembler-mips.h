@@ -114,7 +114,7 @@ class ABIArgGenerator
     uint32_t stackBytesConsumedSoFar() const {
 #if defined(USES_O32_ABI)
         if (usedArgSlots_ <= 4)
-            return 4 * sizeof(intptr_t);
+            return ShadowStackSpace;
 
         return usedArgSlots_ * sizeof(intptr_t);
 #elif defined(USES_N32_ABI)
@@ -132,23 +132,28 @@ class ABIArgGenerator
 static MOZ_CONSTEXPR_VAR Register PreBarrierReg = a1;
 
 static MOZ_CONSTEXPR_VAR Register InvalidReg = { Registers::invalid_reg };
-static MOZ_CONSTEXPR_VAR FloatRegister InvalidFloatReg = { FloatRegisters::invalid_freg };
+static MOZ_CONSTEXPR_VAR FloatRegister InvalidFloatReg(FloatRegisters::invalid_freg);
 
 static MOZ_CONSTEXPR_VAR Register JSReturnReg_Type = v1;
 static MOZ_CONSTEXPR_VAR Register JSReturnReg_Data = v0;
 static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = InvalidReg;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
-static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = { FloatRegisters::f0 };
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32Reg(FloatRegisters::f0);
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnDoubleReg(FloatRegisters::f0);
 #if defined(USES_O32_ABI)
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f18 };
-static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f16 };
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg(FloatRegisters::f18);
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg(FloatRegisters::f18);
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloat32Reg(FloatRegisters::f16);
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchDoubleReg(FloatRegisters::f16);
 #elif defined(USES_N32_ABI)
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = { FloatRegisters::f23 };
-static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloatReg = { FloatRegisters::f21 };
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg(FloatRegisters::f23);
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg(FloatRegisters::f23);
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloat32Reg(FloatRegisters::f21);
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchDoubleReg(FloatRegisters::f21);
 #endif
 
-static MOZ_CONSTEXPR_VAR FloatRegister NANReg = { FloatRegisters::f30 };
+static MOZ_CONSTEXPR_VAR FloatRegister NANReg(FloatRegisters::f30);
 
 // Registers used in the GenerateFFIIonExit Enable Activation block.
 static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegCallee = t0;
@@ -203,10 +208,12 @@ static MOZ_CONSTEXPR_VAR FloatRegister f31 = {FloatRegisters::f31};
 static const uint32_t StackAlignment = 8;
 static const uint32_t CodeAlignment = 4;
 static const bool StackKeptAligned = true;
-// NativeFrameSize is the size of return adress on stack in AsmJS functions.
-static const uint32_t NativeFrameSize = sizeof(void*);
-static const uint32_t AlignmentAtPrologue = 0;
-static const uint32_t AlignmentMidPrologue = NativeFrameSize;
+
+// As an invariant across architectures, within asm.js code:
+//    $sp % StackAlignment = (AsmJSFrameSize + masm.framePushed) % StackAlignment
+// To achieve this on MIPS, the first instruction of the asm.js prologue pushes
+// ra without incrementing masm.framePushed.
+static const uint32_t AsmJSFrameSize = sizeof(void*);
 
 static const Scale ScalePointer = TimesFour;
 
@@ -788,14 +795,11 @@ class Assembler : public AssemblerShared
     CompactBufferWriter relocations_;
     CompactBufferWriter preBarriers_;
 
-    bool enoughMemory_;
-
     MIPSBuffer m_buffer;
 
   public:
     Assembler()
-      : enoughMemory_(true),
-        m_buffer(),
+      : m_buffer(),
         isFinished(false)
     { }
 

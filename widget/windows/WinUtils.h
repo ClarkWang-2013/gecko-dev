@@ -382,7 +382,6 @@ public:
 
 private:
   nsAutoString mIconPath;
-  nsAutoCString mMimeTypeOfInputData;
   nsAutoArrayPtr<uint8_t> mBuffer;
   HMODULE sDwmDLL;
   uint32_t mBufferLength;
@@ -411,8 +410,11 @@ public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIRUNNABLE
 
-  AsyncDeleteAllFaviconsFromDisk();
+  AsyncDeleteAllFaviconsFromDisk(bool aIgnoreRecent = false);
   virtual ~AsyncDeleteAllFaviconsFromDisk();
+private:
+  int32_t mIcoNoDeleteSeconds;
+  bool mIgnoreRecent;
 };
 
 class FaviconHelper

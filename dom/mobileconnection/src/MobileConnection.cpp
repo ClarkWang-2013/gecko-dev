@@ -10,6 +10,7 @@
 #include "mozilla/dom/MozClirModeEvent.h"
 #include "mozilla/dom/MozEmergencyCbModeEvent.h"
 #include "mozilla/dom/MozOtaStatusEvent.h"
+#include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/USSDReceivedEvent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
@@ -603,9 +604,15 @@ MobileConnection::SetCallForwardingOption(const MozCallForwardingOptions& aOptio
     return nullptr;
   }
 
-  AutoSafeJSContext cx;
+  AutoJSAPI jsapi;
+  if (!NS_WARN_IF(jsapi.Init(GetOwner()))) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  JSContext *cx = jsapi.cx();
   JS::Rooted<JS::Value> options(cx);
-  if (!aOptions.ToObject(cx, &options)) {
+  if (!ToJSValue(cx, aOptions, &options)) {
     aRv.Throw(NS_ERROR_TYPE_ERR);
     return nullptr;
   }
@@ -634,9 +641,15 @@ MobileConnection::GetCallBarringOption(const MozCallBarringOptions& aOptions,
     return nullptr;
   }
 
-  AutoSafeJSContext cx;
+  AutoJSAPI jsapi;
+  if (!NS_WARN_IF(jsapi.Init(GetOwner()))) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  JSContext *cx = jsapi.cx();
   JS::Rooted<JS::Value> options(cx);
-  if (!aOptions.ToObject(cx, &options)) {
+  if (!ToJSValue(cx, aOptions, &options)) {
     aRv.Throw(NS_ERROR_TYPE_ERR);
     return nullptr;
   }
@@ -665,9 +678,15 @@ MobileConnection::SetCallBarringOption(const MozCallBarringOptions& aOptions,
     return nullptr;
   }
 
-  AutoSafeJSContext cx;
+  AutoJSAPI jsapi;
+  if (!NS_WARN_IF(jsapi.Init(GetOwner()))) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  JSContext *cx = jsapi.cx();
   JS::Rooted<JS::Value> options(cx);
-  if (!aOptions.ToObject(cx, &options)) {
+  if (!ToJSValue(cx, aOptions, &options)) {
     aRv.Throw(NS_ERROR_TYPE_ERR);
     return nullptr;
   }
@@ -696,9 +715,15 @@ MobileConnection::ChangeCallBarringPassword(const MozCallBarringOptions& aOption
     return nullptr;
   }
 
-  AutoSafeJSContext cx;
+  AutoJSAPI jsapi;
+  if (!NS_WARN_IF(jsapi.Init(GetOwner()))) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
+
+  JSContext *cx = jsapi.cx();
   JS::Rooted<JS::Value> options(cx);
-  if (!aOptions.ToObject(cx, &options)) {
+  if (!ToJSValue(cx, aOptions, &options)) {
     aRv.Throw(NS_ERROR_TYPE_ERR);
     return nullptr;
   }

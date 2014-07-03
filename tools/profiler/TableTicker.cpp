@@ -374,8 +374,17 @@ void addProfileEntry(volatile StackEntry &entry, ThreadProfile &aProfile,
       lineno = entry.line();
     }
   }
+
   if (lineno != -1) {
     aProfile.addTag(ProfileEntry('n', lineno));
+  }
+
+  uint32_t category = entry.category();
+  MOZ_ASSERT(!(category & StackEntry::IS_CPP_ENTRY));
+  MOZ_ASSERT(!(category & StackEntry::FRAME_LABEL_COPY));
+
+  if (category) {
+    aProfile.addTag(ProfileEntry('y', (int)category));
   }
 }
 
@@ -415,7 +424,7 @@ static void mergeNativeBacktrace(ThreadProfile &aProfile, const PCArray &array) 
     while (pseudoStackPos < stack->stackSize()) {
       volatile StackEntry& entry = stack->mStack[pseudoStackPos];
 
-      if (entry.stackAddress() < array.sp_array[i-1] && entry.stackAddress())
+      if (entry.isCpp() && entry.stackAddress() && entry.stackAddress() < array.sp_array[i-1])
         break;
 
       addProfileEntry(entry, aProfile, stack, array.array[0]);
@@ -648,8 +657,8 @@ void TableTicker::InplaceTick(TickSample* sample)
   if (recordSample)
     currThreadProfile.flush();
 
-  if (!sLastTracerEvent.IsNull() && sample && currThreadProfile.IsMainThread()) {
-    TimeDuration delta = sample->timestamp - sLastTracerEvent;
+  if (sample && currThreadProfile.GetThreadResponsiveness()->HasData()) {
+    TimeDuration delta = currThreadProfile.GetThreadResponsiveness()->GetUnresponsiveDuration(sample->timestamp);
     currThreadProfile.addTag(ProfileEntry('r', static_cast<float>(delta.ToMilliseconds())));
   }
 
@@ -661,6 +670,11 @@ void TableTicker::InplaceTick(TickSample* sample)
   // rssMemory is equal to 0 when we are not recording.
   if (sample && sample->rssMemory != 0) {
     currThreadProfile.addTag(ProfileEntry('R', static_cast<float>(sample->rssMemory)));
+  }
+
+  // ussMemory is equal to 0 when we are not recording.
+  if (sample && sample->ussMemory != 0) {
+    currThreadProfile.addTag(ProfileEntry('U', static_cast<float>(sample->ussMemory)));
   }
 
 #if defined(XP_WIN)
@@ -686,9 +700,8 @@ SyncProfile* NewSyncProfile()
   }
   Thread::tid_t tid = Thread::GetCurrentId();
 
-  SyncProfile* profile = new SyncProfile("SyncProfile",
-                                         GET_BACKTRACE_DEFAULT_ENTRY,
-                                         stack, tid, NS_IsMainThread());
+  ThreadInfo* info = new ThreadInfo("SyncProfile", tid, NS_IsMainThread(), stack, nullptr);
+  SyncProfile* profile = new SyncProfile(info, GET_BACKTRACE_DEFAULT_ENTRY);
   return profile;
 }
 
@@ -751,7 +764,9 @@ void mozilla_sampler_print_location1()
 
   printf_stderr("Backtrace:\n");
   syncProfile->IterateTags(print_callback);
+  ThreadInfo* info = syncProfile->GetThreadInfo();
   delete syncProfile;
+  delete info;
 }
 
 

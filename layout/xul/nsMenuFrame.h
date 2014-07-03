@@ -59,7 +59,6 @@ class nsMenuTimerMediator MOZ_FINAL : public nsITimerCallback
 {
 public:
   nsMenuTimerMediator(nsMenuFrame* aFrame);
-  ~nsMenuTimerMediator();
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
@@ -67,6 +66,7 @@ public:
   void ClearFrame();
 
 private:
+  ~nsMenuTimerMediator();
 
   // Pointer to the wrapped frame.
   nsMenuFrame* mFrame;
@@ -266,7 +266,7 @@ protected:
 #ifdef DEBUG_LAYOUT
   nsresult SetDebug(nsBoxLayoutState& aState, nsIFrame* aList, bool aDebug);
 #endif
-  NS_HIDDEN_(nsresult) Notify(nsITimer* aTimer);
+  nsresult Notify(nsITimer* aTimer);
 
   bool mIsMenu; // Whether or not we can even have children or not.
   bool mChecked;              // are we checked?

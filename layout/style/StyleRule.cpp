@@ -11,10 +11,10 @@
 
 #include "mozilla/css/StyleRule.h"
 
+#include "mozilla/CSSStyleSheet.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/css/GroupRule.h"
 #include "mozilla/css/Declaration.h"
-#include "nsCSSStyleSheet.h"
 #include "nsIDocument.h"
 #include "nsIAtom.h"
 #include "nsString.h"
@@ -473,10 +473,19 @@ int32_t nsCSSSelector::CalcWeightWithoutNegations() const
 {
   int32_t weight = 0;
 
-  MOZ_ASSERT(!IsPseudoElement() ||
-             mPseudoType >= nsCSSPseudoElements::ePseudo_PseudoElementCount ||
-             (!mIDList && !mClassList && !mAttrList),
-             "if pseudo-elements can have ID, class or attribute selectors "
+#ifdef MOZ_XUL
+  MOZ_ASSERT(!(IsPseudoElement() &&
+               PseudoType() != nsCSSPseudoElements::ePseudo_XULTree &&
+               mClassList),
+             "If non-XUL-tree pseudo-elements can have class selectors "
+             "after them, specificity calculation must be updated");
+#else
+  MOZ_ASSERT(!(IsPseudoElement() && mClassList),
+             "If pseudo-elements can have class selectors "
+             "after them, specificity calculation must be updated");
+#endif
+  MOZ_ASSERT(!(IsPseudoElement() && (mIDList || mAttrList)),
+             "If pseudo-elements can have id or attribute selectors "
              "after them, specificity calculation must be updated");
 
   if (nullptr != mCasedTag) {
@@ -488,6 +497,13 @@ int32_t nsCSSSelector::CalcWeightWithoutNegations() const
     list = list->mNext;
   }
   list = mClassList;
+#ifdef MOZ_XUL
+  // XUL tree pseudo-elements abuse mClassList to store some private
+  // data; ignore that.
+  if (PseudoType() == nsCSSPseudoElements::ePseudo_XULTree) {
+    list = nullptr;
+  }
+#endif
   while (nullptr != list) {
     weight += 0x000100;
     list = list->mNext;
@@ -525,7 +541,7 @@ int32_t nsCSSSelector::CalcWeight() const
 // StyleRule:selectorText
 //
 void
-nsCSSSelector::ToString(nsAString& aString, nsCSSStyleSheet* aSheet,
+nsCSSSelector::ToString(nsAString& aString, CSSStyleSheet* aSheet,
                         bool aAppend) const
 {
   if (!aAppend)
@@ -568,7 +584,7 @@ nsCSSSelector::ToString(nsAString& aString, nsCSSStyleSheet* aSheet,
 
 void
 nsCSSSelector::AppendToStringWithoutCombinators
-                   (nsAString& aString, nsCSSStyleSheet* aSheet) const
+                   (nsAString& aString, CSSStyleSheet* aSheet) const
 {
   AppendToStringWithoutCombinatorsOrNegations(aString, aSheet, false);
 
@@ -583,7 +599,7 @@ nsCSSSelector::AppendToStringWithoutCombinators
 
 void
 nsCSSSelector::AppendToStringWithoutCombinatorsOrNegations
-                   (nsAString& aString, nsCSSStyleSheet* aSheet,
+                   (nsAString& aString, CSSStyleSheet* aSheet,
                    bool aIsNegated) const
 {
   nsAutoString temp;
@@ -879,7 +895,7 @@ nsCSSSelectorList::AddSelector(char16_t aOperator)
 }
 
 void
-nsCSSSelectorList::ToString(nsAString& aResult, nsCSSStyleSheet* aSheet)
+nsCSSSelectorList::ToString(nsAString& aResult, CSSStyleSheet* aSheet)
 {
   aResult.Truncate();
   nsCSSSelectorList *p = this;
@@ -966,9 +982,11 @@ class DOMCSSStyleRule;
 
 class DOMCSSDeclarationImpl : public nsDOMCSSDeclaration
 {
+protected:
+  virtual ~DOMCSSDeclarationImpl(void);
+
 public:
   DOMCSSDeclarationImpl(css::StyleRule *aRule);
-  virtual ~DOMCSSDeclarationImpl(void);
 
   NS_IMETHOD GetParentRule(nsIDOMCSSRule **aParent) MOZ_OVERRIDE;
   void DropReference(void);
@@ -1010,7 +1028,6 @@ class DOMCSSStyleRule : public nsICSSStyleRuleDOMWrapper
 {
 public:
   DOMCSSStyleRule(StyleRule *aRule);
-  virtual ~DOMCSSStyleRule();
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(DOMCSSStyleRule)
@@ -1025,6 +1042,8 @@ public:
   friend class ::DOMCSSDeclarationImpl;
 
 protected:
+  virtual ~DOMCSSStyleRule();
+
   DOMCSSDeclarationImpl mDOMDeclaration;
 
   StyleRule* Rule() {
@@ -1422,7 +1441,7 @@ StyleRule::DeclarationChanged(Declaration* aDecl,
   nsRefPtr<StyleRule> clone = new StyleRule(*this, aDecl);
 
   if (aHandleContainer) {
-    nsCSSStyleSheet* sheet = GetStyleSheet();
+    CSSStyleSheet* sheet = GetStyleSheet();
     if (mParentRule) {
       if (sheet) {
         sheet->ReplaceRuleInGroup(mParentRule, this, clone);

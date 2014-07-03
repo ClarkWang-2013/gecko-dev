@@ -73,7 +73,8 @@ XPCWrappedNativeScope::XPCWrappedNativeScope(JSContext *cx,
         mComponents(nullptr),
         mNext(nullptr),
         mGlobalJSObject(aGlobal),
-        mIsXBLScope(false)
+        mIsContentXBLScope(false),
+        mIsAddonScope(false)
 {
     // add ourselves to the scopes list
     {
@@ -101,18 +102,18 @@ XPCWrappedNativeScope::XPCWrappedNativeScope(JSContext *cx,
     // In addition to being pref-controlled, we also disable XBL scopes for
     // remote XUL domains, _except_ if we have an additional pref override set.
     nsIPrincipal *principal = GetPrincipal();
-    mAllowXBLScope = !RemoteXULForbidsXBLScope(principal, aGlobal);
+    mAllowContentXBLScope = !RemoteXULForbidsXBLScope(principal, aGlobal);
 
     // Determine whether to use an XBL scope.
-    mUseXBLScope = mAllowXBLScope;
-    if (mUseXBLScope) {
+    mUseContentXBLScope = mAllowContentXBLScope;
+    if (mUseContentXBLScope) {
       const js::Class *clasp = js::GetObjectClass(mGlobalJSObject);
-      mUseXBLScope = !strcmp(clasp->name, "Window") ||
-                     !strcmp(clasp->name, "ChromeWindow") ||
-                     !strcmp(clasp->name, "ModalContentWindow");
+      mUseContentXBLScope = !strcmp(clasp->name, "Window") ||
+                            !strcmp(clasp->name, "ChromeWindow") ||
+                            !strcmp(clasp->name, "ModalContentWindow");
     }
-    if (mUseXBLScope) {
-      mUseXBLScope = principal && !nsContentUtils::IsSystemPrincipal(principal);
+    if (mUseContentXBLScope) {
+      mUseContentXBLScope = principal && !nsContentUtils::IsSystemPrincipal(principal);
     }
 }
 
@@ -185,21 +186,35 @@ XPCWrappedNativeScope::AttachComponentsObject(JSContext* aCx)
                                  JSPROP_PERMANENT | JSPROP_READONLY);
 }
 
+static bool
+CompartmentPerAddon()
+{
+    static bool initialized = false;
+    static bool pref = false;
+
+    if (!initialized) {
+        pref = Preferences::GetBool("dom.compartment_per_addon", false);
+        initialized = true;
+    }
+
+    return pref;
+}
+
 JSObject*
-XPCWrappedNativeScope::EnsureXBLScope(JSContext *cx)
+XPCWrappedNativeScope::EnsureContentXBLScope(JSContext *cx)
 {
     JS::RootedObject global(cx, GetGlobalJSObject());
     MOZ_ASSERT(js::IsObjectInContextCompartment(global, cx));
-    MOZ_ASSERT(!mIsXBLScope);
+    MOZ_ASSERT(!mIsContentXBLScope);
     MOZ_ASSERT(strcmp(js::GetObjectClass(global)->name,
                       "nsXBLPrototypeScript compilation scope"));
 
     // If we already have a special XBL scope object, we know what to use.
-    if (mXBLScope)
-        return mXBLScope;
+    if (mContentXBLScope)
+        return mContentXBLScope;
 
     // If this scope doesn't need an XBL scope, just return the global.
-    if (!mUseXBLScope)
+    if (!mUseContentXBLScope)
         return global;
 
     // Set up the sandbox options. Note that we use the DOM global as the
@@ -228,49 +243,131 @@ XPCWrappedNativeScope::EnsureXBLScope(JSContext *cx)
     RootedValue v(cx);
     nsresult rv = CreateSandboxObject(cx, &v, ep, options);
     NS_ENSURE_SUCCESS(rv, nullptr);
-    mXBLScope = &v.toObject();
+    mContentXBLScope = &v.toObject();
 
     // Tag it.
-    EnsureCompartmentPrivate(js::UncheckedUnwrap(mXBLScope))->scope->mIsXBLScope = true;
+    EnsureCompartmentPrivate(js::UncheckedUnwrap(mContentXBLScope))->scope->mIsContentXBLScope = true;
 
     // Good to go!
-    return mXBLScope;
+    return mContentXBLScope;
 }
 
 bool
-XPCWrappedNativeScope::AllowXBLScope()
+XPCWrappedNativeScope::AllowContentXBLScope()
 {
     // We only disallow XBL scopes in remote XUL situations.
-    MOZ_ASSERT_IF(!mAllowXBLScope,
+    MOZ_ASSERT_IF(!mAllowContentXBLScope,
                   nsContentUtils::AllowXULXBLForPrincipal(GetPrincipal()));
-    return mAllowXBLScope;
+    return mAllowContentXBLScope;
 }
 
 namespace xpc {
-JSObject *GetXBLScope(JSContext *cx, JSObject *contentScopeArg)
+JSObject *
+GetXBLScope(JSContext *cx, JSObject *contentScopeArg)
 {
+    MOZ_ASSERT(!IsInAddonScope(contentScopeArg));
+
     JS::RootedObject contentScope(cx, contentScopeArg);
     JSAutoCompartment ac(cx, contentScope);
-    JSObject *scope = EnsureCompartmentPrivate(contentScope)->scope->EnsureXBLScope(cx);
+    JSObject *scope = EnsureCompartmentPrivate(contentScope)->scope->EnsureContentXBLScope(cx);
     NS_ENSURE_TRUE(scope, nullptr); // See bug 858642.
     scope = js::UncheckedUnwrap(scope);
     JS::ExposeObjectToActiveJS(scope);
     return scope;
 }
 
-bool AllowXBLScope(JSCompartment *c)
+JSObject *
+GetScopeForXBLExecution(JSContext *cx, HandleObject contentScope, JSAddonId *addonId)
 {
-  XPCWrappedNativeScope *scope = EnsureCompartmentPrivate(c)->scope;
-  return scope && scope->AllowXBLScope();
+    MOZ_RELEASE_ASSERT(!IsInAddonScope(contentScope));
+
+    RootedObject global(cx, js::GetGlobalForObjectCrossCompartment(contentScope));
+    if (IsInContentXBLScope(contentScope))
+        return global;
+
+    JSAutoCompartment ac(cx, contentScope);
+    XPCWrappedNativeScope *nativeScope = EnsureCompartmentPrivate(contentScope)->scope;
+
+    RootedObject scope(cx);
+    if (nativeScope->UseContentXBLScope())
+        scope = nativeScope->EnsureContentXBLScope(cx);
+    else if (addonId && CompartmentPerAddon())
+        scope = nativeScope->EnsureAddonScope(cx, addonId);
+    else
+        scope = global;
+
+    NS_ENSURE_TRUE(scope, nullptr); // See bug 858642.
+    scope = js::UncheckedUnwrap(scope);
+    JS::ExposeObjectToActiveJS(scope);
+    return scope;
 }
 
-bool UseXBLScope(JSCompartment *c)
+bool
+AllowContentXBLScope(JSCompartment *c)
 {
   XPCWrappedNativeScope *scope = EnsureCompartmentPrivate(c)->scope;
-  return scope && scope->UseXBLScope();
+  return scope && scope->AllowContentXBLScope();
+}
+
+bool
+UseContentXBLScope(JSCompartment *c)
+{
+  XPCWrappedNativeScope *scope = EnsureCompartmentPrivate(c)->scope;
+  return scope && scope->UseContentXBLScope();
 }
 
 } /* namespace xpc */
+
+JSObject*
+XPCWrappedNativeScope::EnsureAddonScope(JSContext *cx, JSAddonId *addonId)
+{
+    JS::RootedObject global(cx, GetGlobalJSObject());
+    MOZ_ASSERT(js::IsObjectInContextCompartment(global, cx));
+    MOZ_ASSERT(!mIsContentXBLScope);
+    MOZ_ASSERT(!mIsAddonScope);
+    MOZ_ASSERT(addonId);
+    MOZ_ASSERT(nsContentUtils::IsSystemPrincipal(GetPrincipal()));
+
+    // If we already have an addon scope object, we know what to use.
+    for (size_t i = 0; i < mAddonScopes.Length(); i++) {
+        if (JS::AddonIdOfObject(js::UncheckedUnwrap(mAddonScopes[i])) == addonId)
+            return mAddonScopes[i];
+    }
+
+    SandboxOptions options;
+    options.wantComponents = true;
+    options.proto = global;
+    options.sameZoneAs = global;
+    options.addonId = JS::StringOfAddonId(addonId);
+    options.writeToGlobalPrototype = true;
+
+    RootedValue v(cx);
+    nsresult rv = CreateSandboxObject(cx, &v, GetPrincipal(), options);
+    NS_ENSURE_SUCCESS(rv, nullptr);
+    mAddonScopes.AppendElement(&v.toObject());
+
+    EnsureCompartmentPrivate(js::UncheckedUnwrap(&v.toObject()))->scope->mIsAddonScope = true;
+    return &v.toObject();
+}
+
+JSObject *
+xpc::GetAddonScope(JSContext *cx, JS::HandleObject contentScope, JSAddonId *addonId)
+{
+    MOZ_RELEASE_ASSERT(!IsInAddonScope(contentScope));
+
+    if (!addonId || !CompartmentPerAddon()) {
+        return js::GetGlobalForObjectCrossCompartment(contentScope);
+    }
+
+    JSAutoCompartment ac(cx, contentScope);
+    XPCWrappedNativeScope *nativeScope = EnsureCompartmentPrivate(contentScope)->scope;
+    JSObject *scope = nativeScope->EnsureAddonScope(cx, addonId);
+    NS_ENSURE_TRUE(scope, nullptr);
+
+    scope = js::UncheckedUnwrap(scope);
+    JS::ExposeObjectToActiveJS(scope);
+    return scope;
+}
 
 XPCWrappedNativeScope::~XPCWrappedNativeScope()
 {
@@ -301,7 +398,9 @@ XPCWrappedNativeScope::~XPCWrappedNativeScope()
         mXrayExpandos.destroy();
 
     JSRuntime *rt = XPCJSRuntime::Get()->Runtime();
-    mXBLScope.finalize(rt);
+    mContentXBLScope.finalize(rt);
+    for (size_t i = 0; i < mAddonScopes.Length(); i++)
+        mAddonScopes[i].finalize(rt);
     mGlobalJSObject.finalize(rt);
 }
 

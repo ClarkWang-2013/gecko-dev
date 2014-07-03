@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <math.h>
 
+#include "ThreadResponsiveness.h"
 #include "nsThreadUtils.h"
 
 #include "platform.h"
@@ -221,6 +222,8 @@ class SamplerThread : public Thread {
             continue;
           }
 
+          info->Profile()->GetThreadResponsiveness()->Update();
+
           ThreadProfile* thread_profile = info->Profile();
 
           SampleContext(SamplerRegistry::sampler, thread_profile,
@@ -246,6 +249,9 @@ class SamplerThread : public Thread {
     } else {
       sample->rssMemory = 0;
     }
+
+    // Unique Set Size is not supported on Mac.
+    sample->ussMemory = 0;
 
     if (KERN_SUCCESS != thread_suspend(profiled_thread)) return;
 

@@ -32,6 +32,9 @@ class Latin1Chars : public mozilla::Range<Latin1Char>
   public:
     Latin1Chars() : Base() {}
     Latin1Chars(char *aBytes, size_t aLength) : Base(reinterpret_cast<Latin1Char *>(aBytes), aLength) {}
+    Latin1Chars(const Latin1Char *aBytes, size_t aLength)
+      : Base(const_cast<Latin1Char *>(aBytes), aLength)
+    {}
     Latin1Chars(const char *aBytes, size_t aLength)
       : Base(reinterpret_cast<Latin1Char *>(const_cast<char *>(aBytes)), aLength)
     {}
@@ -172,10 +175,12 @@ class ConstTwoByteChars : public mozilla::RangedPtr<const jschar>
  * This method cannot trigger GC.
  */
 extern Latin1CharsZ
-LossyTwoByteCharsToNewLatin1CharsZ(js::ThreadSafeContext *cx, TwoByteChars tbchars);
+LossyTwoByteCharsToNewLatin1CharsZ(js::ThreadSafeContext *cx,
+                                   const mozilla::Range<const jschar> tbchars);
 
+template <typename CharT>
 extern UTF8CharsZ
-TwoByteCharsToNewUTF8CharsZ(js::ThreadSafeContext *cx, TwoByteChars tbchars);
+CharsToNewUTF8CharsZ(js::ThreadSafeContext *cx, const mozilla::Range<const CharT> chars);
 
 uint32_t
 Utf8ToOneUcs4Char(const uint8_t *utf8Buffer, int utf8Length);

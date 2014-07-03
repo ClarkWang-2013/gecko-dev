@@ -158,10 +158,10 @@ Zone::sweepBreakpoints(FreeOp *fop)
             Breakpoint *nextbp;
             for (Breakpoint *bp = site->firstBreakpoint(); bp; bp = nextbp) {
                 nextbp = bp->nextInSite();
-                HeapPtrObject& dbgobj = bp->debugger->toJSObjectRef();
-                JS_ASSERT(dbgobj->zone()->isGCSweeping());
+                HeapPtrObject &dbgobj = bp->debugger->toJSObjectRef();
+                JS_ASSERT_IF(dbgobj->zone()->isCollecting(), dbgobj->zone()->isGCSweeping());
                 bool dying = scriptGone || IsObjectAboutToBeFinalized(&dbgobj);
-                JS_ASSERT_IF(!dying, bp->getHandler()->isMarked());
+                JS_ASSERT_IF(!dying, !IsAboutToBeFinalized(&bp->getHandlerRef()));
                 if (dying)
                     bp->destroy(fop);
             }
@@ -197,18 +197,7 @@ Zone::discardJitCode(FreeOp *fop)
         for (ZoneCellIterUnderGC i(this, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
             jit::FinishInvalidation<SequentialExecution>(fop, script);
-
-            // Preserve JIT code that have been recently used in
-            // parallel. Note that we mark their baseline scripts as active as
-            // well to preserve them.
-            if (script->hasParallelIonScript()) {
-                if (jit::ShouldPreserveParallelJITCode(runtimeFromMainThread(), script)) {
-                    script->parallelIonScript()->purgeCaches();
-                    script->baselineScript()->setActive();
-                } else {
-                    jit::FinishInvalidation<ParallelExecution>(fop, script);
-                }
-            }
+            jit::FinishInvalidation<ParallelExecution>(fop, script);
 
             /*
              * Discard baseline script if it's not marked as active. Note that
@@ -267,6 +256,18 @@ Zone::hasMarkedCompartments()
     return false;
 }
 
+bool
+Zone::canCollect()
+{
+    // Zones cannot be collected while in use by other threads.
+    if (usedByExclusiveThread)
+        return false;
+    JSRuntime *rt = runtimeFromAnyThread();
+    if (rt->isAtomsZone(this) && rt->exclusiveThreadsPresent())
+        return false;
+    return true;
+}
+
 JS::Zone *
 js::ZoneOfValue(const JS::Value &value)
 {
@@ -274,4 +275,10 @@ js::ZoneOfValue(const JS::Value &value)
     if (value.isObject())
         return value.toObject().zone();
     return static_cast<js::gc::Cell *>(value.toGCThing())->tenuredZone();
+}
+
+bool
+js::ZonesIter::atAtomsZone(JSRuntime *rt)
+{
+    return rt->isAtomsZone(*it);
 }

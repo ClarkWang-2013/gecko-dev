@@ -25,6 +25,10 @@ struct JSCompartment;
 class JSFlatString;
 class JSLinearString;
 
+namespace JS {
+class Symbol;
+} /* namespace JS */
+
 namespace js {
 
 class ArgumentsObject;
@@ -37,9 +41,14 @@ class GlobalObject;
 class LazyScript;
 class Nursery;
 class PropertyName;
+class SavedFrame;
 class ScopeObject;
 class Shape;
 class UnownedBaseShape;
+
+namespace gc {
+class ForkJoinNursery;
+}
 
 unsigned GetCPUCount();
 
@@ -117,6 +126,7 @@ MapAllocToTraceKind(AllocKind kind)
         JSTRACE_STRING,     /* FINALIZE_FAT_INLINE_STRING */
         JSTRACE_STRING,     /* FINALIZE_STRING */
         JSTRACE_STRING,     /* FINALIZE_EXTERNAL_STRING */
+        JSTRACE_SYMBOL,     /* FINALIZE_SYMBOL */
         JSTRACE_JITCODE,    /* FINALIZE_JITCODE */
     };
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
@@ -134,6 +144,7 @@ template <> struct MapTypeToTraceKind<SharedArrayBufferObject>{ static const JSG
 template <> struct MapTypeToTraceKind<DebugScopeObject> { static const JSGCTraceKind kind = JSTRACE_OBJECT; };
 template <> struct MapTypeToTraceKind<GlobalObject>     { static const JSGCTraceKind kind = JSTRACE_OBJECT; };
 template <> struct MapTypeToTraceKind<ScopeObject>      { static const JSGCTraceKind kind = JSTRACE_OBJECT; };
+template <> struct MapTypeToTraceKind<SavedFrame>       { static const JSGCTraceKind kind = JSTRACE_OBJECT; };
 template <> struct MapTypeToTraceKind<JSScript>         { static const JSGCTraceKind kind = JSTRACE_SCRIPT; };
 template <> struct MapTypeToTraceKind<LazyScript>       { static const JSGCTraceKind kind = JSTRACE_LAZY_SCRIPT; };
 template <> struct MapTypeToTraceKind<Shape>            { static const JSGCTraceKind kind = JSTRACE_SHAPE; };
@@ -144,6 +155,7 @@ template <> struct MapTypeToTraceKind<JSAtom>           { static const JSGCTrace
 template <> struct MapTypeToTraceKind<JSString>         { static const JSGCTraceKind kind = JSTRACE_STRING; };
 template <> struct MapTypeToTraceKind<JSFlatString>     { static const JSGCTraceKind kind = JSTRACE_STRING; };
 template <> struct MapTypeToTraceKind<JSLinearString>   { static const JSGCTraceKind kind = JSTRACE_STRING; };
+template <> struct MapTypeToTraceKind<JS::Symbol>       { static const JSGCTraceKind kind = JSTRACE_SYMBOL; }; 
 template <> struct MapTypeToTraceKind<PropertyName>     { static const JSGCTraceKind kind = JSTRACE_STRING; };
 template <> struct MapTypeToTraceKind<jit::JitCode>     { static const JSGCTraceKind kind = JSTRACE_JITCODE; };
 
@@ -161,6 +173,7 @@ template <> struct MapTypeToFinalizeKind<types::TypeObject> { static const Alloc
 template <> struct MapTypeToFinalizeKind<JSFatInlineString> { static const AllocKind kind = FINALIZE_FAT_INLINE_STRING; };
 template <> struct MapTypeToFinalizeKind<JSString>          { static const AllocKind kind = FINALIZE_STRING; };
 template <> struct MapTypeToFinalizeKind<JSExternalString>  { static const AllocKind kind = FINALIZE_EXTERNAL_STRING; };
+template <> struct MapTypeToFinalizeKind<JS::Symbol>        { static const AllocKind kind = FINALIZE_SYMBOL; };
 template <> struct MapTypeToFinalizeKind<jit::JitCode>      { static const AllocKind kind = FINALIZE_JITCODE; };
 
 #if defined(JSGC_GENERATIONAL) || defined(DEBUG)
@@ -189,6 +202,44 @@ IsNurseryAllocable(AllocKind kind)
         false,     /* FINALIZE_FAT_INLINE_STRING */
         false,     /* FINALIZE_STRING */
         false,     /* FINALIZE_EXTERNAL_STRING */
+        false,     /* FINALIZE_SYMBOL */
+        false,     /* FINALIZE_JITCODE */
+    };
+    JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
+    return map[kind];
+}
+#endif
+
+#if defined(JSGC_FJGENERATIONAL)
+// This is separate from IsNurseryAllocable() so that the latter can evolve
+// without worrying about what the ForkJoinNursery's needs are, and vice
+// versa to some extent.
+static inline bool
+IsFJNurseryAllocable(AllocKind kind)
+{
+    JS_ASSERT(kind >= 0 && unsigned(kind) < FINALIZE_LIMIT);
+    static const bool map[] = {
+        false,     /* FINALIZE_OBJECT0 */
+        true,      /* FINALIZE_OBJECT0_BACKGROUND */
+        false,     /* FINALIZE_OBJECT2 */
+        true,      /* FINALIZE_OBJECT2_BACKGROUND */
+        false,     /* FINALIZE_OBJECT4 */
+        true,      /* FINALIZE_OBJECT4_BACKGROUND */
+        false,     /* FINALIZE_OBJECT8 */
+        true,      /* FINALIZE_OBJECT8_BACKGROUND */
+        false,     /* FINALIZE_OBJECT12 */
+        true,      /* FINALIZE_OBJECT12_BACKGROUND */
+        false,     /* FINALIZE_OBJECT16 */
+        true,      /* FINALIZE_OBJECT16_BACKGROUND */
+        false,     /* FINALIZE_SCRIPT */
+        false,     /* FINALIZE_LAZY_SCRIPT */
+        false,     /* FINALIZE_SHAPE */
+        false,     /* FINALIZE_BASE_SHAPE */
+        false,     /* FINALIZE_TYPE_OBJECT */
+        false,     /* FINALIZE_FAT_INLINE_STRING */
+        false,     /* FINALIZE_STRING */
+        false,     /* FINALIZE_EXTERNAL_STRING */
+        false,     /* FINALIZE_SYMBOL */
         false,     /* FINALIZE_JITCODE */
     };
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
@@ -221,6 +272,7 @@ IsBackgroundFinalized(AllocKind kind)
         true,      /* FINALIZE_FAT_INLINE_STRING */
         true,      /* FINALIZE_STRING */
         false,     /* FINALIZE_EXTERNAL_STRING */
+        true,      /* FINALIZE_SYMBOL */
         false,     /* FINALIZE_JITCODE */
     };
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
@@ -759,7 +811,7 @@ class ArenaLists
     }
 
     void queueObjectsForSweep(FreeOp *fop);
-    void queueStringsForSweep(FreeOp *fop);
+    void queueStringsAndSymbolsForSweep(FreeOp *fop);
     void queueShapesForSweep(FreeOp *fop);
     void queueScriptsForSweep(FreeOp *fop);
     void queueJitCodeForSweep(FreeOp *fop);
@@ -782,6 +834,7 @@ class ArenaLists
     inline void normalizeBackgroundFinalizeState(AllocKind thingKind);
 
     friend class js::Nursery;
+    friend class js::gc::ForkJoinNursery;
 };
 
 /*
@@ -899,11 +952,6 @@ MinorGC(JSRuntime *rt, JS::gcreason::Reason reason);
 
 extern void
 MinorGC(JSContext *cx, JS::gcreason::Reason reason);
-
-#ifdef JS_GC_ZEAL
-extern void
-SetGCZeal(JSRuntime *rt, uint8_t zeal, uint32_t frequency);
-#endif
 
 /* Functions for managing cross compartment gray pointers. */
 
@@ -1161,15 +1209,6 @@ GCIfNeeded(JSContext *cx);
 void
 RunDebugGC(JSContext *cx);
 
-void
-SetDeterministicGC(JSContext *cx, bool enabled);
-
-void
-SetValidateGC(JSContext *cx, bool enabled);
-
-void
-SetFullCompartmentChecks(JSContext *cx, bool enabled);
-
 /* Wait for the background thread to finish sweeping if it is running. */
 void
 FinishBackgroundFinalize(JSRuntime *rt);
@@ -1263,6 +1302,12 @@ class AutoEnterOOMUnsafeRegion
 class AutoEnterOOMUnsafeRegion {};
 #endif /* DEBUG */
 
+// This tests whether something is inside the GGC's nursery only;
+// use sparingly, mostly testing for any nursery, using IsInsideNursery,
+// is appropriate.
+bool
+IsInsideGGCNursery(const gc::Cell *cell);
+
 } /* namespace gc */
 
 #ifdef DEBUG
@@ -1273,8 +1318,8 @@ class AutoDisableProxyCheck
     uintptr_t &count;
 
   public:
-    AutoDisableProxyCheck(JSRuntime *rt
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
+    explicit AutoDisableProxyCheck(JSRuntime *rt
+                                   MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
 
     ~AutoDisableProxyCheck() {
         count--;

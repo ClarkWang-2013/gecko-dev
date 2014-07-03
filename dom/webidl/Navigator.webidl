@@ -151,6 +151,15 @@ callback interface MozIdleObserver {
   void onactive();
 };
 
+#ifdef MOZ_B2G
+[NoInterfaceObject]
+interface NavigatorMobileId {
+    [Throws, NewObject]
+    Promise getMobileIdAssertion();
+};
+Navigator implements NavigatorMobileId;
+#endif // MOZ_B2G
+
 // nsIDOMNavigator
 partial interface Navigator {
   [Throws]
@@ -236,8 +245,6 @@ partial interface Navigator {
   boolean mozIsLocallyAvailable(DOMString uri, boolean whenOffline);
 };
 
-// nsIDOMMozNavigatorMobileMessage
-interface MozMobileMessageManager;
 partial interface Navigator {
   [Func="Navigator::HasMobileMessageSupport"]
   readonly attribute MozMobileMessageManager? mozMobileMessage;

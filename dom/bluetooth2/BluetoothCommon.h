@@ -58,11 +58,18 @@ extern bool gBluetoothDebugFlag;
 #endif
 
 /**
+ * Prints 'R'ELEASE build logs for WebBluetooth API v2.
+ */
+#define BT_API2_LOGR(msg, ...)                                       \
+  BT_LOGR("[WEBBT-API2] " msg, ##__VA_ARGS__)
+
+/**
  * Wrap literal name and value into a BluetoothNamedValue
  * and append it to the array.
  */
 #define BT_APPEND_NAMED_VALUE(array, name, value)                    \
-  array.AppendElement(BluetoothNamedValue(NS_LITERAL_STRING(name), value))
+  array.AppendElement(BluetoothNamedValue(NS_LITERAL_STRING(name),   \
+                                          BluetoothValue(value)))
 
 /**
  * Ensure success of system message broadcast with void return.
@@ -75,6 +82,18 @@ extern bool gBluetoothDebugFlag;
       return;                                                        \
     }                                                                \
   } while(0)
+
+/**
+ * Convert an enum value to string then append it to an array.
+ */
+#define BT_APPEND_ENUM_STRING(array, enumType, enumValue)            \
+  do {                                                               \
+    uint32_t index = uint32_t(enumValue);                            \
+    nsAutoString name;                                               \
+    name.AssignASCII(enumType##Values::strings[index].value,         \
+                     enumType##Values::strings[index].length);       \
+    array.AppendElement(name);                                       \
+  } while(0)                                                         \
 
 #define BEGIN_BLUETOOTH_NAMESPACE \
   namespace mozilla { namespace dom { namespace bluetooth {

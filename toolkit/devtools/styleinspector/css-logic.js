@@ -1,4 +1,4 @@
-/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -543,7 +543,7 @@ CssLogic.prototype = {
     this._matchedRules.some(function(aValue) {
       let rule = aValue[0];
       let status = aValue[1];
-      aProperties = aProperties.filter(function(aProperty) {
+      aProperties = aProperties.filter((aProperty) => {
         // We just need to find if a rule has this property while it matches
         // the viewedElement (or its parents).
         if (rule.getPropertyValue(aProperty) &&
@@ -554,7 +554,7 @@ CssLogic.prototype = {
           return false;
         }
         return true; // Keep the property for the next rule.
-      }.bind(this));
+      });
       return aProperties.length == 0;
     }, this);
 
@@ -917,12 +917,79 @@ CssLogic.findCssSelector = function CssLogic_findCssSelector(ele) {
     }
   }
 
-  // So we can be unique w.r.t. our parent, and use recursion
-  index = positionInNodeList(ele, ele.parentNode.children) + 1;
-  selector = CssLogic_findCssSelector(ele.parentNode) + ' > ' +
-          tagName + ':nth-child(' + index + ')';
+  // Not unique enough yet.  As long as it's not a child of the document,
+  // continue recursing up until it is unique enough.
+  if (ele.parentNode !== document) {
+    index = positionInNodeList(ele, ele.parentNode.children) + 1;
+    selector = CssLogic_findCssSelector(ele.parentNode) + ' > ' +
+            tagName + ':nth-child(' + index + ')';
+  }
 
   return selector;
+};
+
+const TAB_CHARS = "\t";
+
+/**
+ * Prettify minified CSS text.
+ * This prettifies CSS code where there is no indentation in usual places while
+ * keeping original indentation as-is elsewhere.
+ * @param string text The CSS source to prettify.
+ * @return string Prettified CSS source
+ */
+CssLogic.prettifyCSS = function(text) {
+  if (CssLogic.LINE_SEPARATOR == null) {
+    let os = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime).OS;
+    CssLogic.LINE_SEPARATOR = (os === "WINNT" ? "\r\n" : "\n");
+  }
+
+  // remove initial and terminating HTML comments and surrounding whitespace
+  text = text.replace(/(?:^\s*<!--[\r\n]*)|(?:\s*-->\s*$)/g, "");
+
+  let parts = [];    // indented parts
+  let partStart = 0; // start offset of currently parsed part
+  let indent = "";
+  let indentLevel = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    let c = text[i];
+    let shouldIndent = false;
+
+    switch (c) {
+      case "}":
+        if (i - partStart > 1) {
+          // there's more than just } on the line, add line
+          parts.push(indent + text.substring(partStart, i));
+          partStart = i;
+        }
+        indent = TAB_CHARS.repeat(--indentLevel);
+        /* fallthrough */
+      case ";":
+      case "{":
+        shouldIndent = true;
+        break;
+    }
+
+    if (shouldIndent) {
+      let la = text[i+1]; // one-character lookahead
+      if (!/\n/.test(la) || /^\s+$/.test(text.substring(i+1, text.length))) {
+        // following character should be a new line, but isn't,
+        // or it's whitespace at the end of the file
+        parts.push(indent + text.substring(partStart, i + 1));
+        if (c == "}") {
+          parts.push(""); // for extra line separator
+        }
+        partStart = i + 1;
+      } else {
+        return text; // assume it is not minified, early exit
+      }
+    }
+
+    if (c == "{") {
+      indent = TAB_CHARS.repeat(++indentLevel);
+    }
+  }
+  return parts.join(CssLogic.LINE_SEPARATOR);
 };
 
 /**

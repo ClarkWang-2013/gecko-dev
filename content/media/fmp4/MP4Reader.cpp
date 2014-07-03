@@ -71,17 +71,17 @@ public:
                       size_t* aBytesRead) MOZ_OVERRIDE
   {
     uint32_t sum = 0;
+    uint32_t bytesRead = 0;
     do {
       uint32_t offset = aOffset + sum;
       char* buffer = reinterpret_cast<char*>(aBuffer) + sum;
       uint32_t toRead = aCount - sum;
-      uint32_t bytesRead = 0;
       nsresult rv = mResource->ReadAt(offset, buffer, toRead, &bytesRead);
       if (NS_FAILED(rv)) {
         return false;
       }
       sum += bytesRead;
-    } while (sum < aCount);
+    } while (sum < aCount && bytesRead > 0);
     *aBytesRead = sum;
     return true;
   }
@@ -243,16 +243,19 @@ MP4Reader::ReadMetadata(MediaInfo* aInfo,
     ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
     mDecoder->SetMediaDuration(duration);
   }
-  // We can seek if we get a duration *and* the reader reports that it's
-  // seekable.
-  if (!mDecoder->GetResource()->IsTransportSeekable() || !mDemuxer->CanSeek()) {
-    mDecoder->SetMediaSeekable(false);
-  }
 
   *aInfo = mInfo;
   *aTags = nullptr;
 
   return NS_OK;
+}
+
+bool
+MP4Reader::IsMediaSeekable()
+{
+  // We can seek if we get a duration *and* the reader reports that it's
+  // seekable.
+  return mDecoder->GetResource()->IsTransportSeekable() && mDemuxer->CanSeek();
 }
 
 bool

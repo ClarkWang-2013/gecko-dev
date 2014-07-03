@@ -160,6 +160,15 @@ private:
                            CacheEntryHandle** aResult);
 
   /**
+   * Check existance of an entry.  This may throw NS_ERROR_NOT_AVAILABLE
+   * when the information cannot be obtained synchronously w/o blocking.
+   */
+  nsresult CheckStorageEntry(CacheStorage const* aStorage,
+                             nsIURI* aURI,
+                             const nsACString & aIdExtension,
+                             bool* aResult);
+
+  /**
    * Removes the entry from the related entry hash table, if still present
    * and returns it.
    */
@@ -341,5 +350,8 @@ void ProxyReleaseMainThread(nsCOMPtr<T> &object)
 
 #define NS_CACHE_STORAGE_SERVICE_CONTRACTID \
   "@mozilla.org/netwerk/cache-storage-service;1"
+
+#define NS_CACHE_STORAGE_SERVICE_CONTRACTID2 \
+  "@mozilla.org/network/cache-storage-service;1"
 
 #endif

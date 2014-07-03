@@ -49,11 +49,12 @@ public:
                  : DOMRequestReadyState::Pending;
   }
 
-  JS::Value Result(JSContext* = nullptr) const
+  void GetResult(JSContext*, JS::MutableHandle<JS::Value> aRetval) const
   {
     NS_ASSERTION(mDone || mResult == JSVAL_VOID,
-               "Result should be undefined when pending");
-    return mResult;
+                 "Result should be undefined when pending");
+    JS::ExposeValueToActiveJS(mResult);
+    aRetval.set(mResult);
   }
 
   DOMError* GetError() const
@@ -88,6 +89,8 @@ protected:
 
 class DOMRequestService MOZ_FINAL : public nsIDOMRequestService
 {
+  ~DOMRequestService() {}
+
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMREQUESTSERVICE

@@ -66,7 +66,7 @@ InitializeStaticHeaders()
     AddStaticElement(NS_LITERAL_CSTRING(":status"), NS_LITERAL_CSTRING("404"));
     AddStaticElement(NS_LITERAL_CSTRING(":status"), NS_LITERAL_CSTRING("500"));
     AddStaticElement(NS_LITERAL_CSTRING("accept-charset"));
-    AddStaticElement(NS_LITERAL_CSTRING("accept-encoding"));
+    AddStaticElement(NS_LITERAL_CSTRING("accept-encoding"), NS_LITERAL_CSTRING("gzip, deflate"));
     AddStaticElement(NS_LITERAL_CSTRING("accept-language"));
     AddStaticElement(NS_LITERAL_CSTRING("accept-ranges"));
     AddStaticElement(NS_LITERAL_CSTRING("accept"));
@@ -965,13 +965,13 @@ Http2Compressor::EncodeHeaderBlock(const nsCString &nvInput,
 
   // colon headers first
   if (!connectForm) {
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":method"), method), false);
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":path"), path), false);
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":authority"), host), false);
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":scheme"), scheme), false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":method"), method), false, false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":path"), path), true, false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":authority"), host), false, false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":scheme"), scheme), false, false);
   } else {
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":method"), method), false);
-    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":authority"), host), false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":method"), method), false, false);
+    ProcessHeader(nvPair(NS_LITERAL_CSTRING(":authority"), host), false, false);
   }
 
   // now the non colon headers
@@ -1003,8 +1003,7 @@ Http2Compressor::EncodeHeaderBlock(const nsCString &nvInput,
         name.EqualsLiteral("proxy-connection") ||
         name.EqualsLiteral("te") ||
         name.EqualsLiteral("transfer-encoding") ||
-        name.EqualsLiteral("upgrade") ||
-        name.EqualsLiteral("accept-encoding")) {
+        name.EqualsLiteral("upgrade")) {
       continue;
     }
 
@@ -1062,11 +1061,14 @@ Http2Compressor::EncodeHeaderBlock(const nsCString &nvInput,
         }
         nsDependentCSubstring cookie = Substring(beginBuffer + nextCookie,
                                                  beginBuffer + semiSpaceIndex);
-        ProcessHeader(nvPair(name, cookie), true);
+        // cookies less than 20 bytes are not indexed
+        ProcessHeader(nvPair(name, cookie), false, name.Length() < 20);
         nextCookie = semiSpaceIndex + 2;
       }
     } else {
-      ProcessHeader(nvPair(name, value), name.EqualsLiteral("authorization"));
+      // allow indexing of every non-cookie except authorization
+      ProcessHeader(nvPair(name, value), false,
+                    name.EqualsLiteral("authorization"));
     }
   }
 
@@ -1399,7 +1401,8 @@ Http2Compressor::DumpState()
 }
 
 void
-Http2Compressor::ProcessHeader(const nvPair inputPair, bool neverIndex)
+Http2Compressor::ProcessHeader(const nvPair inputPair, bool noLocalIndex,
+                               bool neverIndex)
 {
   uint32_t newSize = inputPair.Size();
   uint32_t headerTableSize = mHeaderTable.Length();
@@ -1422,7 +1425,7 @@ Http2Compressor::ProcessHeader(const nvPair inputPair, bool neverIndex)
   }
 
   // We need to emit a new literal
-  if (!match || neverIndex) {
+  if (!match || noLocalIndex || neverIndex) {
     if (neverIndex) {
       DoOutput(kNeverIndexedLiteral, &inputPair, nameReference);
       LOG(("Compressor state after literal never index"));
@@ -1430,7 +1433,7 @@ Http2Compressor::ProcessHeader(const nvPair inputPair, bool neverIndex)
       return;
     }
 
-    if ((newSize > (mMaxBuffer / 2)) || (mMaxBuffer < 128)) {
+    if (noLocalIndex || (newSize > (mMaxBuffer / 2)) || (mMaxBuffer < 128)) {
       DoOutput(kPlainLiteral, &inputPair, nameReference);
       LOG(("Compressor state after literal without index"));
       DumpState();
@@ -1470,10 +1473,17 @@ Http2Compressor::ProcessHeader(const nvPair inputPair, bool neverIndex)
     return;
   }
 
+  // Need to ensure we have room for a new static entry before emitting
+  // anything, see bug 1019577
+  bool isStatic = (matchedIndex >= mHeaderTable.VariableLength());
+  if (isStatic) {
+    MakeRoom(newSize);
+  }
+
   // emit an index to add to reference set
   DoOutput(kToggleOn, &inputPair, matchedIndex);
-  if (matchedIndex >= mHeaderTable.VariableLength()) {
-    MakeRoom(newSize);
+
+  if (isStatic) {
     mHeaderTable.AddElement(inputPair.mName, inputPair.mValue);
     IncrementReferenceSetIndices();
     mAlternateReferenceSet.AppendElement(0);

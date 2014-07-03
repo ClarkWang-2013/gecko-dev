@@ -20,7 +20,7 @@ class nsCycleCollectionNoteRootCallback;
 class nsIException;
 
 namespace js {
-class Class;
+struct Class;
 }
 
 namespace mozilla {
@@ -309,6 +309,8 @@ private:
 };
 
 MOZ_FINISH_NESTED_ENUM_CLASS(CycleCollectedJSRuntime::OOMState)
+
+void TraceScriptHolder(nsISupports* aHolder, JSTracer* aTracer);
 
 } // namespace mozilla
 

@@ -58,9 +58,11 @@ partial interface HTMLImageElement {
 
 // [Update me: not in whatwg spec yet]
 // http://picture.responsiveimages.org/#the-img-element
-[Pref="dom.image.srcset.enabled"]
 partial interface HTMLImageElement {
-           readonly attribute DOMString? currentSrc;
+           [SetterThrows, Pref="dom.image.picture.enabled"]
+           attribute DOMString sizes;
+           [Pref="dom.image.srcset.enabled"]
+  readonly attribute DOMString? currentSrc;
 };
 
 // Mozilla extensions.

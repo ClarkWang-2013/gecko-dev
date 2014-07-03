@@ -150,6 +150,10 @@ public:
   // when debugging transient memory spikes with printf instrumentation.
   static int64_t ResidentFast();
 
+  // Convenience function to get USS easily from other code.  This is useful
+  // when debugging unshared memory pages for forked processes.
+  static int64_t ResidentUnique();
+
   // Functions that measure per-tab memory consumption.
   struct SizeOfTabFns
   {
@@ -189,6 +193,7 @@ private:
   struct GetReportsState
   {
     uint32_t                             mGeneration;
+    bool                                 mAnonymize;
     nsCOMPtr<nsITimer>                   mTimer;
     uint32_t                             mNumChildProcesses;
     uint32_t                             mNumChildProcessesCompleted;
@@ -199,7 +204,7 @@ private:
     nsCOMPtr<nsISupports>                mFinishReportingData;
     nsString                             mDMDDumpIdent;
 
-    GetReportsState(uint32_t aGeneration, nsITimer* aTimer,
+    GetReportsState(uint32_t aGeneration, bool aAnonymize, nsITimer* aTimer,
                     uint32_t aNumChildProcesses,
                     nsIHandleReportCallback* aHandleReport,
                     nsISupports* aHandleReportData,
@@ -207,6 +212,7 @@ private:
                     nsISupports* aFinishReportingData,
                     const nsAString& aDMDDumpIdent)
       : mGeneration(aGeneration)
+      , mAnonymize(aAnonymize)
       , mTimer(aTimer)
       , mNumChildProcesses(aNumChildProcesses)
       , mNumChildProcessesCompleted(0)

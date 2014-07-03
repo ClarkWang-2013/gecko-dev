@@ -70,6 +70,7 @@
 #include "ProfileEntry.h"
 #include "nsThreadUtils.h"
 #include "TableTicker.h"
+#include "ThreadResponsiveness.h"
 #include "UnwinderThread2.h"
 #if defined(__ARM_EABI__) && defined(MOZ_WIDGET_GONK)
  // Should also work on other Android and ARM Linux, but not tested there yet.
@@ -227,6 +228,7 @@ static void ProfilerSignalHandler(int signal, siginfo_t* info, void* context) {
   sample->threadProfile = sCurrentThreadProfile;
   sample->timestamp = mozilla::TimeStamp::Now();
   sample->rssMemory = sample->threadProfile->mRssMemory;
+  sample->ussMemory = sample->threadProfile->mUssMemory;
 
   Sampler::GetActiveSampler()->Tick(sample);
 
@@ -239,8 +241,10 @@ static void ProfilerSignalThread(ThreadProfile *profile,
 {
   if (isFirstProfiledThread && Sampler::GetActiveSampler()->ProfileMemory()) {
     profile->mRssMemory = nsMemoryReporterManager::ResidentFast();
+    profile->mUssMemory = nsMemoryReporterManager::ResidentUnique();
   } else {
     profile->mRssMemory = 0;
+    profile->mUssMemory = 0;
   }
 }
 
@@ -313,6 +317,8 @@ static void* SignalSender(void* arg) {
           info->Profile()->flush();
           continue;
         }
+
+        info->Profile()->GetThreadResponsiveness()->Update();
 
         // We use sCurrentThreadProfile the ThreadProfile for the
         // thread we're profiling to the signal handler

@@ -33,7 +33,6 @@ EXPORTS += [
     'nsIGlobalObject.h',
     'nsIJSNativeInitializer.h',
     'nsIScriptContext.h',
-    'nsIScriptExternalNameSet.h',
     'nsIScriptGlobalObject.h',
     'nsIScriptNameSpaceManager.h',
     'nsIScriptObjectPrincipal.h',
@@ -59,7 +58,10 @@ EXPORTS.mozilla.dom += [
     'MessageChannel.h',
     'MessagePort.h',
     'MessagePortList.h',
+    'NameSpaceConstants.h',
     'Navigator.h',
+    'NodeInfo.h',
+    'NodeInfoInlines.h',
     'PerformanceEntry.h',
     'PerformanceResourceTiming.h',
     'ScreenOrientation.h',
@@ -82,6 +84,7 @@ UNIFIED_SOURCES += [
     'MessageChannel.cpp',
     'MessagePortList.cpp',
     'Navigator.cpp',
+    'NodeInfo.cpp',
     'nsContentPermissionHelper.cpp',
     'nsDOMClassInfo.cpp',
     'nsDOMNavigationTiming.cpp',
@@ -138,7 +141,6 @@ EXTRA_COMPONENTS += [
 EXTRA_JS_MODULES += [
     'DOMRequestHelper.jsm',
     'IndexedDBHelper.jsm',
-    'ObjectWrapper.jsm',
 ]
 
 FAIL_ON_WARNINGS = True

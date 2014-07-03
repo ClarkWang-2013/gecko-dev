@@ -1098,13 +1098,12 @@ nsComputedDOMStyle::DoGetContent()
               nsDependentString(a->Item(1).GetStringBufferValue()), str);
           }
           NS_ABORT_IF_FALSE(eCSSUnit_None != a->Item(typeItem).GetUnit(),
-                            "'none' should be handled  as enumerated value");
-          int32_t type = a->Item(typeItem).GetIntValue();
-          if (type != NS_STYLE_LIST_STYLE_DECIMAL) {
+                            "'none' should be handled as identifier value");
+          nsString type;
+          a->Item(typeItem).GetStringValue(type);
+          if (!type.LowerCaseEqualsLiteral("decimal")) {
             str.AppendLiteral(", ");
-            AppendASCIItoUTF16(
-              nsCSSProps::ValueToKeyword(type, nsCSSProps::kListStyleKTable),
-              str);
+            nsStyleUtil::AppendEscapedCSSIdent(type, str);
           }
 
           str.Append(char16_t(')'));
@@ -1431,30 +1430,10 @@ nsComputedDOMStyle::DoGetFontFamily()
   nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
 
   const nsStyleFont* font = StyleFont();
-
-  nsCOMPtr<nsIDocument> doc = do_QueryReferent(mDocumentWeak);
-  NS_ASSERTION(doc, "document is required");
-  nsIPresShell* presShell = doc->GetShell();
-  NS_ASSERTION(presShell, "pres shell is required");
-  nsPresContext *presContext = presShell->GetPresContext();
-  NS_ASSERTION(presContext, "pres context is required");
-
-  const nsString& fontName = font->mFont.name;
-  if (font->mGenericID == kGenericFont_NONE && !font->mFont.systemFont) {
-    const nsFont* defaultFont =
-      presContext->GetDefaultFont(kPresContext_DefaultVariableFont_ID,
-                                  font->mLanguage);
-
-    int32_t lendiff = fontName.Length() - defaultFont->name.Length();
-    if (lendiff > 0) {
-      val->SetString(Substring(fontName, 0, lendiff-1)); // -1 removes comma
-    } else {
-      val->SetString(fontName);
-    }
-  } else {
-    val->SetString(fontName);
-  }
-
+  nsAutoString fontlistStr;
+  nsStyleUtil::AppendEscapedCSSFontFamilyList(font->mFont.fontlist,
+                                              fontlistStr);
+  val->SetString(fontlistStr);
   return val;
 }
 
@@ -1777,7 +1756,7 @@ nsComputedDOMStyle::DoGetBackgroundColor()
 
 
 static void
-SetValueToCalc(const nsStyleCoord::Calc *aCalc, nsROCSSPrimitiveValue *aValue)
+SetValueToCalc(const nsStyleCoord::CalcValue *aCalc, nsROCSSPrimitiveValue *aValue)
 {
   nsRefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
   nsAutoString tmp, result;
@@ -3012,9 +2991,12 @@ CSSValue*
 nsComputedDOMStyle::DoGetListStyleType()
 {
   nsROCSSPrimitiveValue *val = new nsROCSSPrimitiveValue;
-  val->SetIdent(
-    nsCSSProps::ValueToKeywordEnum(StyleList()->mListStyleType,
-                                   nsCSSProps::kListStyleKTable));
+  // want SetIdent
+  nsString type;
+  StyleList()->GetListStyleType(type);
+  nsString value;
+  nsStyleUtil::AppendEscapedCSSIdent(type, value);
+  val->SetString(value);
   return val;
 }
 

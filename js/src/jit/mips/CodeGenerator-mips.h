@@ -33,12 +33,6 @@ class CodeGeneratorMIPS : public CodeGeneratorShared
         MOZ_ASSERT(a.isMemory());
         int32_t offset = ToStackOffset(&a);
 
-        // The way the stack slots work, we assume that everything from
-        // depth == 0 downwards is writable however, since our frame is
-        // included in this, ensure that the frame gets skipped.
-        if (gen->compilingAsmJS())
-            offset -= AlignmentMidPrologue;
-
         return Address(StackPointer, offset);
     }
 
@@ -54,12 +48,6 @@ class CodeGeneratorMIPS : public CodeGeneratorShared
 
         MOZ_ASSERT(a.isMemory());
         int32_t offset = ToStackOffset(&a);
-
-        // The way the stack slots work, we assume that everything from
-        // depth == 0 downwards is writable however, since our frame is
-        // included in this, ensure that the frame gets skipped.
-        if (gen->compilingAsmJS())
-            offset -= AlignmentMidPrologue;
 
         return Operand(StackPointer, offset);
     }
@@ -103,6 +91,11 @@ class CodeGeneratorMIPS : public CodeGeneratorShared
     bool bailoutTestPtr(Assembler::Condition c, Register lhs, Register rhs, LSnapshot *snapshot) {
         Label bail;
         masm.branchTestPtr(c, lhs, rhs, &bail);
+        return bailoutFrom(&bail, snapshot);
+    }
+    bool bailoutIfFalseBool(Register reg, LSnapshot *snapshot) {
+        Label bail;
+        masm.branchTest32(Assembler::Zero, reg, Imm32(0xFF), &bail);
         return bailoutFrom(&bail, snapshot);
     }
 

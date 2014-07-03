@@ -1,4 +1,4 @@
-/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -136,7 +136,7 @@ InspectorPanel.prototype = {
       // Show a warning when the debugger is paused.
       // We show the warning only when the inspector
       // is selected.
-      this.updateDebuggerPausedWarning = function() {
+      this.updateDebuggerPausedWarning = () => {
         let notificationBox = this._toolbox.getNotificationBox();
         let notification = notificationBox.getNotificationWithValue("inspector-script-paused");
         if (!notification && this._toolbox.currentToolId == "inspector" &&
@@ -154,7 +154,7 @@ InspectorPanel.prototype = {
           notificationBox.removeNotification(notification);
         }
 
-      }.bind(this);
+      };
       this.target.on("thread-paused", this.updateDebuggerPausedWarning);
       this.target.on("thread-resumed", this.updateDebuggerPausedWarning);
       this._toolbox.on("select", this.updateDebuggerPausedWarning);
@@ -164,7 +164,7 @@ InspectorPanel.prototype = {
     this._initMarkup();
     this.isReady = false;
 
-    this.once("markuploaded", function() {
+    this.once("markuploaded", () => {
       this.isReady = true;
 
       // All the components are initialized. Let's select a node.
@@ -174,7 +174,7 @@ InspectorPanel.prototype = {
 
       this.emit("ready");
       deferred.resolve(this);
-    }.bind(this));
+    });
 
     this.setupSearchBox();
     this.setupSidebar();
@@ -281,9 +281,9 @@ InspectorPanel.prototype = {
 
     let defaultTab = Services.prefs.getCharPref("devtools.inspector.activeSidebar");
 
-    this._setDefaultSidebar = function(event, toolId) {
+    this._setDefaultSidebar = (event, toolId) => {
       Services.prefs.setCharPref("devtools.inspector.activeSidebar", toolId);
-    }.bind(this);
+    };
 
     this.sidebar.on("select", this._setDefaultSidebar);
 
@@ -850,10 +850,10 @@ InspectorPanel.prototype = {
       if (this._timer) {
         return null;
       }
-      this._timer = this.panelWin.setTimeout(function() {
+      this._timer = this.panelWin.setTimeout(() => {
         this.emit("layout-change");
         this._timer = null;
-      }.bind(this), LAYOUT_CHANGE_TIMER);
+      }, LAYOUT_CHANGE_TIMER);
     }
   },
 

@@ -57,8 +57,6 @@ WMFDecoderModule::Startup()
 nsresult
 WMFDecoderModule::Shutdown()
 {
-  MOZ_ASSERT(NS_IsMainThread(), "Must be on main thread.");
-
   DebugOnly<HRESULT> hr = wmf::MFShutdown();
   NS_ASSERTION(SUCCEEDED(hr), "MFShutdown failed");
 
@@ -72,7 +70,8 @@ WMFDecoderModule::CreateH264Decoder(const mp4_demuxer::VideoDecoderConfig& aConf
                                     MediaTaskQueue* aVideoTaskQueue,
                                     MediaDataDecoderCallback* aCallback)
 {
-  return new WMFMediaDataDecoder(new WMFVideoOutputSource(aLayersBackend,
+  return new WMFMediaDataDecoder(new WMFVideoOutputSource(aConfig,
+                                                          aLayersBackend,
                                                           aImageContainer,
                                                           sDXVAEnabled),
                                  aVideoTaskQueue,

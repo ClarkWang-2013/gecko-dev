@@ -753,8 +753,6 @@ AsyncFaviconDataReady::OnComplete(nsIURI *aFaviconURI,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Decode the image from the format it was returned to us in (probably PNG)
-  nsAutoCString mimeTypeOfInputData;
-  mimeTypeOfInputData.AssignLiteral("image/vnd.microsoft.icon");
   nsCOMPtr<imgIContainer> container;
   nsCOMPtr<imgITools> imgtool = do_CreateInstance("@mozilla.org/image/tools;1");
   rv = imgtool->DecodeImageData(stream, aMimeType,
@@ -958,8 +956,13 @@ AsyncDeleteIconFromDisk::~AsyncDeleteIconFromDisk()
 {
 }
 
-AsyncDeleteAllFaviconsFromDisk::AsyncDeleteAllFaviconsFromDisk()
+AsyncDeleteAllFaviconsFromDisk::
+  AsyncDeleteAllFaviconsFromDisk(bool aIgnoreRecent)
+  : mIgnoreRecent(aIgnoreRecent)
 {
+  // We can't call FaviconHelper::GetICOCacheSecondsTimeout() on non-main
+  // threads, as it reads a pref, so cache its value here.
+  mIcoNoDeleteSeconds = FaviconHelper::GetICOCacheSecondsTimeout() + 600;
 }
 
 NS_IMETHODIMP AsyncDeleteAllFaviconsFromDisk::Run()
@@ -996,6 +999,22 @@ NS_IMETHODIMP AsyncDeleteAllFaviconsFromDisk::Run()
       bool exists;
       if (NS_FAILED(currFile->Exists(&exists)) || !exists)
         continue;
+
+      if (mIgnoreRecent) {
+        // Check to make sure the icon wasn't just recently created.
+        // If it was created recently, don't delete it yet.
+        int64_t fileModTime = 0;
+        rv = currFile->GetLastModifiedTime(&fileModTime);
+        fileModTime /= PR_MSEC_PER_SEC;
+        // If the icon is older than the regeneration time (+ 10 min to be
+        // safe), then it's old and we can get rid of it.
+        // This code is only hit directly after a regeneration.
+        int64_t nowTime = PR_Now() / int64_t(PR_USEC_PER_SEC);
+        if (NS_FAILED(rv) ||
+          (nowTime - fileModTime) < mIcoNoDeleteSeconds) {
+          continue;
+        }
+      }
 
       // We found an ICO file that exists, so we should remove it
       currFile->Remove(false);

@@ -15,6 +15,7 @@
 #include "nsINode.h"
 #include "nsIDocument.h"
 #include "nsIDOMNode.h"
+#include "nsLayoutUtils.h"
 #include "prmon.h"
 #include "nsStubMutationObserver.h"
 #include "nsWrapperCache.h"
@@ -37,6 +38,8 @@ class nsRange MOZ_FINAL : public nsIDOMRange,
   typedef mozilla::dom::DOMRect DOMRect;
   typedef mozilla::dom::DOMRectList DOMRectList;
 
+  virtual ~nsRange();
+
 public:
   nsRange(nsINode* aNode)
     : mRoot(nullptr)
@@ -58,7 +61,6 @@ public:
     MOZ_ASSERT(aNode, "range isn't in a document!");
     mOwner = aNode->OwnerDoc();
   }
-  virtual ~nsRange();
 
   static nsresult CreateRange(nsIDOMNode* aStartParent, int32_t aStartOffset,
                               nsIDOMNode* aEndParent, int32_t aEndOffset,
@@ -253,6 +255,11 @@ public:
 
   static bool IsNodeSelected(nsINode* aNode, uint32_t aStartOffset,
                              uint32_t aEndOffset);
+
+  static void CollectClientRects(nsLayoutUtils::RectCallback* aCollector,
+                                 nsRange* aRange,
+                                 nsINode* aStartParent, int32_t aStartOffset,
+                                 nsINode* aEndParent, int32_t aEndOffset);
 
   typedef nsTHashtable<nsPtrHashKey<nsRange> > RangeHashTable;
 protected:

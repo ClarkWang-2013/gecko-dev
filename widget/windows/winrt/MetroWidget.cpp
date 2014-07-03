@@ -39,6 +39,7 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/MiscEvents.h"
+#include "gfxPrefs.h"
 
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
@@ -997,7 +998,8 @@ MetroWidget::ShouldUseOffMainThreadCompositing()
     return false;
   }
   // toolkit or test widgets can't use omtc, they don't have ICoreWindow.
-  return (CompositorParent::CompositorLoop() && mWindowType == eWindowType_toplevel);
+  return gfxPlatform::UsesOffMainThreadCompositing() &&
+         mWindowType == eWindowType_toplevel;
 }
 
 bool
@@ -1007,7 +1009,8 @@ MetroWidget::ShouldUseMainThreadD3D10Manager()
   if (!mView) {
     return false;
   }
-  return (!CompositorParent::CompositorLoop() && mWindowType == eWindowType_toplevel);
+  return !gfxPlatform::UsesOffMainThreadCompositing() &&
+         mWindowType == eWindowType_toplevel;
 }
 
 bool
@@ -1020,9 +1023,7 @@ MetroWidget::ShouldUseBasicManager()
 bool
 MetroWidget::ShouldUseAPZC()
 {
-  const char* kPrefName = "layers.async-pan-zoom.enabled";
-  return ShouldUseOffMainThreadCompositing() &&
-         Preferences::GetBool(kPrefName, false);
+  return gfxPrefs::AsyncPanZoomEnabled();
 }
 
 void

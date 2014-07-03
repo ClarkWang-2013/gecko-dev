@@ -11,14 +11,16 @@
 #include "imgIContainer.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/RefPtr.h"
+#include "nsPrintfCString.h"
 
+class gfxASurface;
 class gfxDrawable;
 class nsIntRegion;
 struct nsIntRect;
 
 namespace mozilla {
 namespace layers {
-class PlanarYCbCrData;
+struct PlanarYCbCrData;
 }
 }
 
@@ -40,11 +42,16 @@ public:
      * If the source is not gfxImageFormat::ARGB32, no operation is performed.  If
      * aDestSurface is given, the data is copied over.
      */
-    static void PremultiplyDataSurface(DataSourceSurface *aSurface);
-    static mozilla::TemporaryRef<DataSourceSurface> UnpremultiplyDataSurface(DataSourceSurface* aSurface);
+    static bool PremultiplyDataSurface(DataSourceSurface* srcSurf,
+                                       DataSourceSurface* destSurf);
+    static bool UnpremultiplyDataSurface(DataSourceSurface* srcSurf,
+                                         DataSourceSurface* destSurf);
 
-    static void ConvertBGRAtoRGBA(gfxImageSurface *aSourceSurface,
-                                  gfxImageSurface *aDestSurface = nullptr);
+    static mozilla::TemporaryRef<DataSourceSurface>
+      CreatePremultipliedDataSurface(DataSourceSurface* srcSurf);
+    static mozilla::TemporaryRef<DataSourceSurface>
+      CreateUnpremultipliedDataSurface(DataSourceSurface* srcSurf);
+
     static void ConvertBGRAtoRGBA(uint8_t* aData, uint32_t aLength);
 
     /**
@@ -67,7 +74,7 @@ public:
                                  const gfxRect&   aSourceRect,
                                  const gfxRect&   aImageRect,
                                  const gfxRect&   aFill,
-                                 const gfxImageFormat aFormat,
+                                 const mozilla::gfx::SurfaceFormat aFormat,
                                  GraphicsFilter aFilter,
                                  uint32_t         aImageFlags = imgIContainer::FLAG_NONE);
 
@@ -161,6 +168,11 @@ public:
                       int32_t aStride);
 
     /**
+     * Clears surface to transparent black.
+     */
+    static void ClearThebesSurface(gfxASurface* aSurface);
+
+    /**
      * Creates a copy of aSurface, but having the SurfaceFormat aFormat.
      *
      * This function always creates a new surface. Do not call it if aSurface's
@@ -242,19 +254,19 @@ public:
      * Writes a binary PNG file.
      * Expensive. Creates a DataSourceSurface, then a DrawTarget, then passes to DrawTarget overloads
      */
-    static void WriteAsPNG(mozilla::RefPtr<mozilla::gfx::SourceSurface> aSourceSurface, const char* aFile);
+    static void WriteAsPNG(mozilla::gfx::SourceSurface* aSourceSurface, const char* aFile);
 
     /**
      * Write as a PNG encoded Data URL to stdout.
      * Expensive. Creates a DataSourceSurface, then a DrawTarget, then passes to DrawTarget overloads
      */
-    static void DumpAsDataURL(mozilla::RefPtr<mozilla::gfx::SourceSurface> aSourceSurface);
+    static void DumpAsDataURL(mozilla::gfx::SourceSurface* aSourceSurface);
 
     /**
      * Copy a PNG encoded Data URL to the clipboard.
      * Expensive. Creates a DataSourceSurface, then a DrawTarget, then passes to DrawTarget overloads
      */
-    static void CopyAsDataURL(mozilla::RefPtr<mozilla::gfx::SourceSurface> aSourceSurface);
+    static void CopyAsDataURL(mozilla::gfx::SourceSurface* aSourceSurface);
 #endif
 };
 

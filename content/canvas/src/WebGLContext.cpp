@@ -52,6 +52,7 @@
 #include "mozilla/Telemetry.h"
 
 #include "nsIObserverService.h"
+#include "nsIDOMEvent.h"
 #include "mozilla/Services.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -71,29 +72,140 @@ using namespace mozilla::gfx;
 using namespace mozilla::gl;
 using namespace mozilla::layers;
 
-NS_IMETHODIMP
-WebGLMemoryPressureObserver::Observe(nsISupports* aSubject,
-                                     const char* aTopic,
-                                     const char16_t* aSomeData)
+WebGLObserver::WebGLObserver(WebGLContext* aContext)
+    : mContext(aContext)
 {
-    if (strcmp(aTopic, "memory-pressure"))
-        return NS_OK;
+}
 
-    bool wantToLoseContext = true;
+WebGLObserver::~WebGLObserver()
+{
+}
+
+void
+WebGLObserver::Destroy()
+{
+    UnregisterMemoryPressureEvent();
+    UnregisterVisibilityChangeEvent();
+    mContext = nullptr;
+}
+
+void
+WebGLObserver::RegisterVisibilityChangeEvent()
+{
+    if (!mContext) {
+        return;
+    }
+
+    HTMLCanvasElement* canvasElement = mContext->GetCanvas();
+
+    MOZ_ASSERT(canvasElement);
+
+    if (canvasElement) {
+        nsIDocument* document = canvasElement->OwnerDoc();
+
+        document->AddSystemEventListener(NS_LITERAL_STRING("visibilitychange"),
+                                         this,
+                                         true,
+                                         false);
+    }
+}
+
+void
+WebGLObserver::UnregisterVisibilityChangeEvent()
+{
+    if (!mContext) {
+        return;
+    }
+
+    HTMLCanvasElement* canvasElement = mContext->GetCanvas();
+
+    if (canvasElement) {
+        nsIDocument* document = canvasElement->OwnerDoc();
+
+        document->RemoveSystemEventListener(NS_LITERAL_STRING("visibilitychange"),
+                                            this,
+                                            true);
+    }
+}
+
+void
+WebGLObserver::RegisterMemoryPressureEvent()
+{
+    if (!mContext) {
+        return;
+    }
+
+    nsCOMPtr<nsIObserverService> observerService =
+        mozilla::services::GetObserverService();
+
+    MOZ_ASSERT(observerService);
+
+    if (observerService) {
+        observerService->AddObserver(this, "memory-pressure", false);
+    }
+}
+
+void
+WebGLObserver::UnregisterMemoryPressureEvent()
+{
+    if (!mContext) {
+        return;
+    }
+
+    nsCOMPtr<nsIObserverService> observerService =
+        mozilla::services::GetObserverService();
+
+    // Do not assert on observerService here. This might be triggered by
+    // the cycle collector at a late enough time, that XPCOM services are
+    // no longer available. See bug 1029504.
+    if (observerService) {
+        observerService->RemoveObserver(this, "memory-pressure");
+    }
+}
+
+NS_IMETHODIMP
+WebGLObserver::Observe(nsISupports* aSubject,
+                       const char* aTopic,
+                       const char16_t* aSomeData)
+{
+    if (!mContext || strcmp(aTopic, "memory-pressure")) {
+        return NS_OK;
+    }
+
+    bool wantToLoseContext = mContext->mLoseContextOnMemoryPressure;
 
     if (!mContext->mCanLoseContextInForeground &&
         ProcessPriorityManager::CurrentProcessIsForeground())
+    {
         wantToLoseContext = false;
-    else if (!nsCRT::strcmp(aSomeData,
-                            MOZ_UTF16("heap-minimize")))
-        wantToLoseContext = mContext->mLoseContextOnHeapMinimize;
+    }
 
-    if (wantToLoseContext)
+    if (wantToLoseContext) {
         mContext->ForceLoseContext();
+    }
 
     return NS_OK;
 }
 
+NS_IMETHODIMP
+WebGLObserver::HandleEvent(nsIDOMEvent* aEvent)
+{
+    nsAutoString type;
+    aEvent->GetType(type);
+    if (!mContext || !type.EqualsLiteral("visibilitychange")) {
+        return NS_OK;
+    }
+
+    HTMLCanvasElement* canvasElement = mContext->GetCanvas();
+
+    MOZ_ASSERT(canvasElement);
+
+    if (canvasElement && !canvasElement->OwnerDoc()->Hidden()) {
+        mContext->ForceRestoreContext();
+    }
+
+    return NS_OK;
+}
 
 WebGLContextOptions::WebGLContextOptions()
     : alpha(true), depth(true), stencil(false),
@@ -168,14 +280,15 @@ WebGLContext::WebGLContext()
 
     WebGLMemoryTracker::AddWebGLContext(this);
 
-    mAllowRestore = true;
+    mAllowContextRestore = true;
+    mLastLossWasSimulated = false;
     mContextLossTimerRunning = false;
-    mDrawSinceContextLossTimerSet = false;
+    mRunContextLossTimerAgain = false;
     mContextRestorer = do_CreateInstance("@mozilla.org/timer;1");
     mContextStatus = ContextNotLost;
-    mContextLostErrorSet = false;
-    mLoseContextOnHeapMinimize = false;
+    mLoseContextOnMemoryPressure = false;
     mCanLoseContextInForeground = true;
+    mRestoreWhenVisible = false;
 
     mAlreadyGeneratedWarnings = 0;
     mAlreadyWarnedAboutFakeVertexAttrib0 = false;
@@ -186,6 +299,9 @@ WebGLContext::WebGLContext()
         GenerateWarning("webgl.max-warnings-per-context size is too large (seems like a negative value wrapped)");
         mMaxWarnings = 0;
     }
+
+    mContextObserver = new WebGLObserver(this);
+    MOZ_RELEASE_ASSERT(mContextObserver, "Can't alloc WebGLContextObserver");
 
     mLastUseIndex = 0;
 
@@ -200,6 +316,8 @@ WebGLContext::WebGLContext()
 
 WebGLContext::~WebGLContext()
 {
+    mContextObserver->Destroy();
+
     DestroyResourcesAndContext();
     WebGLMemoryTracker::RemoveWebGLContext(this);
     TerminateContextLossTimer();
@@ -209,15 +327,7 @@ WebGLContext::~WebGLContext()
 void
 WebGLContext::DestroyResourcesAndContext()
 {
-    if (mMemoryPressureObserver) {
-        nsCOMPtr<nsIObserverService> observerService
-            = mozilla::services::GetObserverService();
-        if (observerService) {
-            observerService->RemoveObserver(mMemoryPressureObserver,
-                                            "memory-pressure");
-        }
-        mMemoryPressureObserver = nullptr;
-    }
+    mContextObserver->UnregisterMemoryPressureEvent();
 
     if (!gl)
         return;
@@ -571,11 +681,8 @@ WebGLContext::SetDimensions(int32_t width, int32_t height)
     mResetLayer = true;
     mOptionsFrozen = true;
 
-    mHasRobustness = gl->HasRobustness();
-
     // increment the generation number
     ++mGeneration;
-
 #if 0
     if (mGeneration > 0) {
         // XXX dispatch context lost event
@@ -895,7 +1002,7 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
     data.mGLContext = gl;
     data.mSize = nsIntSize(mWidth, mHeight);
     data.mHasAlpha = gl->Caps().alpha;
-    data.mIsGLAlphaPremult = IsPremultAlpha();
+    data.mIsGLAlphaPremult = IsPremultAlpha() || !data.mHasAlpha;
 
     canvasLayer->Initialize(data);
     uint32_t flags = gl->Caps().alpha ? 0 : Layer::CONTENT_OPAQUE;
@@ -1115,6 +1222,96 @@ WebGLContext::DummyFramebufferOperation(const char *info)
         ErrorInvalidFramebufferOperation("%s: incomplete framebuffer", info);
 }
 
+static bool
+CheckContextLost(GLContext* gl, bool* out_isGuilty)
+{
+    MOZ_ASSERT(gl);
+    MOZ_ASSERT(out_isGuilty);
+
+    bool isEGL = gl->GetContextType() == gl::GLContextType::EGL;
+
+    GLenum resetStatus = LOCAL_GL_NO_ERROR;
+    if (gl->HasRobustness()) {
+        gl->MakeCurrent();
+        resetStatus = gl->fGetGraphicsResetStatus();
+    } else if (isEGL) {
+        // Simulate a ARB_robustness guilty context loss for when we
+        // get an EGL_CONTEXT_LOST error. It may not actually be guilty,
+        // but we can't make any distinction.
+        if (!gl->MakeCurrent(true) && gl->IsContextLost()) {
+            resetStatus = LOCAL_GL_UNKNOWN_CONTEXT_RESET_ARB;
+        }
+    }
+
+    if (resetStatus == LOCAL_GL_NO_ERROR) {
+        *out_isGuilty = false;
+        return false;
+    }
+
+    // Assume guilty unless we find otherwise!
+    bool isGuilty = true;
+    switch (resetStatus) {
+    case LOCAL_GL_INNOCENT_CONTEXT_RESET_ARB:
+        // Either nothing wrong, or not our fault.
+        isGuilty = false;
+        break;
+    case LOCAL_GL_GUILTY_CONTEXT_RESET_ARB:
+        NS_WARNING("WebGL content on the page definitely caused the graphics"
+                   " card to reset.");
+        break;
+    case LOCAL_GL_UNKNOWN_CONTEXT_RESET_ARB:
+        NS_WARNING("WebGL content on the page might have caused the graphics"
+                   " card to reset");
+        // If we can't tell, assume guilty.
+        break;
+    default:
+        MOZ_ASSERT(false, "Unreachable.");
+        // If we do get here, let's pretend to be guilty as an escape plan.
+        break;
+    }
+
+    if (isGuilty) {
+        NS_WARNING("WebGL context on this page is considered guilty, and will"
+                   " not be restored.");
+    }
+
+    *out_isGuilty = isGuilty;
+    return true;
+}
+
+bool
+WebGLContext::TryToRestoreContext()
+{
+    if (NS_FAILED(SetDimensions(mWidth, mHeight)))
+        return false;
+
+    return true;
+}
+
+class UpdateContextLossStatusTask : public nsRunnable
+{
+    nsRefPtr<WebGLContext> mContext;
+
+public:
+    UpdateContextLossStatusTask(WebGLContext* context)
+        : mContext(context)
+    {
+    }
+
+    NS_IMETHOD Run() {
+        mContext->UpdateContextLossStatus();
+
+        return NS_OK;
+    }
+};
+
+void
+WebGLContext::EnqueueUpdateContextLossStatus()
+{
+    nsCOMPtr<nsIRunnable> task = new UpdateContextLossStatusTask(this);
+    NS_DispatchToCurrentThread(task);
+}
+
 // We use this timer for many things. Here are the things that it is activated for:
 // 1) If a script is using the MOZ_WEBGL_lose_context extension.
 // 2) If we are using EGL and _NOT ANGLE_, we query periodically to see if the
@@ -1130,137 +1327,136 @@ WebGLContext::DummyFramebufferOperation(const char *info)
 // At a bare minimum, from context lost to context restores, it would take 3
 // full timer iterations: detection, webglcontextlost, webglcontextrestored.
 void
-WebGLContext::RobustnessTimerCallback(nsITimer* timer)
+WebGLContext::UpdateContextLossStatus()
 {
-    TerminateContextLossTimer();
-
     if (!mCanvasElement) {
         // the canvas is gone. That happens when the page was closed before we got
         // this timer event. In this case, there's nothing to do here, just don't crash.
         return;
     }
+    if (mContextStatus == ContextNotLost) {
+        // We don't know that we're lost, but we might be, so we need to
+        // check. If we're guilty, don't allow restores, though.
 
-    // If the context has been lost and we're waiting for it to be restored, do
-    // that now.
+        bool isGuilty = true;
+        MOZ_ASSERT(gl); // Shouldn't be missing gl if we're NotLost.
+        bool isContextLost = CheckContextLost(gl, &isGuilty);
+
+        if (isContextLost) {
+            if (isGuilty)
+                mAllowContextRestore = false;
+
+            ForceLoseContext();
+        }
+
+        // Fall through.
+    }
+
     if (mContextStatus == ContextLostAwaitingEvent) {
-        bool defaultAction;
+        // The context has been lost and we haven't yet triggered the
+        // callback, so do that now.
+
+        bool useDefaultHandler;
         nsContentUtils::DispatchTrustedEvent(mCanvasElement->OwnerDoc(),
                                              static_cast<nsIDOMHTMLCanvasElement*>(mCanvasElement),
                                              NS_LITERAL_STRING("webglcontextlost"),
                                              true,
                                              true,
-                                             &defaultAction);
+                                             &useDefaultHandler);
+        // We sent the callback, so we're just 'regular lost' now.
+        mContextStatus = ContextLost;
+        // If we're told to use the default handler, it means the script
+        // didn't bother to handle the event. In this case, we shouldn't
+        // auto-restore the context.
+        if (useDefaultHandler)
+            mAllowContextRestore = false;
 
-        // If the script didn't handle the event, we don't allow restores.
-        if (defaultAction)
-            mAllowRestore = false;
+        // Fall through.
+    }
 
-        // If the script handled the event and we are allowing restores, then
-        // mark it to be restored. Otherwise, leave it as context lost
-        // (unusable).
-        if (!defaultAction && mAllowRestore) {
-            ForceRestoreContext();
-            // Restart the timer so that it will be restored on the next
-            // callback.
-            SetupContextLossTimer();
-        } else {
+    if (mContextStatus == ContextLost) {
+        // Context is lost, and we've already sent the callback. We
+        // should try to restore the context if we're both allowed to,
+        // and supposed to.
+
+        // Are we allowed to restore the context?
+        if (!mAllowContextRestore)
+            return;
+
+        // If we're only simulated-lost, we shouldn't auto-restore, and
+        // instead we should wait for restoreContext() to be called.
+        if (mLastLossWasSimulated)
+            return;
+
+        // Restore when the app is visible
+        if (mRestoreWhenVisible)
+            return;
+
+        ForceRestoreContext();
+        return;
+    }
+
+    if (mContextStatus == ContextLostAwaitingRestore) {
+        // Context is lost, but we should try to restore it.
+
+        if (!mAllowContextRestore) {
+            // We might decide this after thinking we'd be OK restoring
+            // the context, so downgrade.
             mContextStatus = ContextLost;
-        }
-    } else if (mContextStatus == ContextLostAwaitingRestore) {
-        // Try to restore the context. If it fails, try again later.
-        if (NS_FAILED(SetDimensions(mWidth, mHeight))) {
-            SetupContextLossTimer();
             return;
         }
+
+        if (!TryToRestoreContext()) {
+            // Failed to restore. Try again later.
+            RunContextLossTimer();
+            return;
+        }
+
+        // Revival!
         mContextStatus = ContextNotLost;
         nsContentUtils::DispatchTrustedEvent(mCanvasElement->OwnerDoc(),
                                              static_cast<nsIDOMHTMLCanvasElement*>(mCanvasElement),
                                              NS_LITERAL_STRING("webglcontextrestored"),
                                              true,
                                              true);
-        // Set all flags back to the state they were in before the context was
-        // lost.
         mEmitContextLostErrorOnce = true;
-        mAllowRestore = true;
-    }
-
-    MaybeRestoreContext();
-    return;
-}
-
-void
-WebGLContext::MaybeRestoreContext()
-{
-    // Don't try to handle it if we already know it's busted.
-    if (mContextStatus != ContextNotLost || gl == nullptr)
         return;
-
-    bool isEGL = gl->GetContextType() == gl::GLContextType::EGL,
-         isANGLE = gl->IsANGLE();
-
-    GLContext::ContextResetARB resetStatus = GLContext::CONTEXT_NO_ERROR;
-    if (mHasRobustness) {
-        gl->MakeCurrent();
-        resetStatus = (GLContext::ContextResetARB) gl->fGetGraphicsResetStatus();
-    } else if (isEGL) {
-        // Simulate a ARB_robustness guilty context loss for when we
-        // get an EGL_CONTEXT_LOST error. It may not actually be guilty,
-        // but we can't make any distinction, so we must assume the worst
-        // case.
-        if (!gl->MakeCurrent(true) && gl->IsContextLost()) {
-            resetStatus = GLContext::CONTEXT_GUILTY_CONTEXT_RESET_ARB;
-        }
-    }
-
-    if (resetStatus != GLContext::CONTEXT_NO_ERROR) {
-        // It's already lost, but clean up after it and signal to JS that it is
-        // lost.
-        ForceLoseContext();
-    }
-
-    switch (resetStatus) {
-        case GLContext::CONTEXT_NO_ERROR:
-            // If there has been activity since the timer was set, it's possible
-            // that we did or are going to miss something, so clear this flag and
-            // run it again some time later.
-            if (mDrawSinceContextLossTimerSet)
-                SetupContextLossTimer();
-            break;
-        case GLContext::CONTEXT_GUILTY_CONTEXT_RESET_ARB:
-            NS_WARNING("WebGL content on the page caused the graphics card to reset; not restoring the context");
-            mAllowRestore = false;
-            break;
-        case GLContext::CONTEXT_INNOCENT_CONTEXT_RESET_ARB:
-            break;
-        case GLContext::CONTEXT_UNKNOWN_CONTEXT_RESET_ARB:
-            NS_WARNING("WebGL content on the page might have caused the graphics card to reset");
-            if (isEGL && isANGLE) {
-                // If we're using ANGLE, we ONLY get back UNKNOWN context resets, including for guilty contexts.
-                // This means that we can't restore it or risk restoring a guilty context. Should this ever change,
-                // we can get rid of the whole IsANGLE() junk from GLContext.h since, as of writing, this is the
-                // only use for it. See ANGLE issue 261.
-                mAllowRestore = false;
-            }
-            break;
     }
 }
 
 void
-WebGLContext::ForceLoseContext()
+WebGLContext::ForceLoseContext(bool simulateLosing)
 {
-    if (mContextStatus == ContextLostAwaitingEvent)
-        return;
-
+    printf_stderr("WebGL(%p)::ForceLoseContext\n", this);
+    MOZ_ASSERT(!IsContextLost());
     mContextStatus = ContextLostAwaitingEvent;
-    // Queue up a task to restore the event.
-    SetupContextLossTimer();
+    mContextLostErrorSet = false;
+
+    // Burn it all!
     DestroyResourcesAndContext();
+    mLastLossWasSimulated = simulateLosing;
+
+    // Register visibility change observer to defer the context restoring.
+    // Restore the context when the app is visible.
+    if (mRestoreWhenVisible && !mLastLossWasSimulated) {
+        mContextObserver->RegisterVisibilityChangeEvent();
+    }
+
+    // Queue up a task, since we know the status changed.
+    EnqueueUpdateContextLossStatus();
 }
 
 void
 WebGLContext::ForceRestoreContext()
 {
+    printf_stderr("WebGL(%p)::ForceRestoreContext\n", this);
     mContextStatus = ContextLostAwaitingRestore;
+    mAllowContextRestore = true; // Hey, you did say 'force'.
+
+    mContextObserver->UnregisterVisibilityChangeEvent();
+
+    // Queue up a task, since we know the status changed.
+    EnqueueUpdateContextLossStatus();
 }
 
 void
@@ -1294,7 +1490,7 @@ WebGLContext::GetSurfaceSnapshot(bool* aPremultAlpha)
         if (aPremultAlpha) {
             *aPremultAlpha = false;
         } else {
-            gfxUtils::PremultiplyDataSurface(surf);
+            gfxUtils::PremultiplyDataSurface(surf, surf);
         }
     }
 

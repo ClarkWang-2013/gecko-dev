@@ -31,6 +31,25 @@ function rbitnot_object(i) {
     return i;
 }
 
+var uceFault_bitand_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_bitand_number'));
+function rbitand_number(i) {
+    var x = 1 & i;
+    if (uceFault_bitand_number(i) || uceFault_bitand_number(i))
+        assertEq(x, 1  /* = 1 & 99 */);
+    return i;
+}
+
+var uceFault_bitand_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_bitand_object'));
+function rbitand_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = o & i; /* computed with t == i, not 1000 */
+    t = 1000;
+    if (uceFault_bitand_object(i) || uceFault_bitand_object(i))
+        assertEq(x, 99);
+    return i;
+}
+
 var uceFault_bitor_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_bitor_number'));
 function rbitor_number(i) {
     var x = i | -100; /* -100 == ~99 */
@@ -144,14 +163,6 @@ function radd_float(i) {
     return i;
 }
 
-var uceFault_add_string = eval(uneval(uceFault).replace('uceFault', 'uceFault_add_string'));
-function radd_string(i) {
-    var x = "s" + i;
-    if (uceFault_add_string(i) || uceFault_add_string(i))
-        assertEq(x, "s99");
-    return i;
-}
-
 var uceFault_add_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_add_object'));
 function radd_object(i) {
     var t = i;
@@ -192,9 +203,193 @@ function rsub_object(i) {
     return i;
 }
 
+var uceFault_mul_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_mul_number'));
+function rmul_number(i) {
+    var x = 2 * i;
+    if (uceFault_mul_number(i) || uceFault_mul_number(i))
+        assertEq(x, 198  /* = 1 * 99 */);
+    return i;
+}
+
+var uceFault_mul_float = eval(uneval(uceFault).replace('uceFault', 'uceFault_mul_float'));
+function rmul_float(i) {
+    var t = Math.fround(1/3);
+    var fi = Math.fround(i);
+    var x = Math.fround(Math.fround(Math.fround(Math.fround(t * fi) * t) * fi) * t);
+    if (uceFault_mul_float(i) || uceFault_mul_float(i))
+        assertEq(x, 363); /* != 363.0000324547301 (when computed with double multiplications) */
+    return i;
+}
+
+var uceFault_mul_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_mul_object'));
+function rmul_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = o * i; /* computed with t == i, not 1000 */
+    t = 1000;
+    if (uceFault_mul_object(i) || uceFault_mul_object(i))
+        assertEq(x, 9801);
+    return i;
+}
+
+var uceFault_div_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_div_number'));
+function rdiv_number(i) {
+    var x = 1 / i;
+    if (uceFault_div_number(i) || uceFault_div_number(i))
+        assertEq(x, 0.010101010101010102  /* = 1 / 99 */);
+    return i;
+}
+
+var uceFault_div_float = eval(uneval(uceFault).replace('uceFault', 'uceFault_div_float'));
+function rdiv_float(i) {
+    var t = Math.fround(1/3);
+    var fi = Math.fround(i);
+    var x = Math.fround(Math.fround(Math.fround(Math.fround(t / fi) / t) / fi) / t);
+    if (uceFault_div_float(i) || uceFault_div_float(i))
+        assertEq(x, 0.0003060912131331861); /* != 0.0003060912060598955 (when computed with double divisions) */
+    return i;
+}
+
+var uceFault_div_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_div_object'));
+function rdiv_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = o / i; /* computed with t == i, not 1000 */
+    t = 1000;
+    if (uceFault_div_object(i) || uceFault_div_object(i))
+        assertEq(x, 1);
+    return i;
+}
+
+var uceFault_mod_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_mod_number'));
+function rmod_number(i) {
+    var x = i % 98;
+    if (uceFault_mod_number(i) || uceFault_mod_number(i))
+        assertEq(x, 1); /* 99 % 98 = 1 */
+    return i;
+}
+
+var uceFault_mod_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_mod_object'));
+function rmod_object(i) {
+    var t = i;
+    var o = { valueOf: function() { return t; } };
+    var x = o % 98; /* computed with t == i, not 1000 */
+    t = 1000;
+    if(uceFault_mod_object(i) || uceFault_mod_object(i))
+        assertEq(x, 1); /* 99 % 98 = 1 */
+    return i;
+}
+
+var uceFault_concat_string = eval(uneval(uceFault).replace('uceFault', 'uceFault_concat_string'));
+function rconcat_string(i) {
+    var x = "s" + i.toString();
+    if (uceFault_concat_string(i) || uceFault_concat_string(i))
+        assertEq(x, "s99");
+    return i;
+}
+
+var uceFault_concat_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_concat_number'));
+function rconcat_number(i) {
+    var x = "s" + i;
+    if (uceFault_concat_number(i) || uceFault_concat_number(i))
+        assertEq(x, "s99");
+    return i;
+}
+
+var uceFault_floor_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_floor_number'));
+function rfloor_number(i) {
+    var x = Math.floor(i + 0.1111);
+    if (uceFault_floor_number(i) || uceFault_floor_number(i))
+        assertEq(x, i);
+    return i;
+}
+
+var uceFault_floor_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_floor_object'));
+function rfloor_object(i) {
+    var t = i + 0.1111;
+    var o = { valueOf: function () { return t; } };
+    var x = Math.floor(o);
+    t = 1000.1111;
+    if (uceFault_floor_object(i) || uceFault_floor_object(i))
+        assertEq(x, i);
+    return i;
+}
+
+var uceFault_round_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_round'));
+function rround_number(i) {
+    var x = Math.round(i + 1.4);
+    if (uceFault_round_number(i) || uceFault_round_number(i))
+        assertEq(x, 100); /* = i + 1*/
+    return i;
+}
+
+var uceFault_round_double = eval(uneval(uceFault).replace('uceFault', 'uceFault_round_double'));
+function rround_double(i) {
+    var x = Math.round(i + (-1 >>> 0));
+    if (uceFault_round_double(i) || uceFault_round_double(i))
+        assertEq(x, 99 + (-1 >>> 0)); /* = i + 2 ^ 32 - 1 */
+     return i;
+ }
+
+var uceFault_from_char_code = eval(uneval(uceFault).replace('uceFault', 'uceFault_from_char_code'));
+function rfrom_char_code(i) {
+    var x = String.fromCharCode(i);
+    if (uceFault_from_char_code(i) || uceFault_from_char_code(i))
+        assertEq(x, "c");
+    return i;
+}
+
+var uceFault_from_char_code_non_ascii = eval(uneval(uceFault).replace('uceFault', 'uceFault_from_char_code_non_ascii'));
+function rfrom_char_code_non_ascii(i) {
+    var x = String.fromCharCode(i * 100);
+    if (uceFault_from_char_code_non_ascii(i) || uceFault_from_char_code_non_ascii(i))
+        assertEq(x, "\u26AC");
+    return i;
+}
+
+var uceFault_pow_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_pow_number'));
+function rpow_number(i) {
+    var x = Math.pow(i, 3.14159);
+    if (uceFault_pow_number(i) || uceFault_pow_number(i))
+        assertEq(x, Math.pow(99, 3.14159));
+    return i;
+}
+
+var uceFault_pow_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_pow_object'));
+function rpow_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = Math.pow(o, 3.14159); /* computed with t == i, not 1.5 */
+    t = 1.5;
+    if (uceFault_pow_object(i) || uceFault_pow_object(i))
+        assertEq(x, Math.pow(99, 3.14159));
+    return i;
+}
+
+var uceFault_powhalf_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_powhalf_number'));
+function rpowhalf_number(i) {
+    var x = Math.pow(i, 0.5);
+    if (uceFault_powhalf_number(i) || uceFault_powhalf_number(i))
+        assertEq(x, Math.pow(99, 0.5));
+    return i;
+}
+
+var uceFault_powhalf_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_powhalf_object'));
+function rpowhalf_object(i) {
+    var t = i;
+    var o = { valueOf: function () { return t; } };
+    var x = Math.pow(o, 0.5); /* computed with t == i, not 1.5 */
+    t = 1.5;
+    if (uceFault_powhalf_object(i) || uceFault_powhalf_object(i))
+        assertEq(x, Math.pow(99, 0.5));
+    return i;
+}
+
 for (i = 0; i < 100; i++) {
     rbitnot_number(i);
     rbitnot_object(i);
+    rbitand_number(i);
+    rbitand_object(i);
     rbitor_number(i);
     rbitor_object(i);
     rbitxor_number(i);
@@ -207,11 +402,30 @@ for (i = 0; i < 100; i++) {
     rursh_object(i);
     radd_number(i);
     radd_float(i);
-    radd_string(i);
     radd_object(i);
     rsub_number(i);
     rsub_float(i);
     rsub_object(i);
+    rmul_number(i);
+    rmul_float(i);
+    rmul_object(i);
+    rdiv_number(i);
+    rdiv_float(i);
+    rdiv_object(i);
+    rmod_number(i);
+    rmod_object(i);
+    rconcat_string(i);
+    rconcat_number(i);
+    rfloor_number(i);
+    rfloor_object(i);
+    rround_number(i);
+    rround_double(i);
+    rfrom_char_code(i);
+    rfrom_char_code_non_ascii(i);
+    rpow_number(i);
+    rpow_object(i);
+    rpowhalf_number(i);
+    rpowhalf_object(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

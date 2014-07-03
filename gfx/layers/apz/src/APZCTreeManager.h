@@ -25,6 +25,7 @@ class gfx3DMatrix;
 
 namespace mozilla {
 class InputData;
+class MultiTouchInput;
 
 namespace layers {
 
@@ -329,9 +330,9 @@ private:
                                          bool* aOutInOverscrolledApzc);
   already_AddRefed<AsyncPanZoomController> CommonAncestor(AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2);
   already_AddRefed<AsyncPanZoomController> RootAPZCForLayersId(AsyncPanZoomController* aApzc);
-  already_AddRefed<AsyncPanZoomController> GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent,
+  already_AddRefed<AsyncPanZoomController> GetTouchInputBlockAPZC(const MultiTouchInput& aEvent,
                                                                   bool* aOutInOverscrolledApzc);
-  nsEventStatus ProcessTouchEvent(WidgetTouchEvent& touchEvent,
+  nsEventStatus ProcessTouchInput(MultiTouchInput& aInput,
                                   ScrollableLayerGuid* aOutTargetGuid);
   nsEventStatus ProcessEvent(WidgetInputEvent& inputEvent,
                              ScrollableLayerGuid* aOutTargetGuid);
@@ -377,6 +378,11 @@ private:
    * was inside an overscrolled APZC.
    */
   bool mInOverscrolledApzc;
+  /* Sometimes we want to ignore all touches except one. In such cases, this
+   * is set to the identifier of the touch we are not ignoring; in other cases,
+   * this is set to -1.
+   */
+  int32_t mRetainedTouchIdentifier;
   /* The number of touch points we are tracking that are currently on the screen. */
   uint32_t mTouchCount;
   /* The transform from root screen coordinates into mApzcForInputBlock's

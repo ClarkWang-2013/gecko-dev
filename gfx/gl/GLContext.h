@@ -138,6 +138,7 @@ MOZ_END_ENUM_CLASS(GLVendor)
 MOZ_BEGIN_ENUM_CLASS(GLRenderer)
     Adreno200,
     Adreno205,
+    AdrenoTM200,
     AdrenoTM205,
     AdrenoTM320,
     SGX530,
@@ -145,6 +146,7 @@ MOZ_BEGIN_ENUM_CLASS(GLRenderer)
     Tegra,
     AndroidEmulator,
     GalliumLlvmpipe,
+    IntelHD3000,
     Other
 MOZ_END_ENUM_CLASS(GLRenderer)
 
@@ -2698,19 +2700,6 @@ public:
                                  const char *extension);
 
     GLint GetMaxTextureImageSize() { return mMaxTextureImageSize; }
-
-public:
-    /**
-     * Context reset constants.
-     * These are used to determine who is guilty when a context reset
-     * happens.
-     */
-    enum ContextResetARB {
-        CONTEXT_NO_ERROR = 0,
-        CONTEXT_GUILTY_CONTEXT_RESET_ARB = 0x8253,
-        CONTEXT_INNOCENT_CONTEXT_RESET_ARB = 0x8254,
-        CONTEXT_UNKNOWN_CONTEXT_RESET_ARB = 0x8255
-    };
 
 public:
     std::map<GLuint, SharedSurface_GL*> mFBOMapping;

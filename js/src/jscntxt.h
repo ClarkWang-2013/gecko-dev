@@ -387,6 +387,9 @@ class ExclusiveContext : public ThreadSafeContext
     JSCompartment *atomsCompartment() {
         return runtime_->atomsCompartment();
     }
+    SymbolRegistry &symbolRegistry() {
+        return runtime_->symbolRegistry();
+    }
     ScriptDataTable &scriptDataTable() {
         return runtime_->scriptDataTable();
     }
@@ -421,6 +424,10 @@ struct JSContext : public js::ExclusiveContext,
 
     /* Per-context options. */
     JS::ContextOptions  options_;
+
+    // True if propagating a forced return from an interrupt handler during
+    // debug mode.
+    bool                propagatingForcedReturn_;
 
   public:
     int32_t             reportGranularity;  /* see vm/Probes.h */
@@ -569,6 +576,10 @@ struct JSContext : public js::ExclusiveContext,
         throwing = false;
         unwrappedException_.setUndefined();
     }
+
+    bool isPropagatingForcedReturn() const { return propagatingForcedReturn_; }
+    void setPropagatingForcedReturn() { propagatingForcedReturn_ = true; }
+    void clearPropagatingForcedReturn() { propagatingForcedReturn_ = false; }
 
 #ifdef DEBUG
     /*
@@ -906,12 +917,12 @@ class AutoObjectHashSet : public AutoHashSetRooter<JSObject *>
 };
 
 /* AutoArrayRooter roots an external array of Values. */
-class AutoArrayRooter : private AutoGCRooter
+class AutoArrayRooter : private JS::AutoGCRooter
 {
   public:
     AutoArrayRooter(JSContext *cx, size_t len, Value *vec
                     MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : AutoGCRooter(cx, len), array(vec)
+      : JS::AutoGCRooter(cx, len), array(vec)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
         JS_ASSERT(tag_ >= 0);
@@ -953,7 +964,7 @@ class AutoArrayRooter : private AutoGCRooter
         return HandleValue::fromMarkedLocation(&array[i]);
     }
 
-    friend void AutoGCRooter::trace(JSTracer *trc);
+    friend void JS::AutoGCRooter::trace(JSTracer *trc);
 
   private:
     Value *array;
@@ -1008,7 +1019,7 @@ bool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp);
 
 bool intrinsic_UnsafePutElements(JSContext *cx, unsigned argc, Value *vp);
-bool intrinsic_DefineValueProperty(JSContext *cx, unsigned argc, Value *vp);
+bool intrinsic_DefineDataProperty(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_UnsafeSetReservedSlot(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_UnsafeGetReservedSlot(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_HaveSameClass(JSContext *cx, unsigned argc, Value *vp);

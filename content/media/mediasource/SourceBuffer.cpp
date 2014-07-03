@@ -90,12 +90,6 @@ SubBufferDecoder::SetMediaSeekable(bool aMediaSeekable)
   //mParentDecoder->SetMediaSeekable(aMediaSeekable);
 }
 
-void
-SubBufferDecoder::SetTransportSeekable(bool aTransportSeekable)
-{
-  //mParentDecoder->SetTransportSeekable(aTransportSeekable);
-}
-
 layers::ImageContainer*
 SubBufferDecoder::GetImageContainer()
 {
@@ -493,6 +487,8 @@ SourceBuffer::AppendData(const uint8_t* aData, uint32_t aLength, ErrorResult& aR
   // Schedule the state machine thread to ensure playback starts
   // if required when data is appended.
   mMediaSource->GetDecoder()->ScheduleStateMachineThread();
+
+  mMediaSource->NotifyGotData();
 }
 
 void

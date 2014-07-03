@@ -20,7 +20,7 @@
 #include "DocumentType.h"
 #include "nsHTMLParts.h"
 #include "nsCRT.h"
-#include "nsCSSStyleSheet.h"
+#include "mozilla/CSSStyleSheet.h"
 #include "mozilla/css/Loader.h"
 #include "nsGkAtoms.h"
 #include "nsContentUtils.h"
@@ -60,8 +60,10 @@
 #include "mozilla/dom/CDATASection.h"
 #include "mozilla/dom/Comment.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/ProcessingInstruction.h"
 
+using namespace mozilla;
 using namespace mozilla::dom;
 
 // XXX Open Issues:
@@ -413,7 +415,7 @@ nsXMLContentSink::OnTransformDone(nsresult aResult,
 }
 
 NS_IMETHODIMP
-nsXMLContentSink::StyleSheetLoaded(nsCSSStyleSheet* aSheet,
+nsXMLContentSink::StyleSheetLoaded(CSSStyleSheet* aSheet,
                                    bool aWasAlternate,
                                    nsresult aStatus)
 {
@@ -452,7 +454,7 @@ nsXMLContentSink::SetParser(nsParserBase* aParser)
 
 nsresult
 nsXMLContentSink::CreateElement(const char16_t** aAtts, uint32_t aAttsCount,
-                                nsINodeInfo* aNodeInfo, uint32_t aLineNumber,
+                                mozilla::dom::NodeInfo* aNodeInfo, uint32_t aLineNumber,
                                 nsIContent** aResult, bool* aAppendContent,
                                 FromParser aFromParser)
 {
@@ -462,8 +464,8 @@ nsXMLContentSink::CreateElement(const char16_t** aAtts, uint32_t aAttsCount,
   *aAppendContent = true;
   nsresult rv = NS_OK;
 
-  nsCOMPtr<nsINodeInfo> ni = aNodeInfo;
-  nsCOMPtr<Element> content;
+  nsRefPtr<mozilla::dom::NodeInfo> ni = aNodeInfo;
+  nsRefPtr<Element> content;
   rv = NS_NewElement(getter_AddRefs(content), ni.forget(), aFromParser);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -522,7 +524,7 @@ nsXMLContentSink::CloseElement(nsIContent* aContent)
 {
   NS_ASSERTION(aContent, "missing element to close");
 
-  nsINodeInfo *nodeInfo = aContent->NodeInfo();
+  mozilla::dom::NodeInfo *nodeInfo = aContent->NodeInfo();
 
   // Some HTML nodes need DoneAddingChildren() called to initialize
   // properly (eg form state restoration).
@@ -848,7 +850,17 @@ nsXMLContentSink::PushContent(nsIContent *aContent)
   StackNode *sn = mContentStack.AppendElement();
   NS_ENSURE_TRUE(sn, NS_ERROR_OUT_OF_MEMORY);
 
-  sn->mContent = aContent;
+  nsIContent* contentToPush = aContent;
+
+  // When an XML parser would append a node to a template element, it
+  // must instead append it to the template element's template contents.
+  if (contentToPush->IsHTML(nsGkAtoms::_template)) {
+    HTMLTemplateElement* templateElement =
+      static_cast<HTMLTemplateElement*>(contentToPush);
+    contentToPush = templateElement->Content();
+  }
+
+  sn->mContent = contentToPush;
   sn->mNumFlushed = 0;
   return NS_OK;
 }
@@ -977,7 +989,7 @@ nsXMLContentSink::HandleStartElement(const char16_t *aName,
     return NS_OK;
   }
   
-  nsCOMPtr<nsINodeInfo> nodeInfo;
+  nsRefPtr<mozilla::dom::NodeInfo> nodeInfo;
   nodeInfo = mNodeInfoManager->GetNodeInfo(localName, prefix, nameSpaceID,
                                            nsIDOMNode::ELEMENT_NODE);
 
@@ -1076,8 +1088,13 @@ nsXMLContentSink::HandleEndElement(const char16_t *aName,
   nsContentUtils::SplitExpatName(aName, getter_AddRefs(debugNameSpacePrefix),
                                  getter_AddRefs(debugTagAtom),
                                  &debugNameSpaceID);
-  NS_ASSERTION(content->NodeInfo()->Equals(debugTagAtom, debugNameSpaceID),
-               "Wrong element being closed");
+  // Check if we are closing a template element because template
+  // elements do not get pushed on the stack, the template
+  // element content is pushed instead.
+  bool isTemplateElement = debugTagAtom == nsGkAtoms::_template &&
+                           debugNameSpaceID == kNameSpaceID_XHTML;
+  NS_ASSERTION(content->NodeInfo()->Equals(debugTagAtom, debugNameSpaceID) ||
+               isTemplateElement, "Wrong element being closed");
 #endif  
 
   result = CloseElement(content);
@@ -1580,7 +1597,7 @@ nsXMLContentSink::UpdateChildCounts()
 }
 
 bool
-nsXMLContentSink::IsMonolithicContainer(nsINodeInfo* aNodeInfo)
+nsXMLContentSink::IsMonolithicContainer(mozilla::dom::NodeInfo* aNodeInfo)
 {
   return ((aNodeInfo->NamespaceID() == kNameSpaceID_XHTML &&
           (aNodeInfo->NameAtom() == nsGkAtoms::tr ||

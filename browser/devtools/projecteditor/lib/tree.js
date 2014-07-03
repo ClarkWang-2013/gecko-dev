@@ -1,4 +1,4 @@
-/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -39,7 +39,7 @@ var ResourceContainer = Class({
 
     this.line = doc.createElementNS(HTML_NS, "div");
     this.line.classList.add("child");
-    this.line.classList.add("side-menu-widget-item");
+    this.line.classList.add("entry");
     this.line.setAttribute("theme", "dark");
     this.line.setAttribute("tabindex", "0");
 
@@ -223,18 +223,18 @@ var TreeView = Class({
     this.models = new Set();
     this.roots = new Set();
     this._containers = new Map();
-    this.elt = document.createElement("vbox");
+    this.elt = document.createElementNS(HTML_NS, "div");
     this.elt.tree = this;
-    this.elt.className = "side-menu-widget-container sources-tree";
+    this.elt.className = "sources-tree";
     this.elt.setAttribute("with-arrows", "true");
     this.elt.setAttribute("theme", "dark");
     this.elt.setAttribute("flex", "1");
 
     this.children = document.createElementNS(HTML_NS, "ul");
-    this.children.setAttribute("flex", "1");
     this.elt.appendChild(this.children);
 
     this.resourceChildrenChanged = this.resourceChildrenChanged.bind(this);
+    this.removeResource = this.removeResource.bind(this);
     this.updateResource = this.updateResource.bind(this);
   },
 
@@ -315,7 +315,7 @@ var TreeView = Class({
         return;
       }
       let container = this.importResource(root);
-      container.line.classList.add("side-menu-widget-group-title");
+      container.line.classList.add("entry-group-title");
       container.line.setAttribute("theme", "dark");
       this.selectContainer(container);
 
@@ -400,22 +400,9 @@ var TreeView = Class({
 
     on(this, resource, "children-changed", this.resourceChildrenChanged);
     on(this, resource, "label-change", this.updateResource);
+    on(this, resource, "deleted", this.removeResource);
 
     return container;
-  },
-
-  /**
-   * Delete a Resource from the FileSystem.  XXX: This should
-   * definitely be moved away from here, maybe to the store?
-   *
-   * @param Resource resource
-   */
-  deleteResource: function(resource) {
-    if (resource.isDir) {
-      return OS.File.removeDir(resource.path);
-    } else {
-      return OS.File.remove(resource.path);
-    }
   },
 
   /**
@@ -437,12 +424,12 @@ var TreeView = Class({
    * @param Resource resource
    */
   _removeResource: function(resource) {
-    resource.off("children-changed", this.resourceChildrenChanged);
-    resource.off("label-change", this.updateResource);
+    forget(this, resource);
     if (this._containers.get(resource)) {
       this._containers.get(resource).destroy();
       this._containers.delete(resource);
     }
+    emit(this, "resource-removed", resource);
   },
 
   /**

@@ -31,6 +31,10 @@ public interface TelemetryContract {
         // Cancel a state, action, etc.
         CANCEL("cancel.1"),
 
+        // Start casting a video.
+        // Note: Only used in JavaScript for now, but here for completeness.
+        CAST("cast.1"),
+
         // Editing an item.
         EDIT("edit.1"),
 
@@ -63,6 +67,10 @@ public interface TelemetryContract {
 
         // Sharing content.
         SHARE("share.1"),
+
+        // Undoing a user action.
+        // Note: Only used in JavaScript for now, but here for completeness.
+        UNDO("undo.1"),
 
         // Unpinning an item.
         UNPIN("unpin.1"),
@@ -118,6 +126,9 @@ public interface TelemetryContract {
         // Action occurred via an intent.
         INTENT("intent"),
 
+        // Action occurred via a homescreen launcher.
+        HOMESCREEN("homescreen"),
+
         // Action triggered from a list.
         LIST("list"),
 
@@ -136,6 +147,10 @@ public interface TelemetryContract {
 
         // Action triggered from a suggestion provided to the user.
         SUGGESTION("suggestion"),
+
+        // Action triggered from a SuperToast.
+        // Note: Only used in JavaScript for now, but here for completeness.
+        TOAST("toast"),
 
         // VALUES BELOW THIS LINE ARE EXCLUSIVE TO TESTING.
         _TEST1("_test_method_1"),

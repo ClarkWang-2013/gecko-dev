@@ -126,6 +126,7 @@ public:
     mDocument->AddObserver(this);
   }
 
+private:
   ~SVGParseCompleteListener()
   {
     if (mDocument) {
@@ -136,6 +137,7 @@ public:
     }
   }
 
+public:
   void EndLoad(nsIDocument* aDocument) MOZ_OVERRIDE
   {
     MOZ_ASSERT(aDocument == mDocument, "Got EndLoad for wrong document?");
@@ -180,6 +182,7 @@ public:
     mDocument->AddEventListener(NS_LITERAL_STRING("SVGError"), this, true, false);
   }
 
+private:
   ~SVGLoadEventListener()
   {
     if (mDocument) {
@@ -190,6 +193,7 @@ public:
     }
   }
 
+public:
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent) MOZ_OVERRIDE
   {
     MOZ_ASSERT(mDocument, "Need an SVG document. Received multiple events?");
@@ -913,7 +917,7 @@ VectorImage::CreateDrawableAndShow(const SVGDrawingParameters& aParams)
                              ThebesIntRect(aParams.imageRect),
                              ThebesIntRect(aParams.imageRect),
                              ThebesIntRect(aParams.imageRect),
-                             gfxImageFormat::ARGB32,
+                             SurfaceFormat::B8G8R8A8,
                              GraphicsFilter::FILTER_NEAREST, aParams.flags);
 
   // Attempt to cache the resulting surface.
@@ -940,7 +944,7 @@ VectorImage::Show(gfxDrawable* aDrawable, const SVGDrawingParameters& aParams)
                              aParams.userSpaceToImageSpace,
                              aParams.subimage, aParams.sourceRect,
                              ThebesIntRect(aParams.imageRect), aParams.fill,
-                             gfxImageFormat::ARGB32,
+                             SurfaceFormat::B8G8R8A8,
                              aParams.filter, aParams.flags);
 
   MOZ_ASSERT(mRenderingObserver, "Should have a rendering observer by now");

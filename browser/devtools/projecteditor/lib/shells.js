@@ -1,4 +1,4 @@
-/* -*- Mode: Javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -40,13 +40,9 @@ var Shell = Class({
     this.editor.shell = this;
     this.editorAppended = this.editor.appended;
 
-    let loadDefer = promise.defer();
     this.editor.on("load", () => {
-      loadDefer.resolve();
+      this.editorDeferred.resolve();
     });
-
-    this.editorLoaded = loadDefer.promise;
-
     this.elt.appendChild(this.editor.elt);
   },
 
@@ -56,7 +52,17 @@ var Shell = Class({
    * need to be added before calling this.
    */
   load: function() {
+    this.editorDeferred = promise.defer();
+    this.editorLoaded = this.editorDeferred.promise;
     this.editor.load(this.resource);
+  },
+
+  /**
+   * Destroy the shell and its associated editor
+   */
+  destroy: function() {
+    this.editor.destroy();
+    this.resource.destroy();
   },
 
   /**
@@ -151,6 +157,26 @@ var ShellDeck = Class({
   },
 
   /**
+   * Remove the shell for a given resource.
+   *
+   * @param Resource resource
+   */
+  removeResource: function(resource) {
+    let shell = this.shellFor(resource);
+    if (shell) {
+      this.shells.delete(resource);
+      shell.destroy();
+    }
+  },
+
+  destroy: function() {
+    for (let [resource, shell] of this.shells.entries()) {
+      this.shells.delete(resource);
+      shell.destroy();
+    }
+  },
+
+  /**
    * Select a given shell and open its editor.
    * Will fire editor-deactivated on the old selected Shell (if any),
    * and editor-activated on the new one once it is ready
@@ -165,6 +191,8 @@ var ShellDeck = Class({
       }
       this.deck.selectedPanel = shell.elt;
       this._activeShell = shell;
+
+      shell.load();
       shell.editorLoaded.then(() => {
         // Handle case where another shell has been requested before this
         // one is finished loading.

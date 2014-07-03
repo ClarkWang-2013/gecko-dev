@@ -220,6 +220,9 @@ public:
   void EndUpdate();
   void RecalcQuotesAndCounters();
 
+  // Called when any counter style is changed.
+  void NotifyCounterStylesAreDirty();
+
   // Gets called when the presshell is destroying itself and also
   // when we tear down our frame tree to reconstruct it
   void WillDestroyFrameTree();
@@ -337,7 +340,7 @@ private:
    */
   already_AddRefed<nsIContent> CreateGenConTextNode(nsFrameConstructorState& aState,
                                                     const nsString& aString,
-                                                    nsCOMPtr<nsIDOMCharacterData>* aText,
+                                                    nsRefPtr<nsTextNode>* aText,
                                                     nsGenConInitializer* aInitializer);
 
   /**
@@ -1769,6 +1772,10 @@ private:
                                       nsIContent* aContent,
                                       nsStyleContext* aStyleContext,
                                       bool aIsGeneratedContent);
+  // Create touch caret frame.
+  void ConstructAnonymousContentForCanvas(nsFrameConstructorState& aState,
+                                          nsIFrame* aFrame,
+                                          nsIContent* aDocElement);
 
 public:
 

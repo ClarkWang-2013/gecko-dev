@@ -190,16 +190,14 @@ jit::VFPRegister::encode()
 
     switch (kind) {
       case Double:
-        return VFPRegIndexSplit(_code &0xf , _code >> 4);
+        return VFPRegIndexSplit(code_ & 0xf , code_ >> 4);
       case Single:
-        return VFPRegIndexSplit(_code >> 1, _code & 1);
+        return VFPRegIndexSplit(code_ >> 1, code_ & 1);
       default:
         // vfp register treated as an integer, NOT a gpr
-        return VFPRegIndexSplit(_code >> 1, _code & 1);
+        return VFPRegIndexSplit(code_ >> 1, code_ & 1);
     }
 }
-
-VFPRegister js::jit::NoVFPRegister(true);
 
 bool
 InstDTR::isTHIS(const Instruction &i)
@@ -540,9 +538,6 @@ Assembler::finish()
     flush();
     JS_ASSERT(!isFinished);
     isFinished = true;
-
-    for (size_t i = 0; i < jumps_.length(); i++)
-        jumps_[i].fixOffset(m_buffer);
 
     for (unsigned int i = 0; i < tmpDataRelocations_.length(); i++) {
         int offset = tmpDataRelocations_[i].getOffset();
@@ -1188,64 +1183,62 @@ BOffImm::getDest(Instruction *src)
 
 //VFPRegister implementation
 VFPRegister
-VFPRegister::doubleOverlay() const
+VFPRegister::doubleOverlay(unsigned int which) const
 {
     JS_ASSERT(!_isInvalid);
-    if (kind != Double) {
-        JS_ASSERT(_code % 2 == 0);
-        return VFPRegister(_code >> 1, Double);
-    }
+    if (kind != Double)
+        return VFPRegister(code_ >> 1, Double);
     return *this;
 }
 VFPRegister
-VFPRegister::singleOverlay() const
+VFPRegister::singleOverlay(unsigned int which) const
 {
     JS_ASSERT(!_isInvalid);
     if (kind == Double) {
         // There are no corresponding float registers for d16-d31
-        JS_ASSERT(_code < 16);
-        return VFPRegister(_code << 1, Single);
+        JS_ASSERT(code_ < 16);
+        JS_ASSERT(which < 2);
+        return VFPRegister((code_ << 1) + which, Single);
     }
-
-    JS_ASSERT(_code % 2 == 0);
-    return VFPRegister(_code, Single);
+    JS_ASSERT(which == 0);
+    return VFPRegister(code_, Single);
 }
 
 VFPRegister
-VFPRegister::sintOverlay() const
+VFPRegister::sintOverlay(unsigned int which) const
 {
     JS_ASSERT(!_isInvalid);
     if (kind == Double) {
         // There are no corresponding float registers for d16-d31
-        ASSERT(_code < 16);
-        return VFPRegister(_code << 1, Int);
+        JS_ASSERT(code_ < 16);
+        JS_ASSERT(which < 2);
+        return VFPRegister((code_ << 1) + which, Int);
     }
-
-    JS_ASSERT(_code % 2 == 0);
-    return VFPRegister(_code, Int);
+    JS_ASSERT(which == 0);
+    return VFPRegister(code_, Int);
 }
 VFPRegister
-VFPRegister::uintOverlay() const
+VFPRegister::uintOverlay(unsigned int which) const
 {
     JS_ASSERT(!_isInvalid);
     if (kind == Double) {
         // There are no corresponding float registers for d16-d31
-        ASSERT(_code < 16);
-        return VFPRegister(_code << 1, UInt);
+        JS_ASSERT(code_ < 16);
+        JS_ASSERT(which < 2);
+        return VFPRegister((code_ << 1) + which, UInt);
     }
-
-    JS_ASSERT(_code % 2 == 0);
-    return VFPRegister(_code, UInt);
+    JS_ASSERT(which == 0);
+    return VFPRegister(code_, UInt);
 }
 
 bool
-VFPRegister::isInvalid()
+VFPRegister::isInvalid() const
 {
     return _isInvalid;
 }
 
 bool
-VFPRegister::isMissing()
+VFPRegister::isMissing() const
 {
     JS_ASSERT(!_isInvalid);
     return _isMissing;
@@ -1255,11 +1248,11 @@ VFPRegister::isMissing()
 bool
 Assembler::oom() const
 {
-    return m_buffer.oom() ||
-        !enoughMemory_ ||
-        jumpRelocations_.oom() ||
-        dataRelocations_.oom() ||
-        preBarriers_.oom();
+    return AssemblerShared::oom() ||
+           m_buffer.oom() ||
+           jumpRelocations_.oom() ||
+           dataRelocations_.oom() ||
+           preBarriers_.oom();
 }
 
 bool
@@ -1451,13 +1444,13 @@ Assembler::as_tst(Register src1, Operand2 op2, Condition c)
 BufferOffset
 Assembler::as_movw(Register dest, Imm16 imm, Condition c, Instruction *pos)
 {
-    JS_ASSERT(hasMOVWT());
+    JS_ASSERT(HasMOVWT());
     return writeInst(0x03000000 | c | imm.encode() | RD(dest), (uint32_t*)pos);
 }
 BufferOffset
 Assembler::as_movt(Register dest, Imm16 imm, Condition c, Instruction *pos)
 {
-    JS_ASSERT(hasMOVWT());
+    JS_ASSERT(HasMOVWT());
     return writeInst(0x03400000 | c | imm.encode() | RD(dest), (uint32_t*)pos);
 }
 
@@ -1678,11 +1671,11 @@ Assembler::as_dtm(LoadStore ls, Register rn, uint32_t mask,
 }
 
 BufferOffset
-Assembler::as_Imm32Pool(Register dest, uint32_t value, ARMBuffer::PoolEntry *pe, Condition c)
+Assembler::as_Imm32Pool(Register dest, uint32_t value, Condition c)
 {
     PoolHintPun php;
     php.phd.init(0, c, PoolHintData::poolDTR, dest);
-    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, int32Pool, (uint8_t*)&value, pe);
+    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, int32Pool, (uint8_t*)&value);
 }
 
 void
@@ -1719,12 +1712,12 @@ Assembler::as_BranchPool(uint32_t value, RepatchLabel *label, ARMBuffer::PoolEnt
 }
 
 BufferOffset
-Assembler::as_FImm64Pool(VFPRegister dest, double value, ARMBuffer::PoolEntry *pe, Condition c)
+Assembler::as_FImm64Pool(VFPRegister dest, double value, Condition c)
 {
     JS_ASSERT(dest.isDouble());
     PoolHintPun php;
     php.phd.init(0, c, PoolHintData::poolVDTR, dest);
-    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, doublePool, (uint8_t*)&value, pe);
+    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, doublePool, (uint8_t*)&value);
 }
 
 struct PaddedFloat32
@@ -1735,7 +1728,7 @@ struct PaddedFloat32
 JS_STATIC_ASSERT(sizeof(PaddedFloat32) == sizeof(double));
 
 BufferOffset
-Assembler::as_FImm32Pool(VFPRegister dest, float value, ARMBuffer::PoolEntry *pe, Condition c)
+Assembler::as_FImm32Pool(VFPRegister dest, float value, Condition c)
 {
     /*
      * Insert floats into the double pool as they have the same limitations on
@@ -1746,7 +1739,7 @@ Assembler::as_FImm32Pool(VFPRegister dest, float value, ARMBuffer::PoolEntry *pe
     PoolHintPun php;
     php.phd.init(0, c, PoolHintData::poolVDTR, dest);
     PaddedFloat32 pf = { value, 0 };
-    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, doublePool, (uint8_t*)&pf, pe);
+    return m_buffer.insertEntry(4, (uint8_t*)&php.raw, doublePool, (uint8_t*)&pf);
 }
 
 // Pool callbacks stuff:
@@ -1861,7 +1854,7 @@ Assembler::as_b(Label *l, Condition c, bool isPatchable)
         // This will currently throw an assertion if we couldn't actually
         // encode the offset of the branch.
         if (!BOffImm::isInRange(old)) {
-            m_buffer.bail();
+            m_buffer.fail_bail();
             return ret;
         }
         ret = as_b(BOffImm(old), c, isPatchable);
@@ -1923,7 +1916,7 @@ Assembler::as_bl(Label *l, Condition c)
         // encode the offset of the branch.
         old = l->offset();
         if (!BOffImm::isInRange(old)) {
-            m_buffer.bail();
+            m_buffer.fail_bail();
             return ret;
         }
         ret = as_bl(BOffImm(old), c);

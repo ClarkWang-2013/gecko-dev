@@ -110,6 +110,7 @@ public:
       (void) rv;
     }
 
+private:
   virtual ~DataChannelShutdown()
     {
       nsCOMPtr<nsIObserverService> observerService =
@@ -118,6 +119,7 @@ public:
         observerService->RemoveObserver(this, "profile-change-net-teardown");
     }
 
+public:
   NS_IMETHODIMP Observe(nsISupports* aSubject, const char* aTopic,
                         const char16_t* aData) {
     if (strcmp(aTopic, "profile-change-net-teardown") == 0) {
@@ -1318,6 +1320,7 @@ DataChannelConnection::HandleDataMessage(uint32_t ppid,
     // Since this is rare and non-performance, keep a single list of queued
     // data messages to deliver once the channel opens.
     LOG(("Queuing data for stream %u, length %u", stream, length));
+    // Copies data
     mQueuedData.AppendElement(new QueuedDataMessage(stream, ppid, data, length));
     return;
   }
@@ -1326,7 +1329,7 @@ DataChannelConnection::HandleDataMessage(uint32_t ppid,
   NS_ENSURE_TRUE_VOID(channel->mState != CLOSED);
 
   {
-    nsAutoCString recvData(buffer, length);
+    nsAutoCString recvData(buffer, length); // copies (<64) or allocates
     bool is_binary = true;
 
     if (ppid == DATA_CHANNEL_PPID_DOMSTRING ||
@@ -1933,6 +1936,11 @@ DataChannelConnection::ReceiveCallback(struct socket* sock, void *data, size_t d
       HandleMessage(data, datalen, ntohl(rcv.rcv_ppid), rcv.rcv_sid);
     }
   }
+  // sctp allocates 'data' with malloc(), and expects the receiver to free
+  // it (presumably with free).
+  // XXX future optimization: try to deliver messages without an internal
+  // alloc/copy, and if so delay the free until later.
+  free(data);
   // usrsctp defines the callback as returning an int, but doesn't use it
   return 1;
 }
