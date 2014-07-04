@@ -1790,6 +1790,18 @@ MacroAssemblerARMCompat::callIon(Register callee)
 }
 
 void
+MacroAssembler::alignFrameForICArguments(AfterICSaveLive &aic)
+{
+    // Exists for MIPS compatibility.
+}
+
+void
+MacroAssembler::restoreFrameAlignmentForICArguments(AfterICSaveLive &aic)
+{
+    // Exists for MIPS compatibility.
+}
+
+void
 MacroAssemblerARMCompat::reserveStack(uint32_t amount)
 {
     if (amount)
@@ -3525,7 +3537,7 @@ void
 MacroAssemblerARMCompat::storePayload(Register src, const BaseIndex &dest)
 {
     unsigned shift = ScaleToShift(dest.scale);
-    MOZ_ASSERT(shift < 32 && shift >= 0);
+    MOZ_ASSERT(shift < 32);
     MOZ_ASSERT(dest.offset == 0);
 
     // If NUNBOX32_PAYLOAD_OFFSET is not zero, the memory operand [base + index << shift + imm]

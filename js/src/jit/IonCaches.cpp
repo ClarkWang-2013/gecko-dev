@@ -867,8 +867,6 @@ EmitGetterCall(JSContext *cx, MacroAssembler &masm,
     JS_ASSERT_IF(!callNative, IsCacheableGetPropCallPropertyOp(obj, holder, shape));
 
     if (callNative) {
-        masm.alignStackForDoubleData();
-
         JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
                   shape->getterValue().toObject().is<JSFunction>());
         JSFunction *target = &shape->getterValue().toObject().as<JSFunction>();
@@ -916,8 +914,6 @@ EmitGetterCall(JSContext *cx, MacroAssembler &masm,
 
         // masm.leaveExitFrame & pop locals
         masm.adjustStack(IonOOLNativeExitFrameLayout::Size(0));
-
-        masm.restoreStackAlignedForDoubleData();
     } else {
         Register argObjReg       = argUintNReg;
         Register argIdReg        = regSet.takeGeneral();
@@ -1874,7 +1870,7 @@ GetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex,
         if (cache.canAttachStub()) {
             bool alreadyStubbed;
             if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
-                return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             if (alreadyStubbed)
                 return true;
 
@@ -1891,13 +1887,13 @@ GetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex,
 
                 if (canCache == GetPropertyIC::CanAttachReadSlot) {
                     if (!cache.attachReadSlot(ncx, ion, obj, holder, shape))
-                        return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                        return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                     attachedStub = true;
                 }
 
                 if (!attachedStub && canCache == GetPropertyIC::CanAttachArrayLength) {
                     if (!cache.attachArrayLength(ncx, ion, obj))
-                        return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                        return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                     attachedStub = true;
                 }
             }
@@ -1907,7 +1903,7 @@ GetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex,
                 (cache.output().type() == MIRType_Value || cache.output().type() == MIRType_Int32))
             {
                 if (!cache.attachTypedArrayLength(ncx, ion, obj))
-                    return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                    return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                 attachedStub = true;
             }
         }
@@ -2873,7 +2869,7 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
         if (cache.canAttachStub()) {
             bool alreadyStubbed;
             if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
-                return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             if (alreadyStubbed) {
                 return baseops::SetPropertyHelper<ParallelExecution>(
                     cx, obj, obj, id, baseops::Qualified, &v, cache.strict());
@@ -2893,7 +2889,7 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
 
                 if (canCache == SetPropertyIC::CanAttachSetSlot) {
                     if (!cache.attachSetSlot(ncx, ion, obj, shape, checkTypeset))
-                        return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                        return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                     attachedStub = true;
                 }
             }
@@ -2916,7 +2912,7 @@ SetPropertyParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject ob
     {
         LockedJSContext ncx(cx);
         if (cache.canAttachStub() && !cache.attachAddSlot(ncx, ion, obj, oldShape, checkTypeset))
-            return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+            return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
     }
 
     return true;
@@ -3894,20 +3890,20 @@ SetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
         if (cache.canAttachStub()) {
             bool alreadyStubbed;
             if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
-                return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             if (alreadyStubbed)
                 return SetElementPar(cx, obj, idval, value, cache.strict());
 
             bool attachedStub = false;
             if (IsDenseElementSetInlineable(obj, idval)) {
                 if (!cache.attachDenseElement(ncx, ion, obj, idval))
-                    return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                    return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                 attachedStub = true;
             }
             if (!attachedStub && IsTypedArrayElementSetInlineable(obj, idval, value)) {
                 RootedTypedArrayObject tarr(cx, &obj->as<TypedArrayObject>());
                 if (!cache.attachTypedArrayElement(ncx, ion, tarr))
-                    return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                    return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             }
         }
     }
@@ -3980,7 +3976,7 @@ GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
         if (cache.canAttachStub()) {
             bool alreadyStubbed;
             if (!cache.hasOrAddStubbedShape(ncx, obj->lastProperty(), &alreadyStubbed))
-                return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
             if (alreadyStubbed)
                 return true;
 
@@ -4002,7 +3998,7 @@ GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
                 if (canCache == GetPropertyIC::CanAttachReadSlot)
                 {
                     if (!cache.attachReadSlot(ncx, ion, obj, idval, name, holder, shape))
-                        return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                        return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                     attachedStub = true;
                 }
             }
@@ -4010,7 +4006,7 @@ GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
                 GetElementIC::canAttachDenseElement(obj, idval))
             {
                 if (!cache.attachDenseElement(ncx, ion, obj, idval))
-                    return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                    return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                 attachedStub = true;
             }
             if (!attachedStub &&
@@ -4018,7 +4014,7 @@ GetElementParIC::update(ForkJoinContext *cx, size_t cacheIndex, HandleObject obj
             {
                 RootedTypedArrayObject tarr(cx, &obj->as<TypedArrayObject>());
                 if (!cache.attachTypedArrayElement(ncx, ion, tarr, idval))
-                    return cx->setPendingAbortFatal(ParallelBailoutFailedIC);
+                    return cx->setPendingAbortFatal(ParallelBailoutOutOfMemory);
                 attachedStub = true;
             }
         }
