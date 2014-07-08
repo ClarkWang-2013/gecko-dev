@@ -117,21 +117,20 @@ MacroAssemblerMIPS::convertDoubleToInt32(FloatRegister src, Register dest,
     // Convert double to int, then convert back and check if we have the
     // same number.
     as_cvtwd(ScratchDoubleReg, src);
-    as_mfc1(SecondScratchReg, ScratchDoubleReg);
+    as_mfc1(dest, ScratchDoubleReg);
     as_cvtdw(ScratchDoubleReg, ScratchDoubleReg);
     ma_bc1d(src, ScratchDoubleReg, fail, Assembler::DoubleNotEqualOrUnordered);
 
     if (negativeZeroCheck) {
         Label notZero;
-        ma_b(SecondScratchReg, Imm32(0), &notZero, Assembler::NotEqual, ShortJump);
+        ma_b(dest, Imm32(0), &notZero, Assembler::NotEqual, ShortJump);
         // Test and bail for -0.0, when integer result is 0
         // Move the top word of the double into the output reg, if it is
         // non-zero, then the original value was -0.0
-        moveFromDoubleHi(src, SecondScratchReg);
-        ma_b(SecondScratchReg, Imm32(INT32_MIN), fail, Assembler::Equal);
+        moveFromDoubleHi(src, dest);
+        ma_b(dest, Imm32(INT32_MIN), fail, Assembler::Equal);
         bind(&notZero);
     }
-    ma_move(dest, SecondScratchReg);
 }
 
 // Checks whether a float32 is representable as a 32-bit integer. If so, the
@@ -2390,6 +2389,12 @@ MacroAssemblerMIPSCompat::branchTestObject(Condition cond, const BaseIndex &src,
     ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_OBJECT), label, cond);
 }
 
+void
+MacroAssemblerMIPSCompat::testObjectSet(Condition cond, const ValueOperand &value, Register dest)
+{
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    ma_cmp_set(dest, value.typeReg(), ImmType(JSVAL_TYPE_OBJECT), cond);
+}
 
 void
 MacroAssemblerMIPSCompat::branchTestString(Condition cond, const ValueOperand &value, Label *label)
@@ -3303,7 +3308,7 @@ MacroAssemblerMIPSCompat::checkStackAlignment()
 }
 
 void
-MacroAssemblerMIPSCompat::alignStack()
+MacroAssemblerMIPSCompat::alignStackPointer()
 {
     movePtr(StackPointer, SecondScratchReg);
     subPtr(Imm32(sizeof(uintptr_t)), StackPointer);
@@ -3312,7 +3317,7 @@ MacroAssemblerMIPSCompat::alignStack()
 }
 
 void
-MacroAssemblerMIPSCompat::restoreStackAlignment()
+MacroAssemblerMIPSCompat::restoreStackPointer()
 {
     loadPtr(Address(StackPointer, 0), StackPointer);
 }
@@ -3320,7 +3325,7 @@ MacroAssemblerMIPSCompat::restoreStackAlignment()
 void
 MacroAssembler::alignFrameForICArguments(AfterICSaveLive &aic)
 {
-    if (framePushed() % StackAlignment != 0){
+    if (framePushed() % StackAlignment != 0) {
         aic.alignmentPadding = StackAlignment - (framePushed() % StackAlignment);
         reserveStack(aic.alignmentPadding);
     } else {

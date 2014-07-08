@@ -256,7 +256,6 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     if (type == EnterJitBaseline) {
         // Handle OSR.
         GeneralRegisterSet regs(GeneralRegisterSet::All());
-        regs.take(JSReturnOperand);
         regs.take(OsrFrameReg);
         regs.take(BaselineFrameReg);
         regs.take(reg_code);
@@ -317,12 +316,15 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         masm.passABIArg(numStackValues);
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, jit::InitBaselineFrameForOsr));
 
+        regs.add(OsrFrameReg);
+        regs.add(scratch);
+        regs.add(numStackValues);
+        regs.take(JSReturnOperand);
+        regs.take(ReturnReg);
         Register jitcode = regs.takeAny();
         masm.loadPtr(Address(StackPointer, 0), jitcode);
         masm.loadPtr(Address(StackPointer, sizeof(uintptr_t)), framePtr);
         masm.freeStack(2 * sizeof(uintptr_t));
-
-        MOZ_ASSERT(jitcode != ReturnReg);
 
         Label error;
         masm.freeStack(IonExitFrameLayout::SizeWithFooter());
@@ -605,7 +607,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 }
 
 // NOTE: Members snapshotOffset_ and padding_ of BailoutStack
-// are not stored in this function.
+// are not stored in PushBailoutFrame().
 static const uint32_t bailoutDataSize = sizeof(BailoutStack) - 2 * sizeof(uintptr_t);
 static const uint32_t bailoutInfoOutParamSize = 2 * sizeof(uintptr_t);
 
@@ -725,7 +727,7 @@ GenerateParallelBailoutThunk(MacroAssembler &masm, uint32_t frameClass)
     masm.passABIArg(a1);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, BailoutPar));
 
-    // Get the frame pointer of the entry fram and return.
+    // Get the frame pointer of the entry frame and return.
     masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
     masm.loadPtr(Address(sp, 0), sp);
     masm.ret();
@@ -818,7 +820,7 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         masm.ma_addu(argsBase, StackPointer, Imm32(IonExitFrameLayout::SizeWithFooter()));
     }
 
-    masm.alignStack();
+    masm.alignStackPointer();
 
     // Reserve space for the outparameter. Reserve sizeof(Value) for every
     // case so that stack stays aligned.
@@ -968,7 +970,7 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    masm.restoreStackAlignment();
+    masm.restoreStackPointer();
 
     masm.leaveExitFrame();
     masm.retn(Imm32(sizeof(IonExitFrameLayout) +
