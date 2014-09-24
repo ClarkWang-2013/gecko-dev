@@ -19,6 +19,7 @@
 #include "nsIHttpChannel.h"
 #include "nsHttpHandler.h"
 #include "nsIHttpChannelInternal.h"
+#include "nsIForcePendingChannel.h"
 #include "nsIRedirectHistory.h"
 #include "nsIUploadChannel.h"
 #include "nsIUploadChannel2.h"
@@ -31,6 +32,7 @@
 #include "nsIResumableChannel.h"
 #include "nsITraceableChannel.h"
 #include "nsILoadContext.h"
+#include "nsILoadInfo.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "nsThreadUtils.h"
 #include "PrivateBrowsingChannel.h"
@@ -62,6 +64,7 @@ class HttpBaseChannel : public nsHashPropertyBag
                       , public nsITraceableChannel
                       , public PrivateBrowsingChannel<HttpBaseChannel>
                       , public nsITimedChannel
+                      , public nsIForcePendingChannel
 {
 protected:
   virtual ~HttpBaseChannel();
@@ -95,6 +98,8 @@ public:
   NS_IMETHOD GetURI(nsIURI **aURI);
   NS_IMETHOD GetOwner(nsISupports **aOwner);
   NS_IMETHOD SetOwner(nsISupports *aOwner);
+  NS_IMETHOD GetLoadInfo(nsILoadInfo **aLoadInfo);
+  NS_IMETHOD SetLoadInfo(nsILoadInfo *aLoadInfo);
   NS_IMETHOD GetNotificationCallbacks(nsIInterfaceRequestor **aCallbacks);
   NS_IMETHOD SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks);
   NS_IMETHOD GetContentType(nsACString& aContentType);
@@ -170,6 +175,7 @@ public:
   NS_IMETHOD SetResponseTimeoutEnabled(bool aEnable);
   NS_IMETHOD AddRedirect(nsIPrincipal *aRedirect);
   NS_IMETHOD ForcePending(bool aForcePending);
+  NS_IMETHOD GetLastModifiedTime(PRTime* lastModifiedTime);
 
   inline void CleanRedirectCacheChainIfNecessary()
   {
@@ -234,7 +240,9 @@ protected:
   // drop reference to listener, its callbacks, and the progress sink
   void ReleaseListeners();
 
-  nsresult ApplyContentConversions();
+  NS_IMETHOD DoApplyContentConversions(nsIStreamListener *aNextListener,
+                                     nsIStreamListener **aNewNextListener,
+                                     nsISupports *aCtxt);
 
   void AddCookiesToRequest();
   virtual nsresult SetupReplacementChannel(nsIURI *,
@@ -274,6 +282,7 @@ protected:
   nsCOMPtr<nsISupports>             mListenerContext;
   nsCOMPtr<nsILoadGroup>            mLoadGroup;
   nsCOMPtr<nsISupports>             mOwner;
+  nsCOMPtr<nsILoadInfo>             mLoadInfo;
   nsCOMPtr<nsIInterfaceRequestor>   mCallbacks;
   nsCOMPtr<nsIProgressEventSink>    mProgressSink;
   nsCOMPtr<nsIURI>                  mReferrer;
@@ -332,6 +341,10 @@ protected:
   // A flag that should be false only if a cross-domain redirect occurred
   uint32_t                          mAllRedirectsSameOrigin     : 1;
 
+  // Is 1 if no redirects have occured or if all redirects
+  // pass the Resource Timing timing-allow-check
+  uint32_t                          mAllRedirectsPassTimingAllowCheck : 1;
+
   // Current suspension depth for this channel object
   uint32_t                          mSuspendCount;
 
@@ -386,7 +399,7 @@ template <class T>
 class HttpAsyncAborter
 {
 public:
-  HttpAsyncAborter(T *derived) : mThis(derived), mCallOnResume(0) {}
+  explicit HttpAsyncAborter(T *derived) : mThis(derived), mCallOnResume(0) {}
 
   // Aborts channel: calls OnStart/Stop with provided status, removes channel
   // from loadGroup.

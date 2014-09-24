@@ -22,8 +22,7 @@ class HTMLOptionElement MOZ_FINAL : public nsGenericHTMLElement,
                                     public nsIDOMHTMLOptionElement
 {
 public:
-  HTMLOptionElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~HTMLOptionElement();
+  explicit HTMLOptionElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   static already_AddRefed<HTMLOptionElement>
     Option(const GlobalObject& aGlobal,
@@ -118,6 +117,8 @@ public:
   int32_t Index();
 
 protected:
+  virtual ~HTMLOptionElement();
+
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 
   /**

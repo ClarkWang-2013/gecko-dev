@@ -214,7 +214,7 @@ class ReftestRunner(MozbuildObject):
         return reftest.run_remote_reftests(parser, options, args)
 
     def run_desktop_test(self, test_file=None, filter=None, suite=None,
-            debugger=None, parallel=False, shuffle=False,
+            debugger=None, debugger_args=None, parallel=False, shuffle=False,
             e10s=False, extraPrefs=None, this_chunk=None, total_chunks=None):
         """Runs a reftest.
 
@@ -230,6 +230,8 @@ class ReftestRunner(MozbuildObject):
 
         debugger is the program name (in $PATH) or the full path of the
         debugger to run.
+
+        debugger_args are the arguments passed to the debugger.
 
         parallel indicates whether tests should be run in parallel or not.
 
@@ -255,6 +257,14 @@ class ReftestRunner(MozbuildObject):
         if debugger:
             extra_args.append('--debugger=%s' % debugger)
             pass_thru = True
+            if debugger_args:
+                # Use _make_shell_string (which quotes) so that we
+                # handle multiple args being passed to the debugger.
+                extra_args.extend(['--debugger-args', self._make_shell_string(debugger_args)])
+        else:
+            if debugger_args:
+                print("--debugger-args passed, but no debugger specified.")
+                return 1
 
         if parallel:
             extra_args.append('--run-tests-in-parallel')
@@ -291,6 +301,10 @@ def ReftestCommand(func):
     debugger = CommandArgument('--debugger', metavar='DEBUGGER',
         help=DEBUGGER_HELP)
     func = debugger(func)
+
+    debugger_args = CommandArgument('--debugger-args', metavar='DEBUGGER_ARGS',
+        help='Arguments to pass to the debugger.')
+    func = debugger_args(func)
 
     flter = CommandArgument('--filter', metavar='REGEX',
         help='A JS regular expression to match test URLs against, to select '
@@ -353,10 +367,12 @@ def B2GCommand(func):
     func = marionette(func)
 
     totalChunks = CommandArgument('--total-chunks', dest='totalChunks',
+        type = int,
         help = 'How many chunks to split the tests up into.')
     func = totalChunks(func)
 
     thisChunk = CommandArgument('--this-chunk', dest='thisChunk',
+        type = int,
         help = 'Which chunk to run between 1 and --total-chunks.')
     func = thisChunk(func)
 
@@ -376,7 +392,7 @@ def B2GCommand(func):
 
 @CommandProvider
 class MachCommands(MachCommandBase):
-    @Command('reftest', category='testing', description='Run reftests.')
+    @Command('reftest', category='testing', description='Run reftests (layout and graphics correctness).')
     @ReftestCommand
     def run_reftest(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='reftest', **kwargs)
@@ -388,19 +404,19 @@ class MachCommands(MachCommandBase):
         return self._run_reftest(test_file, suite='jstestbrowser', **kwargs)
 
     @Command('reftest-ipc', category='testing',
-        description='Run IPC reftests.')
+        description='Run IPC reftests (layout and graphics correctness, separate process).')
     @ReftestCommand
     def run_ipc(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='reftest-ipc', **kwargs)
 
     @Command('crashtest', category='testing',
-        description='Run crashtests.')
+        description='Run crashtests (Check if crashes on a page).')
     @ReftestCommand
     def run_crashtest(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='crashtest', **kwargs)
 
     @Command('crashtest-ipc', category='testing',
-        description='Run IPC crashtests.')
+        description='Run IPC crashtests (Check if crashes on a page, separate process).')
     @ReftestCommand
     def run_crashtest_ipc(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='crashtest-ipc', **kwargs)
@@ -426,21 +442,21 @@ class B2GCommands(MachCommandBase):
             setattr(self, attr, getattr(context, attr, None))
 
     @Command('reftest-remote', category='testing',
-        description='Run a remote reftest.',
+        description='Run a remote reftest (b2g layout and graphics correctness, remote device).',
         conditions=[conditions.is_b2g, is_emulator])
     @B2GCommand
     def run_reftest_remote(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='reftest', **kwargs)
 
     @Command('reftest-b2g-desktop', category='testing',
-        description='Run a b2g desktop reftest.',
+        description='Run a b2g desktop reftest (b2g desktop layout and graphics correctness).',
         conditions=[conditions.is_b2g_desktop])
     @B2GCommand
     def run_reftest_b2g_desktop(self, test_file, **kwargs):
         return self._run_reftest(test_file, suite='reftest', **kwargs)
 
     @Command('crashtest-remote', category='testing',
-        description='Run a remote crashtest.',
+        description='Run a remote crashtest (Check if b2g crashes on a page, remote device).',
         conditions=[conditions.is_b2g, is_emulator])
     @B2GCommand
     def run_crashtest_remote(self, test_file, **kwargs):

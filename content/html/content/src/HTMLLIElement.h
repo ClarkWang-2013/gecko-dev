@@ -18,11 +18,10 @@ class HTMLLIElement MOZ_FINAL : public nsGenericHTMLElement,
                                 public nsIDOMHTMLLIElement
 {
 public:
-  HTMLLIElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLLIElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLLIElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -57,6 +56,8 @@ public:
   }
 
 protected:
+  virtual ~HTMLLIElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

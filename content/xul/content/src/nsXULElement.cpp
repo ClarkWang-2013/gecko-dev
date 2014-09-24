@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -49,6 +49,7 @@
 #include "nsIRDFNode.h"
 #include "nsIRDFService.h"
 #include "nsIScriptContext.h"
+#include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIServiceManager.h"
 #include "mozilla/css/StyleRule.h"
@@ -131,7 +132,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsXULElementTearoff,
                                            nsIDOMElementCSSInlineStyle)
 
-  nsXULElementTearoff(nsXULElement *aElement)
+  explicit nsXULElementTearoff(nsXULElement* aElement)
     : mElement(aElement)
   {
   }
@@ -172,6 +173,10 @@ nsXULElement::nsXULElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
         AddStatesSilently(NS_EVENT_STATE_MOZ_READWRITE);
         RemoveStatesSilently(NS_EVENT_STATE_MOZ_READONLY);
     }
+}
+
+nsXULElement::~nsXULElement()
+{
 }
 
 nsXULElement::nsXULSlots::nsXULSlots()
@@ -800,20 +805,44 @@ IsInFeedSubscribeLine(nsXULElement* aElement)
 }
 #endif
 
+class XULInContentErrorReporter : public nsRunnable
+{
+public:
+  explicit XULInContentErrorReporter(nsIDocument* aDocument) : mDocument(aDocument) {}
+
+  NS_IMETHOD Run()
+  {
+    mDocument->WarnOnceAbout(nsIDocument::eImportXULIntoContent, false);
+    return NS_OK;
+  }
+
+private:
+  nsCOMPtr<nsIDocument> mDocument;
+};
+
 nsresult
 nsXULElement::BindToTree(nsIDocument* aDocument,
                          nsIContent* aParent,
                          nsIContent* aBindingParent,
                          bool aCompileEventHandlers)
 {
+  if (!aBindingParent &&
+      aDocument &&
+      !aDocument->IsLoadedAsInteractiveData() &&
+      !aDocument->AllowXULXBL() &&
+      !aDocument->HasWarnedAbout(nsIDocument::eImportXULIntoContent)) {
+    nsContentUtils::AddScriptRunner(new XULInContentErrorReporter(aDocument));
+  }
+
   nsresult rv = nsStyledElement::BindToTree(aDocument, aParent,
                                             aBindingParent,
                                             aCompileEventHandlers);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (aDocument &&
-      !aDocument->LoadsFullXULStyleSheetUpFront() &&
-      !aDocument->IsUnstyledDocument()) {
+  nsIDocument* doc = GetComposedDoc();
+  if (doc &&
+      !doc->LoadsFullXULStyleSheetUpFront() &&
+      !doc->IsUnstyledDocument()) {
 
     // To save CPU cycles and memory, non-XUL documents only load the user
     // agent style sheet rules for a minimal set of XUL elements such as
@@ -826,7 +855,7 @@ nsXULElement::BindToTree(nsIDocument* aDocument,
     // can be moved from the document that creates them to another document.
 
     if (!XULElementsRulesInMinimalXULSheet(Tag())) {
-      aDocument->EnsureOnDemandBuiltInUASheet(nsLayoutStylesheetCache::XULSheet());
+      doc->EnsureOnDemandBuiltInUASheet(nsLayoutStylesheetCache::XULSheet());
       // To keep memory usage down it is important that we try and avoid
       // pulling xul.css into non-XUL documents. That should be very rare, and
       // for HTML we currently should only pull it in if the document contains
@@ -1262,7 +1291,7 @@ nsXULElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
         return NS_OK;
     }
     if (aVisitor.mEvent->message == NS_XUL_COMMAND &&
-        aVisitor.mEvent->eventStructType == NS_INPUT_EVENT &&
+        aVisitor.mEvent->mClass == eInputEventClass &&
         aVisitor.mEvent->originalTarget == static_cast<nsIContent*>(this) &&
         tag != nsGkAtoms::command) {
         // Check that we really have an xul command event. That will be handled
@@ -1956,7 +1985,7 @@ nsXULElement::SetDrawsTitle(bool aState)
 class MarginSetter : public nsRunnable
 {
 public:
-    MarginSetter(nsIWidget* aWidget) :
+    explicit MarginSetter(nsIWidget* aWidget) :
         mWidget(aWidget), mMargin(-1, -1, -1, -1)
     {}
     MarginSetter(nsIWidget *aWidget, const nsIntMargin& aMargin) :
@@ -2504,7 +2533,7 @@ nsXULPrototypeScript::Serialize(nsIObjectOutputStream* aStream,
 {
     NS_ENSURE_TRUE(aProtoDoc, NS_ERROR_UNEXPECTED);
     AutoSafeJSContext cx;
-    JS::Rooted<JSObject*> global(cx, xpc::GetCompilationScope());
+    JS::Rooted<JSObject*> global(cx, xpc::CompilationScope());
     NS_ENSURE_TRUE(global, NS_ERROR_UNEXPECTED);
     JSAutoCompartment ac(cx, global);
 
@@ -2526,8 +2555,7 @@ nsXULPrototypeScript::Serialize(nsIObjectOutputStream* aStream,
     // been set.
     JS::Handle<JSScript*> script =
         JS::Handle<JSScript*>::fromMarkedLocation(mScriptObject.address());
-    // Note - Inverting the order of these operands is a rooting hazard.
-    MOZ_ASSERT(xpc::GetCompilationScope() == JS::CurrentGlobalOrNull(cx));
+    MOZ_ASSERT(xpc::CompilationScope() == JS::CurrentGlobalOrNull(cx));
     return nsContentUtils::XPConnect()->WriteScript(aStream, cx,
                                                     xpc_UnmarkGrayScript(script));
 }
@@ -2594,7 +2622,7 @@ nsXULPrototypeScript::Deserialize(nsIObjectInputStream* aStream,
     aStream->Read32(&mLangVersion);
 
     AutoSafeJSContext cx;
-    JS::Rooted<JSObject*> global(cx, xpc::GetCompilationScope());
+    JS::Rooted<JSObject*> global(cx, xpc::CompilationScope());
     NS_ENSURE_TRUE(global, NS_ERROR_UNEXPECTED);
     JSAutoCompartment ac(cx, global);
 
@@ -2704,7 +2732,7 @@ NotifyOffThreadScriptCompletedRunnable::Run()
     JSScript *script;
     {
         AutoSafeJSContext cx;
-        JSAutoCompartment ac(cx, xpc::GetCompilationScope());
+        JSAutoCompartment ac(cx, xpc::CompilationScope());
         script = JS::FinishOffThreadScript(cx, JS_GetRuntime(cx), mToken);
     }
 
@@ -2730,9 +2758,8 @@ nsXULPrototypeScript::Compile(JS::SourceBufferHolder& aSrcBuf,
                               nsIOffThreadScriptReceiver *aOffThreadReceiver /* = nullptr */)
 {
     // We'll compile the script in the compilation scope.
-    NS_ENSURE_TRUE(xpc::GetCompilationScope(), NS_ERROR_UNEXPECTED);
     AutoSafeJSContext cx;
-    JSAutoCompartment ac(cx, xpc::GetCompilationScope());
+    JSAutoCompartment ac(cx, xpc::CompilationScope());
 
     nsAutoCString urlspec;
     nsContentUtils::GetWrapperSafeScriptFilename(aDocument, aURI, urlspec);

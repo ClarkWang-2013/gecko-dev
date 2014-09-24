@@ -21,12 +21,11 @@ class HTMLLabelElement MOZ_FINAL : public nsGenericHTMLFormElement,
                                    public nsIDOMHTMLLabelElement
 {
 public:
-  HTMLLabelElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLLabelElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLFormElement(aNodeInfo),
       mHandlingEvent(false)
   {
   }
-  virtual ~HTMLLabelElement();
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLLabelElement, label)
 
@@ -69,6 +68,8 @@ public:
 
   nsGenericHTMLElement* GetLabeledElement() const;
 protected:
+  virtual ~HTMLLabelElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
   nsGenericHTMLElement* GetFirstLabelableDescendant() const;

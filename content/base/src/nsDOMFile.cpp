@@ -409,12 +409,6 @@ DOMFile::GetInternalStream(nsIInputStream** aStream)
  return mImpl->GetInternalStream(aStream);
 }
 
-NS_IMETHODIMP
-DOMFile::GetInternalUrl(nsIPrincipal* aPrincipal, nsAString& aURL)
-{
-  return mImpl->GetInternalUrl(aPrincipal, aURL);
-}
-
 NS_IMETHODIMP_(int64_t)
 DOMFile::GetFileId()
 {
@@ -592,22 +586,6 @@ nsresult
 DOMFileImplBase::GetInternalStream(nsIInputStream** aStream)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-nsresult
-DOMFileImplBase::GetInternalUrl(nsIPrincipal* aPrincipal, nsAString& aURL)
-{
-  NS_ENSURE_STATE(aPrincipal);
-
-  nsCString url;
-  nsresult rv = nsBlobProtocolHandler::AddDataEntry(
-    NS_LITERAL_CSTRING(BLOBURI_SCHEME), this, aPrincipal, url);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  CopyASCIItoUTF16(url, aURL);
-  return NS_OK;
 }
 
 int64_t
@@ -940,7 +918,7 @@ public:
       } else {
         SHA1Sum sha1;
         sha1.update(owner->mData, owner->mLength);
-        uint8_t digest[SHA1Sum::HashSize]; // SHA1 digests are 20 bytes long.
+        uint8_t digest[SHA1Sum::kHashSize]; // SHA1 digests are 20 bytes long.
         sha1.finish(digest);
 
         nsAutoCString digestString;
@@ -1063,22 +1041,4 @@ nsDOMFileList::Item(uint32_t aIndex, nsIDOMFile **aFile)
   NS_IF_ADDREF(*aFile = Item(aIndex));
 
   return NS_OK;
-}
-
-////////////////////////////////////////////////////////////////////////////
-// nsDOMFileInternalUrlHolder implementation
-
-nsDOMFileInternalUrlHolder::nsDOMFileInternalUrlHolder(nsIDOMBlob* aFile,
-                                                       nsIPrincipal* aPrincipal
-                                                       MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL) {
-  MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-  aFile->GetInternalUrl(aPrincipal, mUrl);
-}
- 
-nsDOMFileInternalUrlHolder::~nsDOMFileInternalUrlHolder() {
-  if (!mUrl.IsEmpty()) {
-    nsAutoCString narrowUrl;
-    CopyUTF16toUTF8(mUrl, narrowUrl);
-    nsBlobProtocolHandler::RemoveDataEntry(narrowUrl);
-  }
 }

@@ -15,7 +15,7 @@ namespace dom {
 class HTMLTableSectionElement MOZ_FINAL : public nsGenericHTMLElement
 {
 public:
-  HTMLTableSectionElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLTableSectionElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
     SetHasWeirdParserInsertionMode();
@@ -74,6 +74,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(HTMLTableSectionElement,
                                                      nsGenericHTMLElement)
 protected:
+  virtual ~HTMLTableSectionElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
   nsRefPtr<nsContentList> mRows;

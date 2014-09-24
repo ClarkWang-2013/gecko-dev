@@ -557,7 +557,7 @@ nsTimerImpl::Fire()
   }
 
   PROFILER_LABEL("Timer", "Fire",
-    js::ProfileEntry::Category::OTHER);
+                 js::ProfileEntry::Category::OTHER);
 
 #ifdef MOZ_TASK_TRACER
   mozilla::tasktracer::AutoRunFakeTracedTask runTracedTask(mTracedTask);
@@ -709,6 +709,11 @@ nsTimerEvent::Run()
 #endif
 
   mTimer->Fire();
+  // Since nsTimerImpl is not thread-safe, we should release |mTimer|
+  // here in the target thread to avoid race condition. Otherwise,
+  // ~nsTimerEvent() which calls nsTimerImpl::Release() could run in the
+  // timer thread and result in race condition.
+  mTimer = nullptr;
 
   return NS_OK;
 }

@@ -64,7 +64,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/DOMImplementation.h"
 #include "mozilla/dom/StyleSheetList.h"
-#include "nsIDOMTouchEvent.h"
 #include "nsDataHashtable.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Attributes.h"
@@ -122,12 +121,12 @@ class nsIdentifierMapEntry : public nsStringHashKey
 {
 public:
   typedef mozilla::dom::Element Element;
-  
-  nsIdentifierMapEntry(const nsAString& aKey) :
+
+  explicit nsIdentifierMapEntry(const nsAString& aKey) :
     nsStringHashKey(&aKey), mNameContentList(nullptr)
   {
   }
-  nsIdentifierMapEntry(const nsAString *aKey) :
+  explicit nsIdentifierMapEntry(const nsAString* aKey) :
     nsStringHashKey(aKey), mNameContentList(nullptr)
   {
   }
@@ -203,8 +202,8 @@ public:
     typedef const ChangeCallback KeyType;
     typedef const ChangeCallback* KeyTypePointer;
 
-    ChangeCallbackEntry(const ChangeCallback* key) :
-      mKey(*key) { }
+    explicit ChangeCallbackEntry(const ChangeCallback* aKey) :
+      mKey(*aKey) { }
     ChangeCallbackEntry(const ChangeCallbackEntry& toCopy) :
       mKey(toCopy.mKey) { }
 
@@ -221,13 +220,11 @@ public:
       return mozilla::HashGeneric(aKey->mCallback, aKey->mData);
     }
     enum { ALLOW_MEMMOVE = true };
-    
+
     ChangeCallback mKey;
   };
 
-  static size_t SizeOfExcludingThis(nsIdentifierMapEntry* aEntry,
-                                    mozilla::MallocSizeOf aMallocSizeOf,
-                                    void* aArg);
+  size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 private:
   void FireChangeCallbacks(Element* aOldElement, Element* aNewElement,
@@ -254,7 +251,7 @@ public:
     : mNamespaceID(aNamespaceID),
       mAtom(aAtom)
   {}
-  CustomElementHashKey(const CustomElementHashKey *aKey)
+  explicit CustomElementHashKey(const CustomElementHashKey* aKey)
     : mNamespaceID(aKey->mNamespaceID),
       mAtom(aKey->mAtom)
   {}
@@ -328,7 +325,7 @@ private:
 // being created flag.
 struct CustomElementData
 {
-  CustomElementData(nsIAtom* aType);
+  explicit CustomElementData(nsIAtom* aType);
   // Objects in this array are transient and empty after each microtask
   // checkpoint.
   nsTArray<nsAutoPtr<CustomElementCallback>> mCallbackQueue;
@@ -440,8 +437,7 @@ class nsDOMStyleSheetList : public mozilla::dom::StyleSheetList,
                             public nsStubDocumentObserver
 {
 public:
-  nsDOMStyleSheetList(nsIDocument *aDocument);
-  virtual ~nsDOMStyleSheetList();
+  explicit nsDOMStyleSheetList(nsIDocument* aDocument);
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -462,6 +458,8 @@ public:
   IndexedGetter(uint32_t aIndex, bool& aFound) MOZ_OVERRIDE;
 
 protected:
+  virtual ~nsDOMStyleSheetList();
+
   int32_t       mLength;
   nsIDocument*  mDocument;
 };
@@ -542,7 +540,7 @@ protected:
     ~PendingLoad() {}
 
   public:
-    PendingLoad(nsDocument* aDisplayDocument) :
+    explicit PendingLoad(nsDocument* aDisplayDocument) :
       mDisplayDocument(aDisplayDocument)
     {}
 
@@ -574,7 +572,7 @@ protected:
   {
     ~LoadgroupCallbacks() {}
   public:
-    LoadgroupCallbacks(nsIInterfaceRequestor* aOtherCallbacks)
+    explicit LoadgroupCallbacks(nsIInterfaceRequestor* aOtherCallbacks)
       : mCallbacks(aOtherCallbacks)
     {}
     NS_DECL_ISUPPORTS
@@ -808,6 +806,7 @@ public:
                                             bool aApplicable) MOZ_OVERRIDE;
 
   virtual nsresult LoadAdditionalStyleSheet(additionalSheetType aType, nsIURI* aSheetURI) MOZ_OVERRIDE;
+  virtual nsresult AddAdditionalStyleSheet(additionalSheetType aType, nsIStyleSheet* aSheet) MOZ_OVERRIDE;
   virtual void RemoveAdditionalStyleSheet(additionalSheetType aType, nsIURI* sheetURI) MOZ_OVERRIDE;
   virtual nsIStyleSheet* FirstAdditionalAuthorSheet() MOZ_OVERRIDE;
 
@@ -936,6 +935,12 @@ public:
   nsRadioGroupStruct* GetOrCreateRadioGroup(const nsAString& aName);
 
   virtual nsViewportInfo GetViewportInfo(const mozilla::ScreenIntSize& aDisplaySize) MOZ_OVERRIDE;
+
+  /**
+   * Called when an app-theme-changed observer notification is
+   * received by this document.
+   */
+  void OnAppThemeChanged();
 
 private:
   void AddOnDemandBuiltInUASheet(mozilla::CSSStyleSheet* aSheet);
@@ -1143,6 +1148,32 @@ public:
   virtual nsresult RemoteFrameFullscreenReverted() MOZ_OVERRIDE;
   virtual nsIDocument* GetFullscreenRoot() MOZ_OVERRIDE;
   virtual void SetFullscreenRoot(nsIDocument* aRoot) MOZ_OVERRIDE;
+
+  // Returns the size of the mBlockedTrackingNodes array. (nsIDocument.h)
+  //
+  // This array contains nodes that have been blocked to prevent
+  // user tracking. They most likely have had their nsIChannel
+  // canceled by the URL classifier (Safebrowsing).
+  //
+  // A script can subsequently use GetBlockedTrackingNodes()
+  // to get a list of references to these nodes.
+  //
+  // Note:
+  // This expresses how many tracking nodes have been blocked for this
+  // document since its beginning, not how many of them are still around
+  // in the DOM tree. Weak references to blocked nodes are added in the
+  // mBlockedTrackingNodesArray but they are not removed when those nodes
+  // are removed from the tree or even garbage collected.
+  long BlockedTrackingNodeCount() const;
+
+  //
+  // Returns strong references to mBlockedTrackingNodes. (nsIDocument.h)
+  //
+  // This array contains nodes that have been blocked to prevent
+  // user tracking. They most likely have had their nsIChannel
+  // canceled by the URL classifier (Safebrowsing).
+  //
+  already_AddRefed<nsSimpleContentList> BlockedTrackingNodes() const;
 
   static void ExitFullscreen(nsIDocument* aDoc);
 
@@ -1380,6 +1411,10 @@ public:
 
   js::ExpandoAndGeneration mExpandoAndGeneration;
 
+#ifdef MOZ_EME
+  bool ContainsEMEContent();
+#endif
+
 protected:
   already_AddRefed<nsIPresShell> doCreateShell(nsPresContext* aContext,
                                                nsViewManager* aViewManager,
@@ -1411,7 +1446,7 @@ protected:
   void VerifyRootContentState();
 #endif
 
-  nsDocument(const char* aContentType);
+  explicit nsDocument(const char* aContentType);
   virtual ~nsDocument();
 
   void EnsureOnloadBlocker();
@@ -1479,7 +1514,7 @@ public:
                                     uint32_t aNamespaceID,
                                     mozilla::ErrorResult& rv);
 
-  static bool IsRegisterElementEnabled(JSContext* aCx, JSObject* aObject);
+  static bool IsWebComponentsEnabled(JSContext* aCx, JSObject* aObject);
 
   // The "registry" from the web components spec.
   nsRefPtr<mozilla::dom::Registry> mRegistry;
@@ -1561,6 +1596,12 @@ public:
   bool mAllowRelocking:1;
 
   bool mAsyncFullscreenPending:1;
+
+  // Whether we're observing the "app-theme-changed" observer service
+  // notification.  We need to keep track of this because we might get multiple
+  // OnPageShow notifications in a row without an OnPageHide in between, if
+  // we're getting document.open()/close() called on us.
+  bool mObservingAppThemeChanged:1;
 
   // Keeps track of whether we have a pending
   // 'style-sheet-applicable-state-changed' notification.
@@ -1714,6 +1755,10 @@ private:
   nsCOMPtr<nsIDocument> mMasterDocument;
   nsRefPtr<mozilla::dom::ImportManager> mImportManager;
 
+  // Set to true when the document is possibly controlled by the ServiceWorker.
+  // Used to prevent multiple requests to ServiceWorkerManager.
+  bool mMaybeServiceWorkerControlled;
+
 #ifdef DEBUG
 public:
   bool mWillReparent;
@@ -1723,7 +1768,7 @@ public:
 class nsDocumentOnStack
 {
 public:
-  nsDocumentOnStack(nsDocument* aDoc) : mDoc(aDoc)
+  explicit nsDocumentOnStack(nsDocument* aDoc) : mDoc(aDoc)
   {
     mDoc->IncreaseStackRefCnt();
   }

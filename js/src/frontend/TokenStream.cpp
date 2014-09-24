@@ -9,6 +9,7 @@
 #include "frontend/TokenStream.h"
 
 #include "mozilla/PodOperations.h"
+#include "mozilla/UniquePtr.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -35,6 +36,7 @@ using mozilla::Maybe;
 using mozilla::PodAssign;
 using mozilla::PodCopy;
 using mozilla::PodZero;
+using mozilla::UniquePtr;
 
 struct KeywordInfo {
     const char  *chars;         // C string with keyword text
@@ -283,7 +285,7 @@ TokenStream::SourceCoords::lineNumAndColumnIndex(uint32_t offset, uint32_t *line
 
 // Initialize members that aren't initialized in |init|.
 TokenStream::TokenStream(ExclusiveContext *cx, const ReadOnlyCompileOptions &options,
-                         const jschar *base, size_t length, StrictModeGetter *smg)
+                         const char16_t *base, size_t length, StrictModeGetter *smg)
   : srcCoords(cx, options.lineno),
     options_(options),
     tokens(),
@@ -326,10 +328,8 @@ TokenStream::TokenStream(ExclusiveContext *cx, const ReadOnlyCompileOptions &opt
     // See getTokenInternal() for an explanation of maybeStrSpecial[].
     memset(maybeStrSpecial, 0, sizeof(maybeStrSpecial));
     maybeStrSpecial[unsigned('"')] = true;
-#ifdef JS_HAS_TEMPLATE_STRINGS
     maybeStrSpecial[unsigned('`')] = true;
     maybeStrSpecial[unsigned('$')] = true;
-#endif
     maybeStrSpecial[unsigned('\'')] = true;
     maybeStrSpecial[unsigned('\\')] = true;
     maybeStrSpecial[unsigned('\n')] = true;
@@ -354,9 +354,6 @@ TokenStream::TokenStream(ExclusiveContext *cx, const ReadOnlyCompileOptions &opt
 
 TokenStream::~TokenStream()
 {
-    js_free(displayURL_);
-    js_free(sourceMapURL_);
-
     JS_ASSERT_IF(originPrincipals, originPrincipals->refcount);
 }
 
@@ -392,7 +389,7 @@ TokenStream::getChar()
     if (MOZ_LIKELY(userbuf.hasRawChars())) {
         c = userbuf.getRawChar();
 
-        // Normalize the jschar if it was a newline.  We need to detect any of
+        // Normalize the char16_t if it was a newline.  We need to detect any of
         // these four characters:  '\n' (0x000a), '\r' (0x000d),
         // LINE_SEPARATOR (0x2028), PARA_SEPARATOR (0x2029).  Testing for each
         // one in turn is slow, so we use a single probabilistic check, and if
@@ -483,7 +480,7 @@ TokenStream::ungetCharIgnoreEOL(int32_t c)
 // are not consumed: use skipChars(n) to do so after checking that the consumed
 // characters had appropriate values.
 bool
-TokenStream::peekChars(int n, jschar *cp)
+TokenStream::peekChars(int n, char16_t *cp)
 {
     int i, j;
     int32_t c;
@@ -496,15 +493,15 @@ TokenStream::peekChars(int n, jschar *cp)
             ungetCharIgnoreEOL(c);
             break;
         }
-        cp[i] = jschar(c);
+        cp[i] = char16_t(c);
     }
     for (j = i - 1; j >= 0; j--)
         ungetCharIgnoreEOL(cp[j]);
     return i == n;
 }
 
-const jschar *
-TokenStream::TokenBuf::findEOLMax(const jschar *p, size_t max)
+const char16_t *
+TokenStream::TokenBuf::findEOLMax(const char16_t *p, size_t max)
 {
     JS_ASSERT(base_ <= p && p <= limit_);
 
@@ -524,7 +521,7 @@ TokenStream::TokenBuf::findEOLMax(const jschar *p, size_t max)
 void
 TokenStream::advance(size_t position)
 {
-    const jschar *end = userbuf.base() + position;
+    const char16_t *end = userbuf.base() + position;
     while (userbuf.addressOfNextRawChar() < end)
         getChar();
 
@@ -655,11 +652,13 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
     }
 
     // If we have no location information, try to get one from the caller.
+    bool callerFilename = false;
     if (offset != NoOffset && !err.report.filename && cx->isJSContext()) {
         NonBuiltinFrameIter iter(cx->asJSContext(),
                                  FrameIter::ALL_CONTEXTS, FrameIter::GO_THROUGH_SAVED,
                                  cx->compartment()->principals);
         if (!iter.done() && iter.scriptFilename()) {
+            callerFilename = true;
             err.report.filename = iter.scriptFilename();
             err.report.lineno = iter.computeLine(&err.report.column);
         }
@@ -681,8 +680,8 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
     // So we don't even try, leaving report.linebuf and friends zeroed.  This
     // means that any error involving a multi-line token (e.g. an unterminated
     // multi-line string literal) won't have a context printed.
-    if (offset != NoOffset && err.report.lineno == lineno) {
-        const jschar *tokenStart = userbuf.base() + offset;
+    if (offset != NoOffset && err.report.lineno == lineno && !callerFilename) {
+        const char16_t *tokenStart = userbuf.base() + offset;
 
         // We show only a portion (a "window") of the line around the erroneous
         // token -- the first char in the token, plus |windowRadius| chars
@@ -692,19 +691,19 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
         static const size_t windowRadius = 60;
 
         // Truncate at the front if necessary.
-        const jschar *windowBase = (linebase + windowRadius < tokenStart)
+        const char16_t *windowBase = (linebase + windowRadius < tokenStart)
                                  ? tokenStart - windowRadius
                                  : linebase;
         uint32_t windowOffset = tokenStart - windowBase;
 
         // Find EOL, or truncate at the back if necessary.
-        const jschar *windowLimit = userbuf.findEOLMax(tokenStart, windowRadius);
+        const char16_t *windowLimit = userbuf.findEOLMax(tokenStart, windowRadius);
         size_t windowLength = windowLimit - windowBase;
         JS_ASSERT(windowLength <= windowRadius * 2);
 
         // Create the windowed strings.
         StringBuffer windowBuf(cx);
-        if (!windowBuf.append(windowBase, windowLength) || !windowBuf.append((jschar)0))
+        if (!windowBuf.append(windowBase, windowLength) || !windowBuf.append((char16_t)0))
             return false;
 
         // Unicode and char versions of the window into the offending source
@@ -713,7 +712,7 @@ TokenStream::reportCompileErrorNumberVA(uint32_t offset, unsigned flags, unsigne
         if (!err.report.uclinebuf)
             return false;
 
-        mozilla::Range<const jschar> tbchars(err.report.uclinebuf, windowLength);
+        mozilla::Range<const char16_t> tbchars(err.report.uclinebuf, windowLength);
         err.report.linebuf = JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, tbchars).c_str();
         if (!err.report.linebuf)
             return false;
@@ -786,7 +785,7 @@ TokenStream::reportAsmJSError(uint32_t offset, unsigned errorNumber, ...)
 bool
 TokenStream::peekUnicodeEscape(int *result)
 {
-    jschar cp[5];
+    char16_t cp[5];
 
     if (peekChars(5, cp) && cp[0] == 'u' &&
         JS7_ISHEX(cp[1]) && JS7_ISHEX(cp[2]) &&
@@ -824,7 +823,7 @@ TokenStream::matchUnicodeEscapeIdent(int32_t *cp)
 // Helper function which returns true if the first length(q) characters in p are
 // the same as the characters in q.
 static bool
-CharsMatch(const jschar *p, const char *q) {
+CharsMatch(const char16_t *p, const char *q) {
     while (*q) {
         if (*p++ != *q++)
             return false;
@@ -854,9 +853,11 @@ TokenStream::getDirectives(bool isMultiline, bool shouldWarnDeprecated)
 bool
 TokenStream::getDirective(bool isMultiline, bool shouldWarnDeprecated,
                           const char *directive, int directiveLength,
-                          const char *errorMsgPragma, jschar **destination) {
+                          const char *errorMsgPragma,
+                          UniquePtr<char16_t[], JS::FreePolicy> *destination)
+{
     JS_ASSERT(directiveLength <= 18);
-    jschar peeked[18];
+    char16_t peeked[18];
     int32_t c;
 
     if (peekChars(directiveLength, peeked) && CharsMatch(peeked, directive)) {
@@ -886,12 +887,11 @@ TokenStream::getDirective(bool isMultiline, bool shouldWarnDeprecated,
 
         size_t length = tokenbuf.length();
 
-        js_free(*destination);
-        *destination = cx->pod_malloc<jschar>(length + 1);
+        *destination = cx->make_pod_array<char16_t>(length + 1);
         if (!*destination)
             return false;
 
-        PodCopy(*destination, tokenbuf.begin(), length);
+        PodCopy(destination->get(), tokenbuf.begin(), length);
         (*destination)[length] = '\0';
     }
 
@@ -959,10 +959,10 @@ IsTokenSane(Token *tp)
 #endif
 
 bool
-TokenStream::putIdentInTokenbuf(const jschar *identStart)
+TokenStream::putIdentInTokenbuf(const char16_t *identStart)
 {
     int32_t c, qc;
-    const jschar *tmp = userbuf.addressOfNextRawChar();
+    const char16_t *tmp = userbuf.addressOfNextRawChar();
     userbuf.setAddressOfNextRawChar(identStart);
 
     tokenbuf.clear();
@@ -1010,7 +1010,7 @@ TokenStream::checkForKeyword(const KeywordInfo *kw, TokenKind *ttp)
 }
 
 bool
-TokenStream::checkForKeyword(const jschar *s, size_t length, TokenKind *ttp)
+TokenStream::checkForKeyword(const char16_t *s, size_t length, TokenKind *ttp)
 {
     const KeywordInfo *kw = FindKeyword(s, length);
     if (!kw)
@@ -1030,7 +1030,7 @@ TokenStream::checkForKeyword(JSAtom *atom, TokenKind *ttp)
 }
 
 enum FirstCharKind {
-    // A jschar has the 'OneChar' kind if it, by itself, constitutes a valid
+    // A char16_t has the 'OneChar' kind if it, by itself, constitutes a valid
     // token that cannot also be a prefix of a longer token.  E.g. ';' has the
     // OneChar kind, but '+' does not, because '++' and '+=' are valid longer tokens
     // that begin with '+'.
@@ -1040,7 +1040,7 @@ enum FirstCharKind {
     //
     // We represent the 'OneChar' kind with any positive value less than
     // TOK_LIMIT.  This representation lets us associate each one-char token
-    // jschar with a TokenKind and thus avoid a subsequent jschar-to-TokenKind
+    // char16_t with a TokenKind and thus avoid a subsequent char16_t-to-TokenKind
     // conversion.
     OneChar_Min = 0,
     OneChar_Max = TOK_LIMIT - 1,
@@ -1071,11 +1071,7 @@ enum FirstCharKind {
 #define T_COMMA     TOK_COMMA
 #define T_COLON     TOK_COLON
 #define T_BITNOT    TOK_BITNOT
-#ifdef JS_HAS_TEMPLATE_STRINGS
 #define Templat     String
-#else
-#define Templat     Other
-#endif
 #define _______     Other
 static const uint8_t firstCharKinds[] = {
 /*         0        1        2        3        4        5        6        7        8        9    */
@@ -1108,21 +1104,19 @@ TokenStream::getTokenInternal(Modifier modifier)
     int c, qc;
     Token *tp;
     FirstCharKind c1kind;
-    const jschar *numStart;
+    const char16_t *numStart;
     bool hasExp;
     DecimalPoint decimalPoint;
-    const jschar *identStart;
+    const char16_t *identStart;
     bool hadUnicodeEscape;
 
     // Check if in the middle of a template string. Have to get this out of
     // the way first.
-#ifdef JS_HAS_TEMPLATE_STRINGS
     if (MOZ_UNLIKELY(modifier == TemplateTail)) {
         if (!getStringOrTemplateToken('`', &tp))
             goto error;
         goto out;
     }
-#endif
 
   retry:
     if (MOZ_UNLIKELY(!userbuf.hasRawChars())) {
@@ -1218,7 +1212,7 @@ TokenStream::getTokenInternal(Modifier modifier)
         // Identifiers containing no Unicode escapes can be processed directly
         // from userbuf.  The rest must use the escapes converted via tokenbuf
         // before atomizing.
-        const jschar *chars;
+        const char16_t *chars;
         size_t length;
         if (hadUnicodeEscape) {
             if (!putIdentInTokenbuf(identStart))
@@ -1290,13 +1284,13 @@ TokenStream::getTokenInternal(Modifier modifier)
 
         // Unlike identifiers and strings, numbers cannot contain escaped
         // chars, so we don't need to use tokenbuf.  Instead we can just
-        // convert the jschars in userbuf directly to the numeric value.
+        // convert the char16_t characters in userbuf to the numeric value.
         double dval;
         if (!((decimalPoint == HasDecimal) || hasExp)) {
             if (!GetDecimalInteger(cx, numStart, userbuf.addressOfNextRawChar(), &dval))
                 goto error;
         } else {
-            const jschar *dummy;
+            const char16_t *dummy;
             if (!js_strtod(cx, numStart, userbuf.addressOfNextRawChar(), &dummy, &dval))
                 goto error;
         }
@@ -1366,16 +1360,20 @@ TokenStream::getTokenInternal(Modifier modifier)
         } else if (JS7_ISDEC(c)) {
             radix = 8;
             numStart = userbuf.addressOfNextRawChar() - 1;  // one past the '0'
-
-            // Octal integer literals are not permitted in strict mode code.
-            if (!reportStrictModeError(JSMSG_DEPRECATED_OCTAL))
-                goto error;
-
             while (JS7_ISDEC(c)) {
-                // Even in sloppy mode, 08 or 09 is a syntax error.
-                if (c >= '8') {
-                    reportError(JSMSG_BAD_OCTAL, c == '8' ? "8" : "9");
+                // Octal integer literals are not permitted in strict mode code.
+                if (!reportStrictModeError(JSMSG_DEPRECATED_OCTAL))
                     goto error;
+
+                // Outside strict mode, we permit 08 and 09 as decimal numbers,
+                // which makes our behaviour a superset of the ECMA numeric
+                // grammar. We might not always be so permissive, so we warn
+                // about it.
+                if (c >= '8') {
+                    if (!reportWarning(JSMSG_BAD_OCTAL, c == '8' ? "08" : "09")) {
+                        goto error;
+                    }
+                    goto decimal;   // use the decimal scanner for the rest of the number
                 }
                 c = getCharIgnoreEOL();
             }
@@ -1392,7 +1390,7 @@ TokenStream::getTokenInternal(Modifier modifier)
         }
 
         double dval;
-        const jschar *dummy;
+        const char16_t *dummy;
         if (!GetPrefixInteger(cx, numStart, userbuf.addressOfNextRawChar(), radix, &dummy, &dval))
             goto error;
         tp->type = TOK_NUMBER;
@@ -1626,7 +1624,7 @@ TokenStream::getTokenInternal(Modifier modifier)
         goto error;
     }
 
-    MOZ_ASSUME_UNREACHABLE("should have jumped to |out| or |error|");
+    MOZ_CRASH("should have jumped to |out| or |error|");
 
   out:
     flags.isDirtyLine = true;
@@ -1647,9 +1645,7 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
 {
     *tp = newToken(-1);
     int c;
-#ifdef JS_HAS_TEMPLATE_STRINGS
     int nc = -1;
-#endif
     tokenbuf.clear();
     while (true) {
         // We need to detect any of these chars:  " or ', \n (or its
@@ -1677,12 +1673,10 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
                         c = peekChar();
                         // Strict mode code allows only \0, then a non-digit.
                         if (val != 0 || JS7_ISDEC(c)) {
-#ifdef JS_HAS_TEMPLATE_STRINGS
                             if (qc == '`') {
                                 reportError(JSMSG_DEPRECATED_OCTAL);
                                 return false;
                             }
-#endif
                             if (!reportStrictModeError(JSMSG_DEPRECATED_OCTAL))
                                 return false;
                             flags.sawOctalEscape = true;
@@ -1701,9 +1695,9 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
                             }
                         }
 
-                        c = jschar(val);
+                        c = char16_t(val);
                     } else if (c == 'u') {
-                        jschar cp[4];
+                        char16_t cp[4];
                         if (peekChars(4, cp) &&
                             JS7_ISHEX(cp[0]) && JS7_ISHEX(cp[1]) &&
                             JS7_ISHEX(cp[2]) && JS7_ISHEX(cp[3])) {
@@ -1717,7 +1711,7 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
                             return false;
                         }
                     } else if (c == 'x') {
-                        jschar cp[2];
+                        char16_t cp[2];
                         if (peekChars(2, cp) &&
                                 JS7_ISHEX(cp[0]) && JS7_ISHEX(cp[1])) {
                             c = (JS7_UNHEX(cp[0]) << 4) + JS7_UNHEX(cp[1]);
@@ -1738,24 +1732,20 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
                 reportError(JSMSG_UNTERMINATED_STRING);
                 return false;
             } else if (TokenBuf::isRawEOLChar(c)) {
-#ifdef JS_HAS_TEMPLATE_STRINGS
                 if (qc != '`') {
-#endif
                     ungetCharIgnoreEOL(c);
                     reportError(JSMSG_UNTERMINATED_STRING);
                     return false;
-#ifdef JS_HAS_TEMPLATE_STRINGS
                 }
                 if (c == '\r') {
                     c = '\n';
-                    if (peekChar() == '\n')
+                    if (userbuf.peekRawChar() == '\n')
                         skipChars(1);
                 }
             } else if (qc == '`' && c == '$') {
                 if ((nc = getCharIgnoreEOL()) == '{')
                     break;
                 ungetCharIgnoreEOL(nc);
-#endif
             }
         }
         if (!tokenbuf.append(c))
@@ -1764,18 +1754,14 @@ bool TokenStream::getStringOrTemplateToken(int qc, Token **tp)
     JSAtom *atom = atomize(cx, tokenbuf);
     if (!atom)
         return false;
-#ifdef JS_HAS_TEMPLATE_STRINGS
     if (qc != '`') {
-#endif
         (*tp)->type = TOK_STRING;
-#ifdef JS_HAS_TEMPLATE_STRINGS
     } else {
         if (c == '$' && nc == '{')
             (*tp)->type = TOK_TEMPLATE_HEAD;
         else
             (*tp)->type = TOK_NO_SUBS_TEMPLATE;
     }
-#endif
     (*tp)->setAtom(atom);
     return true;
 }
@@ -1824,109 +1810,34 @@ js_fgets(char *buf, int size, FILE *file)
     return i;
 }
 
+const char *
+frontend::TokenKindToDesc(TokenKind tt)
+{
+    switch (tt) {
+#define EMIT_CASE(name, desc) case TOK_##name: return desc;
+      FOR_EACH_TOKEN_KIND(EMIT_CASE)
+#undef EMIT_CASE
+      case TOK_ERROR:
+        MOZ_ASSERT_UNREACHABLE("TOK_ERROR should not be passed.");
+        break;
+      case TOK_LIMIT:
+        MOZ_ASSERT_UNREACHABLE("TOK_LIMIT should not be passed.");
+        break;
+    }
+
+    return "<bad TokenKind>";
+}
+
 #ifdef DEBUG
 const char *
 TokenKindToString(TokenKind tt)
 {
     switch (tt) {
-      case TOK_ERROR:           return "TOK_ERROR";
-      case TOK_EOF:             return "TOK_EOF";
-      case TOK_EOL:             return "TOK_EOL";
-      case TOK_SEMI:            return "TOK_SEMI";
-      case TOK_COMMA:           return "TOK_COMMA";
-      case TOK_HOOK:            return "TOK_HOOK";
-      case TOK_COLON:           return "TOK_COLON";
-      case TOK_OR:              return "TOK_OR";
-      case TOK_AND:             return "TOK_AND";
-      case TOK_BITOR:           return "TOK_BITOR";
-      case TOK_BITXOR:          return "TOK_BITXOR";
-      case TOK_BITAND:          return "TOK_BITAND";
-      case TOK_ADD:             return "TOK_ADD";
-      case TOK_SUB:             return "TOK_SUB";
-      case TOK_MUL:             return "TOK_MUL";
-      case TOK_DIV:             return "TOK_DIV";
-      case TOK_MOD:             return "TOK_MOD";
-      case TOK_INC:             return "TOK_INC";
-      case TOK_DEC:             return "TOK_DEC";
-      case TOK_DOT:             return "TOK_DOT";
-      case TOK_TRIPLEDOT:       return "TOK_TRIPLEDOT";
-      case TOK_LB:              return "TOK_LB";
-      case TOK_RB:              return "TOK_RB";
-      case TOK_LC:              return "TOK_LC";
-      case TOK_RC:              return "TOK_RC";
-      case TOK_LP:              return "TOK_LP";
-      case TOK_RP:              return "TOK_RP";
-      case TOK_ARROW:           return "TOK_ARROW";
-      case TOK_NAME:            return "TOK_NAME";
-      case TOK_NUMBER:          return "TOK_NUMBER";
-      case TOK_STRING:          return "TOK_STRING";
-#ifdef JS_HAS_TEMPLATE_STRINGS
-      case TOK_TEMPLATE_HEAD:   return "TOK_TEMPLATE_HEAD";
-      case TOK_NO_SUBS_TEMPLATE:return "TOK_NO_SUBS_TEMPLATE";
-#endif
-      case TOK_REGEXP:          return "TOK_REGEXP";
-      case TOK_TRUE:            return "TOK_TRUE";
-      case TOK_FALSE:           return "TOK_FALSE";
-      case TOK_NULL:            return "TOK_NULL";
-      case TOK_THIS:            return "TOK_THIS";
-      case TOK_FUNCTION:        return "TOK_FUNCTION";
-      case TOK_IF:              return "TOK_IF";
-      case TOK_ELSE:            return "TOK_ELSE";
-      case TOK_SWITCH:          return "TOK_SWITCH";
-      case TOK_CASE:            return "TOK_CASE";
-      case TOK_DEFAULT:         return "TOK_DEFAULT";
-      case TOK_WHILE:           return "TOK_WHILE";
-      case TOK_DO:              return "TOK_DO";
-      case TOK_FOR:             return "TOK_FOR";
-      case TOK_BREAK:           return "TOK_BREAK";
-      case TOK_CONTINUE:        return "TOK_CONTINUE";
-      case TOK_IN:              return "TOK_IN";
-      case TOK_VAR:             return "TOK_VAR";
-      case TOK_CONST:           return "TOK_CONST";
-      case TOK_WITH:            return "TOK_WITH";
-      case TOK_RETURN:          return "TOK_RETURN";
-      case TOK_NEW:             return "TOK_NEW";
-      case TOK_DELETE:          return "TOK_DELETE";
-      case TOK_TRY:             return "TOK_TRY";
-      case TOK_CATCH:           return "TOK_CATCH";
-      case TOK_FINALLY:         return "TOK_FINALLY";
-      case TOK_THROW:           return "TOK_THROW";
-      case TOK_INSTANCEOF:      return "TOK_INSTANCEOF";
-      case TOK_DEBUGGER:        return "TOK_DEBUGGER";
-      case TOK_YIELD:           return "TOK_YIELD";
-      case TOK_LET:             return "TOK_LET";
-      case TOK_RESERVED:        return "TOK_RESERVED";
-      case TOK_STRICT_RESERVED: return "TOK_STRICT_RESERVED";
-      case TOK_STRICTEQ:        return "TOK_STRICTEQ";
-      case TOK_EQ:              return "TOK_EQ";
-      case TOK_STRICTNE:        return "TOK_STRICTNE";
-      case TOK_NE:              return "TOK_NE";
-      case TOK_TYPEOF:          return "TOK_TYPEOF";
-      case TOK_VOID:            return "TOK_VOID";
-      case TOK_NOT:             return "TOK_NOT";
-      case TOK_BITNOT:          return "TOK_BITNOT";
-      case TOK_LT:              return "TOK_LT";
-      case TOK_LE:              return "TOK_LE";
-      case TOK_GT:              return "TOK_GT";
-      case TOK_GE:              return "TOK_GE";
-      case TOK_LSH:             return "TOK_LSH";
-      case TOK_RSH:             return "TOK_RSH";
-      case TOK_URSH:            return "TOK_URSH";
-      case TOK_ASSIGN:          return "TOK_ASSIGN";
-      case TOK_ADDASSIGN:       return "TOK_ADDASSIGN";
-      case TOK_SUBASSIGN:       return "TOK_SUBASSIGN";
-      case TOK_BITORASSIGN:     return "TOK_BITORASSIGN";
-      case TOK_BITXORASSIGN:    return "TOK_BITXORASSIGN";
-      case TOK_BITANDASSIGN:    return "TOK_BITANDASSIGN";
-      case TOK_LSHASSIGN:       return "TOK_LSHASSIGN";
-      case TOK_RSHASSIGN:       return "TOK_RSHASSIGN";
-      case TOK_URSHASSIGN:      return "TOK_URSHASSIGN";
-      case TOK_MULASSIGN:       return "TOK_MULASSIGN";
-      case TOK_DIVASSIGN:       return "TOK_DIVASSIGN";
-      case TOK_MODASSIGN:       return "TOK_MODASSIGN";
-      case TOK_EXPORT:          return "TOK_EXPORT";
-      case TOK_IMPORT:          return "TOK_IMPORT";
-      case TOK_LIMIT:           break;
+#define EMIT_CASE(name, desc) case TOK_##name: return "TOK_" #name;
+      FOR_EACH_TOKEN_KIND(EMIT_CASE)
+#undef EMIT_CASE
+      case TOK_ERROR: return "TOK_ERROR";
+      case TOK_LIMIT: break;
     }
 
     return "<bad TokenKind>";

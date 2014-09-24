@@ -16,6 +16,7 @@
 #include "nsIZipReader.h"
 #include "nsIDownloader.h"
 #include "nsILoadGroup.h"
+#include "nsILoadInfo.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "nsIThreadRetargetableStreamListener.h"
 #include "nsHashPropertyBag.h"
@@ -29,16 +30,16 @@ class nsJARInputThunk;
 
 //-----------------------------------------------------------------------------
 
-class nsJARChannel : public nsIJARChannel
-                   , public nsIDownloadObserver
-                   , public nsIStreamListener
-                   , public nsIRemoteOpenFileListener
-                   , public nsIThreadRetargetableRequest
-                   , public nsIThreadRetargetableStreamListener
-                   , public nsHashPropertyBag
+class nsJARChannel MOZ_FINAL : public nsIJARChannel
+                             , public nsIDownloadObserver
+                             , public nsIStreamListener
+                             , public nsIRemoteOpenFileListener
+                             , public nsIThreadRetargetableRequest
+                             , public           nsIThreadRetargetableStreamListener
+                             , public nsHashPropertyBag
 {
 public:
-    NS_DECL_THREADSAFE_ISUPPORTS
+    NS_DECL_ISUPPORTS_INHERITED
     NS_DECL_NSIREQUEST
     NS_DECL_NSICHANNEL
     NS_DECL_NSIJARCHANNEL
@@ -60,8 +61,8 @@ private:
     nsresult LookupFile();
     nsresult OpenLocalFile();
     void NotifyError(nsresult aError);
-
     void FireOnProgress(uint64_t aProgress);
+    nsresult SetRemoteNSPRFileDesc(PRFileDesc *fd);
 
 #if defined(PR_LOGGING)
     nsCString                       mSpec;
@@ -73,6 +74,7 @@ private:
     nsCOMPtr<nsIURI>                mOriginalURI;
     nsCOMPtr<nsIURI>                mAppURI;
     nsCOMPtr<nsISupports>           mOwner;
+    nsCOMPtr<nsILoadInfo>           mLoadInfo;
     nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
     nsCOMPtr<nsISupports>           mSecurityInfo;
     nsCOMPtr<nsIProgressEventSink>  mProgressSink;
@@ -91,6 +93,7 @@ private:
     bool                            mIsPending;
     bool                            mIsUnsafe;
     bool                            mOpeningRemote;
+    bool                            mEnsureChildFd;
 
     nsCOMPtr<nsIStreamListener>     mDownloader;
     nsCOMPtr<nsIInputStreamPump>    mPump;

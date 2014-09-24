@@ -29,7 +29,7 @@ uint32_t GetMIPSFlags()
     return flags;
 #else
 
-#if WTF_OS_LINUX
+#ifdef __linux__
     FILE *fp = fopen("/proc/cpuinfo", "r");
     if (!fp)
         return false;
@@ -105,14 +105,9 @@ FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
     FloatRegisterSet mod;
     for (TypedRegisterIterator<FloatRegister> iter(s); iter.more(); iter++) {
         if ((*iter).isSingle()) {
-            // Add in just this float.
-            mod.addUnchecked(*iter);
-        } else if ((*iter).id() & 1 == 0) {
-            // A double with an overlay, add in both floats.
-            mod.addUnchecked((*iter).singleOverlay(0));
-            mod.addUnchecked((*iter).singleOverlay(1));
+            // Even for single size registers save complete double register.
+            mod.addUnchecked((*iter).doubleOverlay());
         } else {
-            // Add in the lone double.
             mod.addUnchecked(*iter);
         }
     }
@@ -132,8 +127,9 @@ FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
 {
     FloatRegisterSet ss = s.reduceSetForPush();
     uint64_t bits = ss.bits();
-    uint32_t ret = mozilla::CountPopulation32(bits & 0xffffffff) * sizeof(float);
-    ret +=  mozilla::CountPopulation32(bits >> 32) * sizeof(double);
+    // We are only pushing double registers.
+    MOZ_ASSERT((bits & 0xffffffff) == 0);
+    uint32_t ret =  mozilla::CountPopulation32(bits >> 32) * sizeof(double);
     return ret;
 }
 uint32_t
@@ -143,7 +139,7 @@ FloatRegister::getRegisterDumpOffsetInBytes()
         return id() * sizeof(float);
     if (isDouble())
         return id() * sizeof(double);
-    MOZ_ASSUME_UNREACHABLE();
+    MOZ_CRASH();
 }
 
 } // namespace ion

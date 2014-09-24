@@ -24,6 +24,7 @@
 #include "vm/Stack-inl.h"
 
 using namespace js;
+using namespace js::gc;
 using namespace js::types;
 
 using mozilla::PodZero;
@@ -216,6 +217,7 @@ CallObject::create(JSContext *cx, HandleScript script, HandleObject enclosing, H
 
     callobj->as<ScopeObject>().setEnclosingScope(enclosing);
     callobj->initFixedSlot(CALLEE_SLOT, ObjectOrNullValue(callee));
+    callobj->setAliasedLexicalsToThrowOnTouch(script);
 
     if (script->treatAsRunOnce()) {
         Rooted<CallObject*> ncallobj(cx, callobj);
@@ -1069,6 +1071,15 @@ ScopeIterKey::match(ScopeIterKey si1, ScopeIterKey si2)
              si1.type_  == si2.type_));
 }
 
+void
+ScopeIterVal::sweep()
+{
+    /* We need to update possibly moved pointers on sweep. */
+    MOZ_ALWAYS_FALSE(IsObjectAboutToBeFinalized(cur_.unsafeGet()));
+    if (staticScope_)
+        MOZ_ALWAYS_FALSE(IsObjectAboutToBeFinalized(staticScope_.unsafeGet()));
+}
+
 // Live ScopeIter values may be added to DebugScopes::liveScopes, as
 // ScopeIterVal instances.  They need to have write barriers when they are added
 // to the hash table, but no barriers when rehashing inside GC.  It's a nasty
@@ -1147,7 +1158,7 @@ class DebugScopeProxy : public BaseProxyHandler
         *accessResult = ACCESS_GENERIC;
         ScopeIterVal *maybeLiveScope = DebugScopes::hasLiveScope(*scope);
 
-        /* Handle unaliased formals, vars, and consts at function scope. */
+        /* Handle unaliased formals, vars, lets, and consts at function scope. */
         if (scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
             CallObject &callobj = scope->as<CallObject>();
             RootedScript script(cx, callobj.callee().nonLazyScript());
@@ -1163,15 +1174,15 @@ class DebugScopeProxy : public BaseProxyHandler
 
             if (bi->kind() == Binding::VARIABLE || bi->kind() == Binding::CONSTANT) {
                 uint32_t i = bi.frameIndex();
-                if (script->varIsAliased(i))
+                if (script->bodyLevelLocalIsAliased(i))
                     return true;
 
                 if (maybeLiveScope) {
                     AbstractFramePtr frame = maybeLiveScope->frame();
                     if (action == GET)
-                        vp.set(frame.unaliasedVar(i));
+                        vp.set(frame.unaliasedLocal(i));
                     else
-                        frame.unaliasedVar(i) = vp;
+                        frame.unaliasedLocal(i) = vp;
                 } else if (JSObject *snapshot = debugScope->maybeSnapshot()) {
                     if (action == GET)
                         vp.set(snapshot->getDenseElement(bindings.numArgs() + i));
@@ -1313,10 +1324,10 @@ class DebugScopeProxy : public BaseProxyHandler
     }
 
   public:
-    static int family;
+    static const char family;
     static const DebugScopeProxy singleton;
 
-    DebugScopeProxy() : BaseProxyHandler(&family) {}
+    MOZ_CONSTEXPR DebugScopeProxy() : BaseProxyHandler(&family) {}
 
     bool isExtensible(JSContext *cx, HandleObject proxy, bool *extensible) const MOZ_OVERRIDE
     {
@@ -1383,7 +1394,7 @@ class DebugScopeProxy : public BaseProxyHandler
             JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEBUG_OPTIMIZED_OUT);
             return false;
           default:
-            MOZ_ASSUME_UNREACHABLE("bad AccessResult");
+            MOZ_CRASH("bad AccessResult");
         }
     }
 
@@ -1421,7 +1432,7 @@ class DebugScopeProxy : public BaseProxyHandler
             JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEBUG_OPTIMIZED_OUT);
             return false;
           default:
-            MOZ_ASSUME_UNREACHABLE("bad AccessResult");
+            MOZ_CRASH("bad AccessResult");
         }
     }
 
@@ -1455,7 +1466,7 @@ class DebugScopeProxy : public BaseProxyHandler
             vp.setMagic(JS_OPTIMIZED_OUT);
             return true;
           default:
-            MOZ_ASSUME_UNREACHABLE("bad AccessResult");
+            MOZ_CRASH("bad AccessResult");
         }
     }
 
@@ -1475,7 +1486,7 @@ class DebugScopeProxy : public BaseProxyHandler
           case ACCESS_GENERIC:
             return JSObject::setGeneric(cx, scope, scope, id, vp, strict);
           default:
-            MOZ_ASSUME_UNREACHABLE("bad AccessResult");
+            MOZ_CRASH("bad AccessResult");
         }
     }
 
@@ -1582,7 +1593,7 @@ class DebugScopeProxy : public BaseProxyHandler
 
 } /* anonymous namespace */
 
-int DebugScopeProxy::family = 0;
+const char DebugScopeProxy::family = 0;
 const DebugScopeProxy DebugScopeProxy::singleton;
 
 /* static */ DebugScopeObject *
@@ -1647,7 +1658,7 @@ DebugScopeObject::getMaybeSentinelValue(JSContext *cx, HandleId id, MutableHandl
 bool
 js_IsDebugScopeSlow(ProxyObject *proxy)
 {
-    JS_ASSERT(proxy->hasClass(&ProxyObject::uncallableClass_));
+    JS_ASSERT(proxy->hasClass(&ProxyObject::class_));
     return proxy->handler() == &DebugScopeProxy::singleton;
 }
 
@@ -1784,24 +1795,39 @@ DebugScopes::sweep(JSRuntime *rt)
              */
             liveScopes.remove(&(*debugScope)->scope());
             e.removeFront();
+        } else {
+            ScopeIterKey key = e.front().key();
+            bool needsUpdate = false;
+            if (IsForwarded(key.cur())) {
+                key.updateCur(js::gc::Forwarded(key.cur()));
+                needsUpdate = true;
+            }
+            if (key.staticScope() && IsForwarded(key.staticScope())) {
+                key.updateStaticScope(Forwarded(key.staticScope()));
+                needsUpdate = true;
+            }
+            if (needsUpdate)
+                e.rekeyFront(key);
         }
     }
 
     for (LiveScopeMap::Enum e(liveScopes); !e.empty(); e.popFront()) {
         ScopeObject *scope = e.front().key();
 
+        e.front().value().sweep();
+
         /*
          * Scopes can be finalized when a debugger-synthesized ScopeObject is
          * no longer reachable via its DebugScopeObject.
          */
-        if (IsObjectAboutToBeFinalized(&scope)) {
+        if (IsObjectAboutToBeFinalized(&scope))
             e.removeFront();
-            continue;
-        }
+        else if (scope != e.front().key())
+            e.rekeyFront(scope);
     }
 }
 
-#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+#ifdef JSGC_HASH_TABLE_CHECKS
 void
 DebugScopes::checkHashTablesAfterMovingGC(JSRuntime *runtime)
 {
@@ -1811,18 +1837,18 @@ DebugScopes::checkHashTablesAfterMovingGC(JSRuntime *runtime)
      * pointing into the nursery.
      */
     for (ObjectWeakMap::Range r = proxiedScopes.all(); !r.empty(); r.popFront()) {
-        JS_ASSERT(!IsInsideNursery(r.front().key().get()));
-        JS_ASSERT(!IsInsideNursery(r.front().value().get()));
+        CheckGCThingAfterMovingGC(r.front().key().get());
+        CheckGCThingAfterMovingGC(r.front().value().get());
     }
     for (MissingScopeMap::Range r = missingScopes.all(); !r.empty(); r.popFront()) {
-        JS_ASSERT(!IsInsideNursery(r.front().key().cur()));
-        JS_ASSERT(!IsInsideNursery(r.front().key().staticScope()));
-        JS_ASSERT(!IsInsideNursery(r.front().value().get()));
+        CheckGCThingAfterMovingGC(r.front().key().cur());
+        CheckGCThingAfterMovingGC(r.front().key().staticScope());
+        CheckGCThingAfterMovingGC(r.front().value().get());
     }
     for (LiveScopeMap::Range r = liveScopes.all(); !r.empty(); r.popFront()) {
-        JS_ASSERT(!IsInsideNursery(r.front().key()));
-        JS_ASSERT(!IsInsideNursery(r.front().value().cur_.get()));
-        JS_ASSERT(!IsInsideNursery(r.front().value().staticScope_.get()));
+        CheckGCThingAfterMovingGC(r.front().key());
+        CheckGCThingAfterMovingGC(r.front().value().cur_.get());
+        CheckGCThingAfterMovingGC(r.front().value().staticScope_.get());
     }
 }
 #endif
@@ -2238,7 +2264,7 @@ GetDebugScopeForMissing(JSContext *cx, const ScopeIter &si)
       }
       case ScopeIter::With:
       case ScopeIter::StrictEvalScope:
-        MOZ_ASSUME_UNREACHABLE("should already have a scope");
+        MOZ_CRASH("should already have a scope");
     }
     if (!debugScope)
         return nullptr;

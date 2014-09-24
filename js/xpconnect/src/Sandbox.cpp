@@ -14,7 +14,6 @@
 #include "js/OldDebugAPI.h"
 #include "js/StructuredClone.h"
 #include "nsContentUtils.h"
-#include "nsCxPusher.h"
 #include "nsGlobalWindow.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -22,6 +21,7 @@
 #include "nsIURI.h"
 #include "nsJSUtils.h"
 #include "nsNetUtil.h"
+#include "nsNullPrincipal.h"
 #include "nsPrincipal.h"
 #include "nsXMLHttpRequest.h"
 #include "WrapperFactory.h"
@@ -33,9 +33,11 @@
 #include "mozilla/dom/CSSBinding.h"
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
 #include "mozilla/dom/PromiseBinding.h"
+#include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/TextDecoderBinding.h"
 #include "mozilla/dom/TextEncoderBinding.h"
 #include "mozilla/dom/URLBinding.h"
+#include "mozilla/dom/URLSearchParamsBinding.h"
 
 using namespace mozilla;
 using namespace JS;
@@ -98,13 +100,8 @@ SandboxDump(JSContext *cx, unsigned argc, jsval *vp)
     if (!str)
         return false;
 
-    size_t length;
-    const jschar *chars = JS_GetStringCharsZAndLength(cx, str, &length);
-    if (!chars)
-        return false;
-
-    nsDependentString wstr(chars, length);
-    char *cstr = ToNewUTF8String(wstr);
+    JSAutoByteString utf8str;
+    char *cstr = utf8str.encodeUtf8(cx, str);
     if (!cstr)
         return false;
 
@@ -123,7 +120,6 @@ SandboxDump(JSContext *cx, unsigned argc, jsval *vp)
 
     fputs(cstr, stdout);
     fflush(stdout);
-    NS_Free(cstr);
     args.rval().setBoolean(true);
     return true;
 }
@@ -261,37 +257,6 @@ SandboxExportFunction(JSContext *cx, unsigned argc, jsval *vp)
     return ExportFunction(cx, args[0], args[1], options, args.rval());
 }
 
-/*
- * Expected type of the arguments:
- * value evalInWindow(string script,
- *                    object window)
- */
-static bool
-SandboxEvalInWindow(JSContext *cx, unsigned argc, jsval *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    if (args.length() < 2) {
-        JS_ReportError(cx, "Function requires two arguments");
-        return false;
-    }
-
-    if (!args[0].isString() || !args[1].isObject()) {
-        JS_ReportError(cx, "Invalid arguments");
-        return false;
-    }
-
-    RootedString srcString(cx, args[0].toString());
-    RootedObject targetScope(cx, &args[1].toObject());
-
-    nsAutoJSString srcAutoString;
-    if (!srcAutoString.init(cx, srcString)) {
-        JS_ReportError(cx, "Source string is invalid");
-        return false;
-    }
-
-    return EvalInWindow(cx, srcAutoString, targetScope, args.rval());
-}
-
 static bool
 SandboxCreateObjectIn(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -349,9 +314,13 @@ sandbox_finalize(JSFreeOp *fop, JSObject *obj)
 {
     nsIScriptObjectPrincipal *sop =
         static_cast<nsIScriptObjectPrincipal *>(xpc_GetJSPrivate(obj));
-    MOZ_ASSERT(sop);
+    if (!sop) {
+        // sop can be null if CreateSandboxObject fails in the middle.
+        return;
+    }
+
     static_cast<SandboxPrivate *>(sop)->ForgetGlobalObject();
-    NS_IF_RELEASE(sop);
+    NS_RELEASE(sop);
     DestroyProtoAndIfaceCache(obj);
 }
 
@@ -390,7 +359,7 @@ writeToProto_getProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
 
 struct AutoSkipPropertyMirroring
 {
-    AutoSkipPropertyMirroring(CompartmentPrivate *priv) : priv(priv) {
+    explicit AutoSkipPropertyMirroring(CompartmentPrivate *priv) : priv(priv) {
         MOZ_ASSERT(!priv->skipWriteToGlobalPrototype);
         priv->skipWriteToGlobalPrototype = true;
     }
@@ -437,10 +406,31 @@ sandbox_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleV
     // After bug 1015790 is fixed, we should be able to remove this unwrapping.
     RootedObject unwrappedProto(cx, js::UncheckedUnwrap(proto, /* stopAtOuter = */ false));
 
-    if (!JS_CopyPropertyFrom(cx, id, unwrappedProto, obj))
+    Rooted<JSPropertyDescriptor> pd(cx);
+    if (!JS_GetPropertyDescriptorById(cx, proto, id, &pd))
         return false;
 
-    Rooted<JSPropertyDescriptor> pd(cx);
+    // This is a little icky. If the property exists and is not configurable,
+    // then JS_CopyPropertyFrom will throw an exception when we try to do a
+    // normal assignment since it will think we're trying to remove the
+    // non-configurability. So we do JS_SetPropertyById in that case.
+    //
+    // However, in the case of |const x = 3|, we get called once for
+    // JSOP_DEFCONST and once for JSOP_SETCONST. The first one creates the
+    // property as readonly and configurable. The second one changes the
+    // attributes to readonly and not configurable. If we use JS_SetPropertyById
+    // for the second call, it will throw an exception because the property is
+    // readonly. We have to use JS_CopyPropertyFrom since it ignores the
+    // readonly attribute (as it calls JSObject::defineProperty). See bug
+    // 1019181.
+    if (pd.object() && pd.isPermanent()) {
+        if (!JS_SetPropertyById(cx, proto, id, vp))
+            return false;
+    } else {
+        if (!JS_CopyPropertyFrom(cx, id, unwrappedProto, obj))
+            return false;
+    }
+
     if (!JS_GetPropertyDescriptorById(cx, obj, id, &pd))
         return false;
     unsigned attrs = pd.attributes() & ~(JSPROP_GETTER | JSPROP_SETTER);
@@ -593,11 +583,9 @@ WrapCallable(JSContext *cx, JSObject *callable, JSObject *sandboxProtoProxy)
                  &xpc::sandboxProxyHandler);
 
     RootedValue priv(cx, ObjectValue(*callable));
-    js::ProxyOptions options;
-    options.selectDefaultClass(true);
     return js::NewProxyObject(cx, &xpc::sandboxCallableProxyHandler,
                               priv, nullptr,
-                              sandboxProtoProxy, options);
+                              sandboxProtoProxy);
 }
 
 template<typename Op>
@@ -649,22 +637,14 @@ xpc::SandboxProxyHandler::getPropertyDescriptor(JSContext *cx,
     if (!desc.object())
         return true; // No property, nothing to do
 
-    // Now fix up the getter/setter/value as needed to be bound to desc->obj
-    // Don't mess with holder_get and holder_set, though, because those rely on
-    // the "vp is prefilled with the value in the slot" behavior that property
-    // ops can in theory rely on, but our property op forwarder doesn't know how
-    // to make that happen.  Since we really only need to rebind the DOM methods
-    // here, not rebindings holder_get and holder_set is OK.
+    // Now fix up the getter/setter/value as needed to be bound to desc->obj.
     //
-    // Similarly, don't mess with XPC_WN_Helper_GetProperty and
-    // XPC_WN_Helper_SetProperty, for the same reasons: that could confuse our
-    // access to expandos when we're not doing Xrays.
-    if (desc.getter() != xpc::holder_get &&
-        desc.getter() != XPC_WN_Helper_GetProperty &&
+    // Don't mess with XPC_WN_Helper_GetProperty and XPC_WN_Helper_SetProperty,
+    // because that could confuse our access to expandos.
+    if (desc.getter() != XPC_WN_Helper_GetProperty &&
         !BindPropertyOp(cx, desc.getter(), desc.address(), id, JSPROP_GETTER, proxy))
         return false;
-    if (desc.setter() != xpc::holder_set &&
-        desc.setter() != XPC_WN_Helper_SetProperty &&
+    if (desc.setter() != XPC_WN_Helper_SetProperty &&
         !BindPropertyOp(cx, desc.setter(), desc.address(), id, JSPROP_SETTER, proxy))
         return false;
     if (desc.value().isObject()) {
@@ -755,7 +735,6 @@ xpc::GlobalProperties::Parse(JSContext *cx, JS::HandleObject obj)
     uint32_t length;
     bool ok = JS_GetArrayLength(cx, obj, &length);
     NS_ENSURE_TRUE(ok, false);
-    bool promise = Promise;
     for (uint32_t i = 0; i < length; i++) {
         RootedValue nameValue(cx);
         ok = JS_GetElement(cx, obj, i, &nameValue);
@@ -766,7 +745,7 @@ xpc::GlobalProperties::Parse(JSContext *cx, JS::HandleObject obj)
         }
         JSAutoByteString name(cx, nameValue.toString());
         NS_ENSURE_TRUE(name, false);
-        if (promise && !strcmp(name.ptr(), "-Promise")) {
+        if (Promise && !strcmp(name.ptr(), "-Promise")) {
             Promise = false;
         } else if (!strcmp(name.ptr(), "CSS")) {
             CSS = true;
@@ -780,6 +759,8 @@ xpc::GlobalProperties::Parse(JSContext *cx, JS::HandleObject obj)
             TextDecoder = true;
         } else if (!strcmp(name.ptr(), "URL")) {
             URL = true;
+        } else if (!strcmp(name.ptr(), "URLSearchParams")) {
+            URLSearchParams = true;
         } else if (!strcmp(name.ptr(), "atob")) {
             atob = true;
         } else if (!strcmp(name.ptr(), "btoa")) {
@@ -821,6 +802,10 @@ xpc::GlobalProperties::Define(JSContext *cx, JS::HandleObject obj)
         !dom::URLBinding::GetConstructorObject(cx, obj))
         return false;
 
+    if (URLSearchParams &&
+        !dom::URLSearchParamsBinding::GetConstructorObject(cx, obj))
+        return false;
+
     if (atob &&
         !JS_DefineFunction(cx, obj, "atob", Atob, 1, 0))
         return false;
@@ -844,19 +829,13 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
         if (sop) {
             principal = sop->GetPrincipal();
         } else {
-            principal = do_CreateInstance("@mozilla.org/nullprincipal;1", &rv);
-            MOZ_ASSERT(NS_FAILED(rv) || principal, "Bad return from do_CreateInstance");
-
-            if (!principal || NS_FAILED(rv)) {
-                if (NS_SUCCEEDED(rv)) {
-                    rv = NS_ERROR_FAILURE;
-                }
-
-                return rv;
-            }
+            nsRefPtr<nsNullPrincipal> nullPrin = new nsNullPrincipal();
+            rv = nullPrin->Init();
+            NS_ENSURE_SUCCESS(rv, rv);
+            principal = nullPrin;
         }
-        MOZ_ASSERT(principal);
     }
+    MOZ_ASSERT(principal);
 
     JS::CompartmentOptions compartmentOptions;
     if (options.sameZoneAs)
@@ -914,13 +893,6 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             if (!ok)
                 return NS_ERROR_XPC_UNEXPECTED;
 
-            if (xpc::WrapperFactory::IsXrayWrapper(options.proto) && !options.wantXrays) {
-                RootedValue v(cx, ObjectValue(*options.proto));
-                if (!xpc::WrapperFactory::WaiveXrayAndWrap(cx, &v))
-                    return NS_ERROR_FAILURE;
-                options.proto = &v.toObject();
-            }
-
             // Now check what sort of thing we've got in |proto|
             JSObject *unwrappedProto = js::UncheckedUnwrap(options.proto, false);
             const js::Class *unwrappedClass = js::GetObjectClass(unwrappedProto);
@@ -949,7 +921,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
         // Don't try to mirror the properties that are set below.
         AutoSkipPropertyMirroring askip(CompartmentPrivate::Get(sandbox));
 
-        bool allowComponents = nsContentUtils::IsSystemPrincipal(principal) ||
+        bool allowComponents = principal == nsXPConnect::SystemPrincipal() ||
                                nsContentUtils::IsExpandedPrincipal(principal);
         if (options.wantComponents && allowComponents &&
             !ObjectScope(sandbox)->AttachComponentsObject(cx))
@@ -963,7 +935,6 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
 
         if (options.wantExportHelpers &&
             (!JS_DefineFunction(cx, sandbox, "exportFunction", SandboxExportFunction, 3, 0) ||
-             !JS_DefineFunction(cx, sandbox, "evalInWindow", SandboxEvalInWindow, 2, 0) ||
              !JS_DefineFunction(cx, sandbox, "createObjectIn", SandboxCreateObjectIn, 2, 0) ||
              !JS_DefineFunction(cx, sandbox, "cloneInto", SandboxCloneInto, 3, 0) ||
              !JS_DefineFunction(cx, sandbox, "isProxy", SandboxIsProxy, 1, 0)))
@@ -977,13 +948,10 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             return NS_ERROR_XPC_UNEXPECTED;
     }
 
-    // We have this crazy behavior where wantXrays=false also implies that the
-    // returned sandbox is implicitly waived. We've stopped advertising it, but
-    // keep supporting it for now.
+    // We handle the case where the context isn't in a compartment for the
+    // benefit of InitSingletonScopes.
     vp.setObject(*sandbox);
-    if (options.wantXrays && !JS_WrapValue(cx, vp))
-        return NS_ERROR_UNEXPECTED;
-    if (!options.wantXrays && !xpc::WrapperFactory::WaiveXrayAndWrap(cx, vp))
+    if (js::GetContextCompartment(cx) && !JS_WrapValue(cx, vp))
         return NS_ERROR_UNEXPECTED;
 
     // Set the location information for the new global, so that tools like
@@ -1452,56 +1420,14 @@ nsXPCComponents_utils_Sandbox::CallOrConstruct(nsIXPConnectWrappedNative *wrappe
     if (NS_FAILED(rv))
         return ThrowAndFail(rv, cx, _retval);
 
+    // We have this crazy behavior where wantXrays=false also implies that the
+    // returned sandbox is implicitly waived. We've stopped advertising it, but
+    // keep supporting it for now.
+    if (!options.wantXrays && !xpc::WrapperFactory::WaiveXrayAndWrap(cx, args.rval()))
+        return NS_ERROR_UNEXPECTED;
+
     *_retval = true;
     return NS_OK;
-}
-
-class ContextHolder : public nsIScriptObjectPrincipal
-{
-public:
-    ContextHolder(JSContext *aOuterCx, HandleObject aSandbox, nsIPrincipal *aPrincipal);
-
-    JSContext * GetJSContext()
-    {
-        return mJSContext;
-    }
-
-    nsIPrincipal * GetPrincipal() { return mPrincipal; }
-
-    NS_DECL_ISUPPORTS
-
-private:
-    virtual ~ContextHolder();
-
-    JSContext* mJSContext;
-    nsCOMPtr<nsIPrincipal> mPrincipal;
-};
-
-NS_IMPL_ISUPPORTS(ContextHolder, nsIScriptObjectPrincipal)
-
-ContextHolder::ContextHolder(JSContext *aOuterCx,
-                             HandleObject aSandbox,
-                             nsIPrincipal *aPrincipal)
-    : mJSContext(JS_NewContext(JS_GetRuntime(aOuterCx), 1024)),
-      mPrincipal(aPrincipal)
-{
-    if (mJSContext) {
-        bool isChrome;
-        DebugOnly<nsresult> rv = nsXPConnect::SecurityManager()->
-                                   IsSystemPrincipal(mPrincipal, &isChrome);
-        MOZ_ASSERT(NS_SUCCEEDED(rv));
-
-        JS::ContextOptionsRef(mJSContext).setDontReportUncaught(true)
-                                         .setPrivateIsNSISupports(true);
-        js::SetDefaultObjectForContext(mJSContext, aSandbox);
-        JS_SetContextPrivate(mJSContext, this);
-    }
-}
-
-ContextHolder::~ContextHolder()
-{
-    if (mJSContext)
-        JS_DestroyContextNoGC(mJSContext);
 }
 
 nsresult
@@ -1519,8 +1445,9 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
     }
 
     nsIScriptObjectPrincipal *sop =
-        (nsIScriptObjectPrincipal*)xpc_GetJSPrivate(sandbox);
+        static_cast<nsIScriptObjectPrincipal*>(xpc_GetJSPrivate(sandbox));
     MOZ_ASSERT(sop, "Invalid sandbox passed");
+    SandboxPrivate *priv = static_cast<SandboxPrivate*>(sop);
     nsCOMPtr<nsIPrincipal> prin = sop->GetPrincipal();
     NS_ENSURE_TRUE(prin, NS_ERROR_FAILURE);
 
@@ -1538,23 +1465,17 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
     RootedValue exn(cx, UndefinedValue());
     bool ok = true;
     {
-        // Make a special cx for the sandbox and push it.
-        // NB: As soon as the RefPtr goes away, the cx goes away. So declare
-        // it first so that it disappears last.
-        nsRefPtr<ContextHolder> sandcxHolder = new ContextHolder(cx, sandbox, prin);
-        JSContext *sandcx = sandcxHolder->GetJSContext();
-        if (!sandcx) {
-            JS_ReportError(cx, "Can't prepare context for evalInSandbox");
-            return NS_ERROR_OUT_OF_MEMORY;
-        }
-        nsCxPusher pusher;
-        pusher.Push(sandcx);
+        // We're about to evaluate script, so make an AutoEntryScript.
+        // This is clearly Gecko-specific and not in any spec.
+        mozilla::dom::AutoEntryScript aes(priv);
+        JSContext *sandcx = aes.cx();
+        AutoSaveContextOptions savedOptions(sandcx);
+        JS::ContextOptionsRef(sandcx).setDontReportUncaught(true);
         JSAutoCompartment ac(sandcx, sandbox);
 
         JS::CompileOptions options(sandcx);
-        options.setFileAndLine(filenameBuf.get(), lineNo);
-        if (jsVersion != JSVERSION_DEFAULT)
-               options.setVersion(jsVersion);
+        options.setFileAndLine(filenameBuf.get(), lineNo)
+               .setVersion(jsVersion);
         JS::RootedObject rootedSandbox(sandcx, sandbox);
         ok = JS::Evaluate(sandcx, rootedSandbox, options,
                           PromiseFlatString(source).get(), source.Length(), &v);

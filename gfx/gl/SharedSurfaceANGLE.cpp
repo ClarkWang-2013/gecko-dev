@@ -6,28 +6,10 @@
 #include "SharedSurfaceANGLE.h"
 
 #include "GLContextEGL.h"
+#include "GLLibraryEGL.h"
 
 namespace mozilla {
 namespace gl {
-
-using namespace mozilla::gfx;
-
-SurfaceFactory_ANGLEShareHandle*
-SurfaceFactory_ANGLEShareHandle::Create(GLContext* gl,
-                                        const SurfaceCaps& caps)
-{
-    GLLibraryEGL* egl = &sEGLLibrary;
-    if (!egl)
-        return nullptr;
-
-    if (!egl->IsExtensionSupported(
-            GLLibraryEGL::ANGLE_surface_d3d_texture_2d_share_handle))
-    {
-        return nullptr;
-    }
-
-    return new SurfaceFactory_ANGLEShareHandle(gl, egl, caps);
-}
 
 EGLDisplay
 SharedSurface_ANGLEShareHandle::Display()
@@ -35,10 +17,36 @@ SharedSurface_ANGLEShareHandle::Display()
     return mEGL->Display();
 }
 
+SharedSurface_ANGLEShareHandle::SharedSurface_ANGLEShareHandle(GLContext* gl,
+                                                               GLLibraryEGL* egl,
+                                                               const gfx::IntSize& size,
+                                                               bool hasAlpha,
+                                                               EGLContext context,
+                                                               EGLSurface pbuffer,
+                                                               HANDLE shareHandle,
+                                                               GLuint fence)
+    : SharedSurface(SharedSurfaceType::EGLSurfaceANGLE,
+                    AttachmentType::Screen,
+                    gl,
+                    size,
+                    hasAlpha)
+    , mEGL(egl)
+    , mContext(context)
+    , mPBuffer(pbuffer)
+    , mShareHandle(shareHandle)
+    , mFence(fence)
+{
+}
+
 
 SharedSurface_ANGLEShareHandle::~SharedSurface_ANGLEShareHandle()
 {
     mEGL->fDestroySurface(Display(), mPBuffer);
+
+    if (mFence) {
+        mGL->MakeCurrent();
+        mGL->fDeleteFences(1, &mFence);
+    }
 }
 
 void
@@ -52,7 +60,6 @@ SharedSurface_ANGLEShareHandle::UnlockProdImpl()
 {
 }
 
-
 void
 SharedSurface_ANGLEShareHandle::Fence()
 {
@@ -62,8 +69,49 @@ SharedSurface_ANGLEShareHandle::Fence()
 bool
 SharedSurface_ANGLEShareHandle::WaitSync()
 {
-    // Since we glFinish in Fence(), we're always going to be resolved here.
     return true;
+}
+
+bool
+SharedSurface_ANGLEShareHandle::PollSync()
+{
+    return true;
+}
+
+void
+SharedSurface_ANGLEShareHandle::Fence_ContentThread_Impl()
+{
+    if (mFence) {
+        MOZ_ASSERT(mGL->IsExtensionSupported(GLContext::NV_fence));
+        mGL->fSetFence(mFence, LOCAL_GL_ALL_COMPLETED_NV);
+        mGL->fFlush();
+        return;
+    }
+
+    Fence();
+}
+
+bool
+SharedSurface_ANGLEShareHandle::WaitSync_ContentThread_Impl()
+{
+    if (mFence) {
+        mGL->MakeCurrent();
+        mGL->fFinishFence(mFence);
+        return true;
+    }
+
+    return WaitSync();
+}
+
+bool
+SharedSurface_ANGLEShareHandle::PollSync_ContentThread_Impl()
+{
+    if (mFence) {
+        mGL->MakeCurrent();
+        return mGL->fTestFence(mFence);
+    }
+
+    return PollSync();
 }
 
 static void
@@ -170,25 +218,33 @@ ChooseConfig(GLContext* gl,
     return config;
 }
 
-// Returns EGL_NO_SURFACE on error.
+// Returns `EGL_NO_SURFACE` (`0`) on error.
 static EGLSurface
 CreatePBufferSurface(GLLibraryEGL* egl,
                      EGLDisplay display,
                      EGLConfig config,
                      const gfx::IntSize& size)
 {
+    auto width = size.width;
+    auto height = size.height;
+
     EGLint attribs[] = {
-        LOCAL_EGL_WIDTH, size.width,
-        LOCAL_EGL_HEIGHT, size.height,
+        LOCAL_EGL_WIDTH, width,
+        LOCAL_EGL_HEIGHT, height,
         LOCAL_EGL_NONE
     };
 
+    DebugOnly<EGLint> preCallErr = egl->fGetError();
+    MOZ_ASSERT(preCallErr == LOCAL_EGL_SUCCESS);
     EGLSurface surface = egl->fCreatePbufferSurface(display, config, attribs);
+    EGLint err = egl->fGetError();
+    if (err != LOCAL_EGL_SUCCESS)
+        return 0;
 
     return surface;
 }
 
-SharedSurface_ANGLEShareHandle*
+/*static*/ UniquePtr<SharedSurface_ANGLEShareHandle>
 SharedSurface_ANGLEShareHandle::Create(GLContext* gl,
                                        EGLContext context, EGLConfig config,
                                        const gfx::IntSize& size, bool hasAlpha)
@@ -217,17 +273,41 @@ SharedSurface_ANGLEShareHandle::Create(GLContext* gl,
         return nullptr;
     }
 
-    return new SharedSurface_ANGLEShareHandle(gl, egl,
-                                              size, hasAlpha,
-                                              context, pbuffer,
-                                              shareHandle);
+    GLuint fence = 0;
+    if (gl->IsExtensionSupported(GLContext::NV_fence)) {
+        gl->MakeCurrent();
+        gl->fGenFences(1, &fence);
+    }
+
+    typedef SharedSurface_ANGLEShareHandle ptrT;
+    UniquePtr<ptrT> ret( new ptrT(gl, egl, size, hasAlpha, context,
+                                  pbuffer, shareHandle, fence) );
+    return Move(ret);
 }
 
+/*static*/ UniquePtr<SurfaceFactory_ANGLEShareHandle>
+SurfaceFactory_ANGLEShareHandle::Create(GLContext* gl,
+                                        const SurfaceCaps& caps)
+{
+    GLLibraryEGL* egl = &sEGLLibrary;
+    if (!egl)
+        return nullptr;
+
+    auto ext = GLLibraryEGL::ANGLE_surface_d3d_texture_2d_share_handle;
+    if (!egl->IsExtensionSupported(ext))
+    {
+        return nullptr;
+    }
+
+    typedef SurfaceFactory_ANGLEShareHandle ptrT;
+    UniquePtr<ptrT> ret( new ptrT(gl, egl, caps) );
+    return Move(ret);
+}
 
 SurfaceFactory_ANGLEShareHandle::SurfaceFactory_ANGLEShareHandle(GLContext* gl,
                                                                  GLLibraryEGL* egl,
                                                                  const SurfaceCaps& caps)
-    : SurfaceFactory_GL(gl, SharedSurfaceType::EGLSurfaceANGLE, caps)
+    : SurfaceFactory(gl, SharedSurfaceType::EGLSurfaceANGLE, caps)
     , mProdGL(gl)
     , mEGL(egl)
 {

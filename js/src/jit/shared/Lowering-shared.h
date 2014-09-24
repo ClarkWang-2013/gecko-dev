@@ -23,7 +23,7 @@ class MDefinition;
 class MInstruction;
 class LOsiPoint;
 
-class LIRGeneratorShared : public MInstructionVisitorWithDefaults
+class LIRGeneratorShared : public MDefinitionVisitor
 {
   protected:
     MIRGenerator *gen;
@@ -153,10 +153,6 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
     // virtual register as |as|.
     inline bool redefine(MDefinition *ins, MDefinition *as);
 
-    // Defines an IR's output as the same as another IR. This is similar to
-    // redefine(), but used when creating new LIR.
-    inline bool defineAs(LInstruction *outLir, MDefinition *outMir, MDefinition *inMir);
-
     TempAllocator &alloc() const {
         return graph.alloc();
     }
@@ -204,11 +200,6 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
     // Whether to generate typed array accesses on statically known objects.
     static bool allowStaticTypedArrayAccesses() {
         return false;
-    }
-
-     // Whether we can emit Float32 specific optimizations.
-    static bool allowFloat32Optimizations() {
-       return false;
     }
 
     // Whether we can inline ForkJoinGetSlice.

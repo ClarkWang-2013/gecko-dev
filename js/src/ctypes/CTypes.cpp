@@ -38,6 +38,7 @@
 
 #include "builtin/TypedObject.h"
 #include "ctypes/Library.h"
+#include "gc/Zone.h"
 
 using namespace std;
 using mozilla::NumericLimits;
@@ -99,7 +100,7 @@ GetDeflatedUTF8StringLength(JSContext *maybecx, const Latin1Char *chars,
                             size_t nchars);
 
 template size_t
-GetDeflatedUTF8StringLength(JSContext *maybecx, const jschar *chars,
+GetDeflatedUTF8StringLength(JSContext *maybecx, const char16_t *chars,
                             size_t nchars);
 
 static size_t
@@ -119,7 +120,7 @@ DeflateStringToUTF8Buffer(JSContext *maybecx, const CharT *src, size_t srclen,
                           char *dst, size_t *dstlenp)
 {
     size_t i, utf8Len;
-    jschar c, c2;
+    char16_t c, c2;
     uint32_t v;
     uint8_t utf8buf[6];
 
@@ -183,7 +184,7 @@ DeflateStringToUTF8Buffer(JSContext *maybecx, const Latin1Char *src, size_t srcl
                           char *dst, size_t *dstlenp);
 
 template bool
-DeflateStringToUTF8Buffer(JSContext *maybecx, const jschar *src, size_t srclen,
+DeflateStringToUTF8Buffer(JSContext *maybecx, const char16_t *src, size_t srclen,
                           char *dst, size_t *dstlenp);
 
 static bool
@@ -458,7 +459,7 @@ namespace CDataFinalizer {
    *
    * Note that the jsval is actually not recorded, but converted back from C.
    */
-  static bool GetValue(JSContext *cx, JSObject *obj, jsval *result);
+  static bool GetValue(JSContext *cx, JSObject *obj, MutableHandleValue result);
 
   static JSObject* GetCData(JSContext *cx, JSObject *obj);
  }
@@ -870,14 +871,14 @@ GetABICode(JSObject* obj)
 }
 
 static const JSErrorFormatString ErrorFormatString[CTYPESERR_LIMIT] = {
-#define MSG_DEF(name, number, count, exception, format) \
+#define MSG_DEF(name, count, exception, format) \
   { format, count, exception } ,
 #include "ctypes/ctypes.msg"
 #undef MSG_DEF
 };
 
 static const JSErrorFormatString*
-GetErrorMessage(void* userRef, const char* locale, const unsigned errorNumber)
+GetErrorMessage(void* userRef, const unsigned errorNumber)
 {
   if (0 < errorNumber && errorNumber < CTYPESERR_LIMIT)
     return &ErrorFormatString[errorNumber];
@@ -1295,6 +1296,12 @@ InitTypeClasses(JSContext* cx, HandleObject parent)
                          JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT))
     return false;
 
+  // Alias 'ctypes.jschar' as 'ctypes.char16_t' to prevent breaking addons
+  // that are still using jschar (bug 1064935).
+  if (!JS_DefineProperty(cx, parent, "jschar", typeObj_char16_t,
+                         JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT))
+    return false;
+
   // Create objects representing the special types void_t and voidptr_t.
   RootedObject typeObj(cx,
     CType::DefineBuiltin(cx, parent, "void_t", CTypeProto, CDataProto, "void",
@@ -1686,7 +1693,7 @@ jsvalToInteger(JSContext* cx, jsval val, IntegerType* result)
       case TYPE_char:
       case TYPE_signed_char:
       case TYPE_unsigned_char:
-      case TYPE_jschar:
+      case TYPE_char16_t:
       case TYPE_pointer:
       case TYPE_function:
       case TYPE_array:
@@ -1710,7 +1717,7 @@ jsvalToInteger(JSContext* cx, jsval val, IntegerType* result)
 
     if (CDataFinalizer::IsCDataFinalizer(obj)) {
       RootedValue innerData(cx);
-      if (!CDataFinalizer::GetValue(cx, obj, innerData.address())) {
+      if (!CDataFinalizer::GetValue(cx, obj, &innerData)) {
         return false; // Nothing to convert
       }
       return jsvalToInteger(cx, innerData, result);
@@ -1772,7 +1779,7 @@ jsvalToFloat(JSContext *cx, jsval val, FloatType* result)
       case TYPE_char:
       case TYPE_signed_char:
       case TYPE_unsigned_char:
-      case TYPE_jschar:
+      case TYPE_char16_t:
       case TYPE_pointer:
       case TYPE_function:
       case TYPE_array:
@@ -1817,7 +1824,7 @@ StringToInteger(JSContext* cx, CharT* cp, size_t length, IntegerType* result)
   // checking for valid characters 0 - 9, a - f, A - F and overflow.
   IntegerType i = 0;
   while (cp != end) {
-    jschar c = *cp++;
+    char16_t c = *cp++;
     if (c >= '0' && c <= '9')
       c -= '0';
     else if (base == 16 && c >= 'a' && c <= 'f')
@@ -1901,7 +1908,7 @@ jsvalToBigInteger(JSContext* cx,
 
     if (CDataFinalizer::IsCDataFinalizer(obj)) {
       RootedValue innerData(cx);
-      if (!CDataFinalizer::GetValue(cx, obj, innerData.address())) {
+      if (!CDataFinalizer::GetValue(cx, obj, &innerData)) {
         return false; // Nothing to convert
       }
       return jsvalToBigInteger(cx, innerData, allowString, result);
@@ -1966,14 +1973,14 @@ jsidToSize(JSContext* cx, jsid val, bool allowString, size_t* result)
 // Implicitly convert a size value to a jsval, ensuring that the size_t value
 // fits in a double.
 static bool
-SizeTojsval(JSContext* cx, size_t size, jsval* result)
+SizeTojsval(JSContext* cx, size_t size, MutableHandleValue result)
 {
   if (Convert<size_t>(double(size)) != size) {
     JS_ReportError(cx, "size overflow");
     return false;
   }
 
-  *result = JS_NumberValue(double(size));
+  result.setNumber(double(size));
   return true;
 }
 
@@ -2118,7 +2125,7 @@ ConvertToJS(JSContext* cx,
             void* data,
             bool wantPrimitive,
             bool ownResult,
-            jsval* result)
+            MutableHandleValue result)
 {
   JS_ASSERT(!parentObj || CData::IsCData(parentObj));
   JS_ASSERT(!parentObj || !ownResult);
@@ -2128,18 +2135,18 @@ ConvertToJS(JSContext* cx,
 
   switch (typeCode) {
   case TYPE_void_t:
-    *result = JSVAL_VOID;
+    result.setUndefined();
     break;
   case TYPE_bool:
-    *result = *static_cast<bool*>(data) ? JSVAL_TRUE : JSVAL_FALSE;
+    result.setBoolean(*static_cast<bool*>(data));
     break;
 #define DEFINE_INT_TYPE(name, type, ffiType)                                   \
   case TYPE_##name: {                                                          \
     type value = *static_cast<type*>(data);                                    \
     if (sizeof(type) < 4)                                                      \
-      *result = INT_TO_JSVAL(int32_t(value));                                  \
+      result.setInt32(int32_t(value));                                         \
     else                                                                       \
-      *result = JS_NumberValue(double(value));                                 \
+      result.setDouble(double(value));                                         \
     break;                                                                     \
   }
 #define DEFINE_WRAPPED_INT_TYPE(name, type, ffiType)                           \
@@ -2165,29 +2172,29 @@ ConvertToJS(JSContext* cx,
       !NumericLimits<type>::is_signed);                                        \
     if (!obj)                                                                  \
       return false;                                                            \
-    *result = OBJECT_TO_JSVAL(obj);                                            \
+    result.setObject(*obj);                                                    \
     break;                                                                     \
   }
 #define DEFINE_FLOAT_TYPE(name, type, ffiType)                                 \
   case TYPE_##name: {                                                          \
     type value = *static_cast<type*>(data);                                    \
-    *result = JS_NumberValue(double(value));                                   \
+    result.setDouble(double(value));                                           \
     break;                                                                     \
   }
 #define DEFINE_CHAR_TYPE(name, type, ffiType)                                  \
   case TYPE_##name:                                                            \
     /* Convert to an integer. We have no idea what character encoding to */    \
     /* use, if any. */                                                         \
-    *result = INT_TO_JSVAL(*static_cast<type*>(data));                         \
+    result.setInt32(*static_cast<type*>(data));                                \
     break;
 #include "ctypes/typedefs.h"
-  case TYPE_jschar: {
-    // Convert the jschar to a 1-character string.
-    JSString* str = JS_NewUCStringCopyN(cx, static_cast<jschar*>(data), 1);
+  case TYPE_char16_t: {
+    // Convert the char16_t to a 1-character string.
+    JSString* str = JS_NewUCStringCopyN(cx, static_cast<char16_t*>(data), 1);
     if (!str)
       return false;
 
-    *result = STRING_TO_JSVAL(str);
+    result.setString(str);
     break;
   }
   case TYPE_pointer:
@@ -2204,11 +2211,11 @@ ConvertToJS(JSContext* cx,
     if (!obj)
       return false;
 
-    *result = OBJECT_TO_JSVAL(obj);
+    result.setObject(*obj);
     break;
   }
   case TYPE_function:
-    MOZ_ASSUME_UNREACHABLE("cannot return a FunctionType");
+    MOZ_CRASH("cannot return a FunctionType");
   }
 
   return true;
@@ -2224,29 +2231,29 @@ bool CanConvertTypedArrayItemTo(JSObject *baseType, JSObject *valObj, JSContext 
   }
   TypeCode elementTypeCode;
   switch (JS_GetArrayBufferViewType(valObj)) {
-  case ScalarTypeDescr::TYPE_INT8:
+  case Scalar::Int8:
     elementTypeCode = TYPE_int8_t;
     break;
-  case ScalarTypeDescr::TYPE_UINT8:
-  case ScalarTypeDescr::TYPE_UINT8_CLAMPED:
+  case Scalar::Uint8:
+  case Scalar::Uint8Clamped:
     elementTypeCode = TYPE_uint8_t;
     break;
-  case ScalarTypeDescr::TYPE_INT16:
+  case Scalar::Int16:
     elementTypeCode = TYPE_int16_t;
     break;
-  case ScalarTypeDescr::TYPE_UINT16:
+  case Scalar::Uint16:
     elementTypeCode = TYPE_uint16_t;
     break;
-  case ScalarTypeDescr::TYPE_INT32:
+  case Scalar::Int32:
     elementTypeCode = TYPE_int32_t;
     break;
-  case ScalarTypeDescr::TYPE_UINT32:
+  case Scalar::Uint32:
     elementTypeCode = TYPE_uint32_t;
     break;
-  case ScalarTypeDescr::TYPE_FLOAT32:
+  case Scalar::Float32:
     elementTypeCode = TYPE_float32_t;
     break;
-  case ScalarTypeDescr::TYPE_FLOAT64:
+  case Scalar::Float64:
     elementTypeCode = TYPE_float64_t;
     break;
   default:
@@ -2347,13 +2354,13 @@ ImplicitConvert(JSContext* cx,
     break;                                                                     \
   }
 #define DEFINE_CHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
-#define DEFINE_JSCHAR_TYPE(name, type, ffiType)                                \
+#define DEFINE_CHAR16_TYPE(name, type, ffiType)                                \
   case TYPE_##name: {                                                          \
     /* Convert from a 1-character string, regardless of encoding, */           \
     /* or from an integer, provided the result fits in 'type'. */              \
     type result;                                                               \
-    if (val.isString()) {                                                \
-      JSString* str = val.toString();                                    \
+    if (val.isString()) {                                                      \
+      JSString* str = val.toString();                                          \
       if (str->length() != 1)                                                  \
         return TypeError(cx, #name, val);                                      \
       JSLinearString *linear = str->ensureLinear(cx);                          \
@@ -2427,13 +2434,13 @@ ImplicitConvert(JSContext* cx,
         *freePointer = true;
         break;
       }
-      case TYPE_jschar: {
-        // Copy the jschar string data. (We could provide direct access to the
+      case TYPE_char16_t: {
+        // Copy the char16_t string data. (We could provide direct access to the
         // JSString's buffer, but this approach is safer if the caller happens
         // to modify the string.)
-        jschar** jscharBuffer = static_cast<jschar**>(buffer);
-        *jscharBuffer = cx->pod_malloc<jschar>(sourceLength + 1);
-        if (!*jscharBuffer) {
+        char16_t** char16Buffer = static_cast<char16_t**>(buffer);
+        *char16Buffer = cx->pod_malloc<char16_t>(sourceLength + 1);
+        if (!*char16Buffer) {
           JS_ReportAllocationOverflow(cx);
           return false;
         }
@@ -2441,12 +2448,12 @@ ImplicitConvert(JSContext* cx,
         *freePointer = true;
         if (sourceLinear->hasLatin1Chars()) {
             AutoCheckCannotGC nogc;
-            CopyAndInflateChars(*jscharBuffer, sourceLinear->latin1Chars(nogc), sourceLength);
+            CopyAndInflateChars(*char16Buffer, sourceLinear->latin1Chars(nogc), sourceLength);
         } else {
             AutoCheckCannotGC nogc;
-            mozilla::PodCopy(*jscharBuffer, sourceLinear->twoByteChars(nogc), sourceLength);
+            mozilla::PodCopy(*char16Buffer, sourceLinear->twoByteChars(nogc), sourceLength);
         }
-        (*jscharBuffer)[sourceLength] = 0;
+        (*char16Buffer)[sourceLength] = 0;
         break;
       }
       default:
@@ -2510,15 +2517,15 @@ ImplicitConvert(JSContext* cx,
 
         break;
       }
-      case TYPE_jschar: {
-        // Copy the string data, jschar for jschar, including the terminator
+      case TYPE_char16_t: {
+        // Copy the string data, char16_t for char16_t, including the terminator
         // if there's space.
         if (targetLength < sourceLength) {
           JS_ReportError(cx, "ArrayType has insufficient length");
           return false;
         }
 
-        jschar *dest = static_cast<jschar*>(buffer);
+        char16_t *dest = static_cast<char16_t*>(buffer);
         if (sourceLinear->hasLatin1Chars()) {
             AutoCheckCannotGC nogc;
             CopyAndInflateChars(dest, sourceLinear->latin1Chars(nogc), sourceLength);
@@ -2620,7 +2627,7 @@ ImplicitConvert(JSContext* cx,
       RootedId id(cx);
       size_t i = 0;
       while (1) {
-        if (!JS_NextProperty(cx, iter, id.address()))
+        if (!JS_NextProperty(cx, iter, &id))
           return false;
         if (JSID_IS_VOID(id))
           break;
@@ -2661,7 +2668,7 @@ ImplicitConvert(JSContext* cx,
   }
   case TYPE_void_t:
   case TYPE_function:
-    MOZ_ASSUME_UNREACHABLE("invalid type");
+    MOZ_CRASH("invalid type");
   }
 
   return true;
@@ -2701,15 +2708,15 @@ ExplicitConvert(JSContext* cx, HandleValue val, HandleObject targetType, void* b
     /* allow conversion from a base-10 or base-16 string. */                   \
     type result;                                                               \
     if (!jsvalToIntegerExplicit(val, &result) &&                               \
-        (!val.isString() ||                                              \
-         !StringToInteger(cx, val.toString(), &result)))                 \
+        (!val.isString() ||                                                    \
+         !StringToInteger(cx, val.toString(), &result)))                       \
       return TypeError(cx, #name, val);                                        \
     *static_cast<type*>(buffer) = result;                                      \
     break;                                                                     \
   }
 #define DEFINE_WRAPPED_INT_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_CHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
-#define DEFINE_JSCHAR_TYPE(x, y, z) DEFINE_CHAR_TYPE(x, y, z)
+#define DEFINE_CHAR16_TYPE(x, y, z) DEFINE_CHAR_TYPE(x, y, z)
 #include "ctypes/typedefs.h"
   case TYPE_pointer: {
     // Convert a number, Int64 object, or UInt64 object to a pointer.
@@ -2730,7 +2737,7 @@ ExplicitConvert(JSContext* cx, HandleValue val, HandleObject targetType, void* b
     return false;
   case TYPE_void_t:
   case TYPE_function:
-    MOZ_ASSUME_UNREACHABLE("invalid type");
+    MOZ_CRASH("invalid type");
   }
   return true;
 }
@@ -2902,7 +2909,7 @@ BuildTypeSource(JSContext* cx,
       AppendString(result, "ctypes.winapi_abi, ");
       break;
     case INVALID_ABI:
-      MOZ_ASSUME_UNREACHABLE("invalid abi");
+      MOZ_CRASH("invalid abi");
     }
 
     // Recursively build the source string describing the function return and
@@ -3050,9 +3057,9 @@ BuildDataSource(JSContext* cx,
     IntegerToString(*static_cast<type*>(data), 10, result);                    \
     break;
 #include "ctypes/typedefs.h"
-  case TYPE_jschar: {
+  case TYPE_char16_t: {
     // Serialize as a 1-character JS string.
-    JSString* str = JS_NewUCStringCopyN(cx, static_cast<jschar*>(data), 1);
+    JSString* str = JS_NewUCStringCopyN(cx, static_cast<char16_t*>(data), 1);
     if (!str)
       return false;
 
@@ -3147,7 +3154,7 @@ BuildDataSource(JSContext* cx,
     break;
   }
   case TYPE_void_t:
-    MOZ_ASSUME_UNREACHABLE("invalid type");
+    MOZ_CRASH("invalid type");
   }
 
   return true;
@@ -3400,10 +3407,10 @@ CType::Trace(JSTracer* trc, JSObject* obj)
     FieldInfoHash* fields = static_cast<FieldInfoHash*>(slot.toPrivate());
     for (FieldInfoHash::Enum e(*fields); !e.empty(); e.popFront()) {
       JSString *key = e.front().key();
-      JS_CallStringTracer(trc, &key, "fieldName");
+      JS_CallUnbarrieredStringTracer(trc, &key, "fieldName");
       if (key != e.front().key())
           e.rekeyFront(JS_ASSERT_STRING_IS_FLAT(key));
-      JS_CallHeapObjectTracer(trc, &e.front().value().mType, "fieldType");
+      JS_CallObjectTracer(trc, &e.front().value().mType, "fieldType");
     }
 
     break;
@@ -3418,10 +3425,10 @@ CType::Trace(JSTracer* trc, JSObject* obj)
     JS_ASSERT(fninfo);
 
     // Identify our objects to the tracer.
-    JS_CallHeapObjectTracer(trc, &fninfo->mABI, "abi");
-    JS_CallHeapObjectTracer(trc, &fninfo->mReturnType, "returnType");
+    JS_CallObjectTracer(trc, &fninfo->mABI, "abi");
+    JS_CallObjectTracer(trc, &fninfo->mReturnType, "returnType");
     for (size_t i = 0; i < fninfo->mArgTypes.length(); ++i)
-      JS_CallHeapObjectTracer(trc, &fninfo->mArgTypes[i], "argType");
+      JS_CallObjectTracer(trc, &fninfo->mArgTypes[i], "argType");
 
     break;
   }
@@ -3604,7 +3611,7 @@ CType::GetFFIType(JSContext* cx, JSObject* obj)
     break;
 
   default:
-    MOZ_ASSUME_UNREACHABLE("simple types must have an ffi_type");
+    MOZ_CRASH("simple types must have an ffi_type");
   }
 
   if (!result)
@@ -4187,7 +4194,7 @@ PointerType::ContentsGetter(JSContext* cx, JS::CallArgs args)
   }
 
   RootedValue result(cx);
-  if (!ConvertToJS(cx, baseType, NullPtr(), data, false, false, result.address()))
+  if (!ConvertToJS(cx, baseType, NullPtr(), data, false, false, &result))
     return false;
 
   args.rval().set(result);
@@ -4283,8 +4290,8 @@ ArrayType::CreateInternal(JSContext* cx,
       JS_ReportError(cx, "size overflow");
       return nullptr;
     }
-    if (!SizeTojsval(cx, size, sizeVal.address()) ||
-        !SizeTojsval(cx, length, lengthVal.address()))
+    if (!SizeTojsval(cx, size, &sizeVal) ||
+        !SizeTojsval(cx, length, &lengthVal))
       return nullptr;
   }
 
@@ -4374,7 +4381,7 @@ ArrayType::ConstructData(JSContext* cx,
         ++length;
         break;
       }
-      case TYPE_jschar:
+      case TYPE_char16_t:
         length = sourceLength + 1;
         break;
       default:
@@ -4428,7 +4435,7 @@ ArrayType::GetSafeLength(JSObject* obj, size_t* result)
   // The "length" property can be an int, a double, or JSVAL_VOID
   // (for arrays of undefined length), and must always fit in a size_t.
   if (length.isInt32()) {
-    *result = length.toInt32();;
+    *result = length.toInt32();
     return true;
   }
   if (length.isDouble()) {
@@ -4454,7 +4461,7 @@ ArrayType::GetLength(JSObject* obj)
   // (for arrays of undefined length), and must always fit in a size_t.
   // For callers who know it can never be JSVAL_VOID, return a size_t directly.
   if (length.isInt32())
-    return length.toInt32();;
+    return length.toInt32();
   return Convert<size_t>(length.toDouble());
 }
 
@@ -4582,7 +4589,7 @@ ArrayType::Getter(JSContext* cx, HandleObject obj, HandleId idval, MutableHandle
   RootedObject baseType(cx, GetBaseType(typeObj));
   size_t elementSize = CType::GetSize(baseType);
   char* data = static_cast<char*>(CData::GetData(obj)) + elementSize * index;
-  return ConvertToJS(cx, baseType, obj, data, false, false, vp.address());
+  return ConvertToJS(cx, baseType, obj, data, false, false, vp);
 }
 
 bool
@@ -4679,7 +4686,7 @@ ArrayType::AddressOfElement(JSContext* cx, unsigned argc, jsval* vp)
 // For a struct field descriptor 'val' of the form { name : type }, extract
 // 'name' and 'type'.
 static JSFlatString*
-ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
+ExtractStructField(JSContext* cx, jsval val, MutableHandleObject typeObj)
 {
   if (val.isPrimitive()) {
     JS_ReportError(cx, "struct field descriptors require a valid name and type");
@@ -4692,7 +4699,7 @@ ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
     return nullptr;
 
   RootedId nameid(cx);
-  if (!JS_NextProperty(cx, iter, nameid.address()))
+  if (!JS_NextProperty(cx, iter, &nameid))
     return nullptr;
   if (JSID_IS_VOID(nameid)) {
     JS_ReportError(cx, "struct field descriptors require a valid name and type");
@@ -4705,7 +4712,7 @@ ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
   }
 
   // make sure we have one, and only one, property
-  jsid id;
+  RootedId id(cx);
   if (!JS_NextProperty(cx, iter, &id))
     return nullptr;
   if (!JSID_IS_VOID(id)) {
@@ -4725,9 +4732,9 @@ ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
   // Undefined size or zero size struct members are illegal.
   // (Zero-size arrays are legal as struct members in C++, but libffi will
   // choke on a zero-size struct, so we disallow them.)
-  *typeObj = &propVal.toObject();
+  typeObj.set(&propVal.toObject());
   size_t size;
-  if (!CType::GetSafeSize(*typeObj, &size) || size == 0) {
+  if (!CType::GetSafeSize(typeObj, &size) || size == 0) {
     JS_ReportError(cx, "struct field types must have defined and nonzero size");
     return nullptr;
   }
@@ -4739,7 +4746,7 @@ ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
 // { name : type }.
 static bool
 AddFieldToArray(JSContext* cx,
-                jsval* element,
+                MutableHandleValue element,
                 JSFlatString* name_,
                 JSObject* typeObj_)
 {
@@ -4749,10 +4756,14 @@ AddFieldToArray(JSContext* cx,
   if (!fieldObj)
     return false;
 
-  *element = OBJECT_TO_JSVAL(fieldObj);
+  element.setObject(*fieldObj);
+
+  AutoStableStringChars nameChars(cx);
+  if (!nameChars.initTwoByte(cx, name))
+      return false;
 
   if (!JS_DefineUCProperty(cx, fieldObj,
-         name->chars(), name->length(),
+         nameChars.twoByteChars(), name->length(),
          typeObj,
          JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT))
     return false;
@@ -4814,7 +4825,7 @@ PostBarrierCallback(JSTracer *trc, JSString *key, void *data)
 
     UnbarrieredFieldInfoHash *table = reinterpret_cast<UnbarrieredFieldInfoHash*>(data);
     JSString *prior = key;
-    JS_CallStringTracer(trc, &key, "CType fieldName");
+    JS_CallUnbarrieredStringTracer(trc, &key, "CType fieldName");
     table->rekeyIfMoved(JS_ASSERT_STRING_IS_FLAT(prior), JS_ASSERT_STRING_IS_FLAT(key));
 }
 
@@ -4871,7 +4882,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
         return false;
 
       RootedObject fieldType(cx, nullptr);
-      Rooted<JSFlatString*> name(cx, ExtractStructField(cx, item, fieldType.address()));
+      Rooted<JSFlatString*> name(cx, ExtractStructField(cx, item, &fieldType));
       if (!name)
         return false;
       fieldRoots[i].setObject(*fieldType);
@@ -4937,7 +4948,7 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
   }
 
   RootedValue sizeVal(cx);
-  if (!SizeTojsval(cx, structSize, sizeVal.address()))
+  if (!SizeTojsval(cx, structSize, &sizeVal))
     return false;
 
   JS_SetReservedSlot(typeObj, SLOT_FIELDINFO, PRIVATE_TO_JSVAL(fields.forget()));
@@ -5186,7 +5197,7 @@ StructType::BuildFieldsArray(JSContext* cx, JSObject* obj)
   for (FieldInfoHash::Range r = fields->all(); !r.empty(); r.popFront()) {
     const FieldInfoHash::Entry& entry = r.front();
     // Add the field descriptor to the array.
-    if (!AddFieldToArray(cx, fieldsVec[entry.value().mIndex].address(),
+    if (!AddFieldToArray(cx, fieldsVec[entry.value().mIndex],
                          entry.key(), entry.value().mType))
       return nullptr;
   }
@@ -5258,7 +5269,7 @@ StructType::FieldGetter(JSContext* cx, HandleObject obj, HandleId idval, Mutable
 
   char* data = static_cast<char*>(CData::GetData(obj)) + field->mOffset;
   RootedObject fieldType(cx, field->mType);
-  return ConvertToJS(cx, fieldType, obj, data, false, false, vp.address());
+  return ConvertToJS(cx, fieldType, obj, data, false, false, vp);
 }
 
 bool
@@ -5467,7 +5478,7 @@ IsEllipsis(JSContext* cx, jsval v, bool* isEllipsis)
   JSLinearString *linear = str->ensureLinear(cx);
   if (!linear)
     return false;
-  jschar dot = '.';
+  char16_t dot = '.';
   *isEllipsis = (linear->latin1OrTwoByteChar(0) == dot &&
                  linear->latin1OrTwoByteChar(1) == dot &&
                  linear->latin1OrTwoByteChar(2) == dot);
@@ -5551,7 +5562,7 @@ FunctionType::BuildSymbolName(JSString* name,
   }
 
   case INVALID_ABI:
-    MOZ_ASSUME_UNREACHABLE("invalid abi");
+    MOZ_CRASH("invalid abi");
   }
 }
 
@@ -5861,7 +5872,7 @@ FunctionType::Call(JSContext* cx,
         // Since we know nothing about the CTypes of the ... arguments,
         // they absolutely must be CData objects already.
         JS_ReportError(cx, "argument %d of type %s is not a CData object",
-                       i, JS_GetTypeName(cx, JS_TypeOfValue(cx, args[i])));
+                       i, InformalValueTypeName(args[i]));
         return false;
       }
       if (!(type = CData::GetCType(obj)) ||
@@ -5943,7 +5954,7 @@ FunctionType::Call(JSContext* cx,
 #define DEFINE_WRAPPED_INT_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_BOOL_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_CHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
-#define DEFINE_JSCHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
+#define DEFINE_CHAR16_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #include "ctypes/typedefs.h"
   default:
     break;
@@ -5951,7 +5962,7 @@ FunctionType::Call(JSContext* cx,
 
   // prepare a JS object from the result
   RootedObject returnType(cx, fninfo->mReturnType);
-  return ConvertToJS(cx, returnType, NullPtr(), returnValue.mData, false, true, vp);
+  return ConvertToJS(cx, returnType, NullPtr(), returnValue.mData, false, true, args.rval());
 }
 
 FunctionInfo*
@@ -6093,7 +6104,7 @@ CClosure::Create(JSContext* cx,
 
     // Allocate a buffer for the return value.
     size_t rvSize = CType::GetSize(fninfo->mReturnType);
-    cinfo->errResult = cx->malloc_(rvSize);
+    cinfo->errResult = result->zone()->pod_malloc<uint8_t>(rvSize);
     if (!cinfo->errResult)
       return nullptr;
 
@@ -6148,10 +6159,10 @@ CClosure::Trace(JSTracer* trc, JSObject* obj)
 
   // Identify our objects to the tracer. (There's no need to identify
   // 'closureObj', since that's us.)
-  JS_CallHeapObjectTracer(trc, &cinfo->typeObj, "typeObj");
-  JS_CallHeapObjectTracer(trc, &cinfo->jsfnObj, "jsfnObj");
+  JS_CallObjectTracer(trc, &cinfo->typeObj, "typeObj");
+  JS_CallObjectTracer(trc, &cinfo->jsfnObj, "jsfnObj");
   if (cinfo->thisObj)
-    JS_CallHeapObjectTracer(trc, &cinfo->thisObj, "thisObj");
+    JS_CallObjectTracer(trc, &cinfo->thisObj, "thisObj");
 }
 
 void
@@ -6210,7 +6221,7 @@ CClosure::ClosureStub(ffi_cif* cif, void* result, void** args, void* userData)
 #define DEFINE_WRAPPED_INT_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_BOOL_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_CHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
-#define DEFINE_JSCHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
+#define DEFINE_CHAR16_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #include "ctypes/typedefs.h"
       rvSize = Align(rvSize, sizeof(ffi_arg));
       break;
@@ -6231,7 +6242,7 @@ CClosure::ClosureStub(ffi_cif* cif, void* result, void** args, void* userData)
     // Convert each argument, and have any CData objects created depend on
     // the existing buffers.
     RootedObject argType(cx, fninfo->mArgTypes[i]);
-    if (!ConvertToJS(cx, argType, NullPtr(), args[i], false, false, argv[i].address()))
+    if (!ConvertToJS(cx, argType, NullPtr(), args[i], false, false, argv[i]))
       return;
   }
 
@@ -6296,7 +6307,7 @@ CClosure::ClosureStub(ffi_cif* cif, void* result, void** args, void* userData)
 #define DEFINE_WRAPPED_INT_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_BOOL_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #define DEFINE_CHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
-#define DEFINE_JSCHAR_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
+#define DEFINE_CHAR16_TYPE(x, y, z) DEFINE_INT_TYPE(x, y, z)
 #include "ctypes/typedefs.h"
   default:
     break;
@@ -6378,7 +6389,7 @@ CData::Create(JSContext* cx,
   } else {
     // Initialize our own buffer.
     size_t size = CType::GetSize(typeObj);
-    data = (char*)cx->malloc_(size);
+    data = dataObj->zone()->pod_malloc<char>(size);
     if (!data) {
       // Report a catchable allocation error.
       JS_ReportAllocationOverflow(cx);
@@ -6467,7 +6478,7 @@ CData::ValueGetter(JSContext* cx, JS::CallArgs args)
 
   // Convert the value to a primitive; do not create a new CData object.
   RootedObject ctype(cx, GetCType(obj));
-  return ConvertToJS(cx, ctype, NullPtr(), GetData(obj), true, false, args.rval().address());
+  return ConvertToJS(cx, ctype, NullPtr(), GetData(obj), true, false, args.rval());
 }
 
 bool
@@ -6641,7 +6652,7 @@ ReadStringCommon(JSContext* cx, InflateUTF8Method inflateUTF8, unsigned argc, js
     size_t length = strnlen(bytes, maxLength);
 
     // Determine the length.
-    jschar *dst = inflateUTF8(cx, JS::UTF8Chars(bytes, length), &length).get();
+    char16_t *dst = inflateUTF8(cx, JS::UTF8Chars(bytes, length), &length).get();
     if (!dst)
       return false;
 
@@ -6652,8 +6663,8 @@ ReadStringCommon(JSContext* cx, InflateUTF8Method inflateUTF8, unsigned argc, js
   case TYPE_uint16_t:
   case TYPE_short:
   case TYPE_unsigned_short:
-  case TYPE_jschar: {
-    jschar* chars = static_cast<jschar*>(data);
+  case TYPE_char16_t: {
+    char16_t* chars = static_cast<char16_t*>(data);
     size_t length = strnlen(chars, maxLength);
     result = JS_NewUCStringCopyN(cx, chars, length);
     break;
@@ -6833,8 +6844,8 @@ CDataFinalizer::Methods::ToString(JSContext *cx, unsigned argc, jsval *vp)
     if (!strMessage) {
       return false;
     }
-  } else if (!CDataFinalizer::GetValue(cx, objThis, value.address())) {
-    MOZ_ASSUME_UNREACHABLE("Could not convert an empty CDataFinalizer");
+  } else if (!CDataFinalizer::GetValue(cx, objThis, &value)) {
+    MOZ_CRASH("Could not convert an empty CDataFinalizer");
   } else {
     strMessage = ToString(cx, value);
     if (!strMessage) {
@@ -6881,7 +6892,7 @@ CDataFinalizer::GetCData(JSContext *cx, JSObject *obj)
     return nullptr;
   }
   RootedValue val(cx);
-  if (!CDataFinalizer::GetValue(cx, obj, val.address()) || val.isPrimitive()) {
+  if (!CDataFinalizer::GetValue(cx, obj, &val) || val.isPrimitive()) {
     JS_ReportError(cx, "Empty CDataFinalizer");
     return nullptr;
   }
@@ -6889,7 +6900,7 @@ CDataFinalizer::GetCData(JSContext *cx, JSObject *obj)
 }
 
 bool
-CDataFinalizer::GetValue(JSContext *cx, JSObject *obj, jsval *aResult)
+CDataFinalizer::GetValue(JSContext *cx, JSObject *obj, MutableHandleValue aResult)
 {
   MOZ_ASSERT(IsCDataFinalizer(obj));
 
@@ -6902,7 +6913,7 @@ CDataFinalizer::GetValue(JSContext *cx, JSObject *obj, jsval *aResult)
   }
 
   RootedObject ctype(cx, GetCType(cx, obj));
-  return ConvertToJS(cx, ctype, /*parent*/NullPtr(), p -> cargs, false, true, aResult);
+  return ConvertToJS(cx, ctype, /*parent*/NullPtr(), p->cargs, false, true, aResult);
 }
 
 /*
@@ -7045,7 +7056,7 @@ CDataFinalizer::Construct(JSContext* cx, unsigned argc, jsval *vp)
       objBestArgType = CData::GetCType(objData);
       size_t sizeBestArg;
       if (!CType::GetSafeSize(objBestArgType, &sizeBestArg)) {
-        MOZ_ASSUME_UNREACHABLE("object with unknown size");
+        MOZ_CRASH("object with unknown size");
       }
       if (sizeBestArg != sizeArg) {
         return TypeError(cx, "(an object with the same size as that expected by the C finalization function)", valData);
@@ -7121,7 +7132,8 @@ CDataFinalizer::CallFinalizer(CDataFinalizer::Private *p,
   SetLastError(0);
 #endif // defined(XP_WIN)
 
-  ffi_call(&p->CIF, FFI_FN(p->code), p->rvalue, &p->cargs);
+  void* args[1] = {p->cargs};
+  ffi_call(&p->CIF, FFI_FN(p->code), p->rvalue, args);
 
   if (errnoStatus) {
     *errnoStatus = errno;
@@ -7172,7 +7184,7 @@ CDataFinalizer::Methods::Forget(JSContext* cx, unsigned argc, jsval *vp)
 
   RootedValue valJSData(cx);
   RootedObject ctype(cx, GetCType(cx, obj));
-  if (!ConvertToJS(cx, ctype, NullPtr(), p->cargs, false, true, valJSData.address())) {
+  if (!ConvertToJS(cx, ctype, NullPtr(), p->cargs, false, true, &valJSData)) {
     JS_ReportError(cx, "CDataFinalizer value cannot be represented");
     return false;
   }
@@ -7249,7 +7261,7 @@ CDataFinalizer::Methods::Dispose(JSContext* cx, unsigned argc, jsval *vp)
   JS_SetReservedSlot(objCTypes, SLOT_LASTERROR, INT_TO_JSVAL(lastErrorStatus));
 #endif // defined(XP_WIN)
 
-  if (ConvertToJS(cx, resultType, NullPtr(), p->rvalue, false, true, result.address())) {
+  if (ConvertToJS(cx, resultType, NullPtr(), p->rvalue, false, true, &result)) {
     CDataFinalizer::Cleanup(p, obj);
     args.rval().set(result);
     return true;

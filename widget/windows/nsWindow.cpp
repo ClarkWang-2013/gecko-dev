@@ -1538,7 +1538,7 @@ nsWindow::BeginResizeDrag(WidgetGUIEvent* aEvent,
 {
   NS_ENSURE_ARG_POINTER(aEvent);
 
-  if (aEvent->eventStructType != NS_MOUSE_EVENT) {
+  if (aEvent->mClass != eMouseEventClass) {
     // you can only begin a resize drag with a mouse event
     return NS_ERROR_INVALID_ARG;
   }
@@ -4000,7 +4000,7 @@ bool nsWindow::DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
   pluginEvent.wParam = wParam;     // plugins NEED raw OS event flags!
   pluginEvent.lParam = lParam;
 
-  event.pluginEvent = (void *)&pluginEvent;
+  event.mPluginEvent.Copy(pluginEvent);
 
   // call the event callback
   if (mWidgetListener) {
@@ -4341,6 +4341,8 @@ inline static mozilla::HangMonitor::ActivityType ActivityTypeForMessage(UINT msg
 // and http://msdn.microsoft.com/en-us/library/ms633573%28VS.85%29.aspx
 LRESULT CALLBACK nsWindow::WindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+  MOZ_RELEASE_ASSERT(!ipc::ProcessingUrgentMessages());
+
   HangMonitor::NotifyActivity(ActivityTypeForMessage(msg));
 
   return mozilla::CallWindowProcCrashProtected(WindowProcInternal, hWnd, msg, wParam, lParam);

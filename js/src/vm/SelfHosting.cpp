@@ -15,13 +15,16 @@
 #include "selfhosted.out.h"
 
 #include "builtin/Intl.h"
+#include "builtin/Object.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/TypedObject.h"
+#include "builtin/WeakSetObject.h"
 #include "gc/Marking.h"
 #include "vm/Compression.h"
 #include "vm/ForkJoin.h"
 #include "vm/Interpreter.h"
 #include "vm/String.h"
+#include "vm/TypedArrayCommon.h"
 
 #include "jsfuninlines.h"
 #include "jsscriptinlines.h"
@@ -112,6 +115,14 @@ intrinsic_IsConstructor(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static bool
+intrinsic_OwnPropertyKeys(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return GetOwnPropertyKeys(cx, args,
+                              JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS);
+}
+
 bool
 js::intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -120,8 +131,7 @@ js::intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp)
     uint32_t errorNumber = args[0].toInt32();
 
 #ifdef DEBUG
-    const JSErrorFormatString *efs =
-        js_GetLocalizedErrorMessage(cx, nullptr, nullptr, errorNumber);
+    const JSErrorFormatString *efs = js_GetErrorMessage(nullptr, errorNumber);
     JS_ASSERT(efs->argCount == args.length() - 1);
 #endif
 
@@ -400,7 +410,7 @@ js::intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp)
     uint32_t length = args[0].toInt32();
 
     // Make a new buffer and initialize it up to length.
-    RootedObject buffer(cx, NewDenseAllocatedArray(cx, length));
+    RootedObject buffer(cx, NewDenseFullyAllocatedArray(cx, length));
     if (!buffer)
         return false;
 
@@ -460,9 +470,9 @@ js::intrinsic_UnsafePutElements(JSContext *cx, unsigned argc, Value *vp)
         RootedObject arrobj(cx, &args[arri].toObject());
         uint32_t idx = args[idxi].toInt32();
 
-        if (arrobj->is<TypedArrayObject>() || arrobj->is<TypedObject>()) {
-            JS_ASSERT(!arrobj->is<TypedArrayObject>() || idx < arrobj->as<TypedArrayObject>().length());
-            JS_ASSERT(!arrobj->is<TypedObject>() || idx < uint32_t(arrobj->as<TypedObject>().length()));
+        if (IsAnyTypedArray(arrobj.get()) || arrobj->is<TypedObject>()) {
+            JS_ASSERT_IF(IsAnyTypedArray(arrobj.get()), idx < AnyTypedArrayLength(arrobj.get()));
+            JS_ASSERT_IF(arrobj->is<TypedObject>(), idx < uint32_t(arrobj->as<TypedObject>().length()));
             RootedValue tmp(cx, args[elemi]);
             // XXX: Always non-strict.
             if (!JSObject::setElement(cx, arrobj, arrobj, idx, &tmp, false))
@@ -642,6 +652,17 @@ intrinsic_IsStringIterator(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+static bool
+intrinsic_IsWeakSet(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+
+    args.rval().setBoolean(args[0].toObject().is<WeakSetObject>());
+    return true;
+}
+
 /*
  * ParallelTestsShouldPass(): Returns false if we are running in a
  * mode (such as --ion-eager) that is known to cause additional
@@ -671,12 +692,8 @@ bool
 js::intrinsic_ShouldForceSequential(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-#ifdef JS_THREADSAFE
     args.rval().setBoolean(cx->runtime()->forkJoinWarmup ||
                            InParallelSection());
-#else
-    args.rval().setBoolean(true);
-#endif
     return true;
 }
 
@@ -774,6 +791,18 @@ intrinsic_RuntimeDefaultLocale(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+bool
+js::intrinsic_IsConstructing(JSContext *cx, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 0);
+
+    ScriptFrameIter iter(cx);
+    bool isConstructing = iter.isConstructing();
+    args.rval().setBoolean(isConstructing);
+    return true;
+}
+
 static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToObject",                intrinsic_ToObject,                1,0),
     JS_FN("IsObject",                intrinsic_IsObject,                1,0),
@@ -781,10 +810,12 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ToString",                intrinsic_ToString,                1,0),
     JS_FN("IsCallable",              intrinsic_IsCallable,              1,0),
     JS_FN("IsConstructor",           intrinsic_IsConstructor,           1,0),
+    JS_FN("OwnPropertyKeys",         intrinsic_OwnPropertyKeys,         1,0),
     JS_FN("ThrowError",              intrinsic_ThrowError,              4,0),
     JS_FN("AssertionFailed",         intrinsic_AssertionFailed,         1,0),
     JS_FN("SetScriptHints",          intrinsic_SetScriptHints,          2,0),
     JS_FN("MakeConstructible",       intrinsic_MakeConstructible,       1,0),
+    JS_FN("_IsConstructing",         intrinsic_IsConstructing,          0,0),
     JS_FN("DecompileArg",            intrinsic_DecompileArg,            2,0),
     JS_FN("RuntimeDefaultLocale",    intrinsic_RuntimeDefaultLocale,    0,0),
 
@@ -802,6 +833,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("NewStringIterator",       intrinsic_NewStringIterator,       0,0),
     JS_FN("IsStringIterator",        intrinsic_IsStringIterator,        1,0),
+
+    JS_FN("IsWeakSet",               intrinsic_IsWeakSet,               1,0),
 
     JS_FN("ForkJoin",                intrinsic_ForkJoin,                5,0),
     JS_FN("ForkJoinNumWorkers",      intrinsic_ForkJoinNumWorkers,      0,0),
@@ -967,10 +1000,6 @@ JSRuntime::initSelfHosting(JSContext *cx)
      */
     JS::AutoDisableGenerationalGC disable(cx->runtime());
 
-    bool receivesDefaultObject = !cx->options().noDefaultCompartmentObject();
-    RootedObject savedGlobal(cx, receivesDefaultObject
-                                 ? js::DefaultObjectForContextOrNull(cx)
-                                 : nullptr);
     JS::CompartmentOptions compartmentOptions;
     compartmentOptions.setDiscardSource(true);
     if (!(selfHostingGlobal_ = JS_NewGlobalObject(cx, &self_hosting_global_class,
@@ -978,8 +1007,6 @@ JSRuntime::initSelfHosting(JSContext *cx)
                                                   compartmentOptions)))
         return false;
     JSAutoCompartment ac(cx, selfHostingGlobal_);
-    if (receivesDefaultObject)
-        js::SetDefaultObjectForContext(cx, selfHostingGlobal_);
     Rooted<GlobalObject*> shg(cx, &selfHostingGlobal_->as<GlobalObject>());
     selfHostingGlobal_->compartment()->isSelfHosting = true;
     selfHostingGlobal_->compartment()->isSystem = true;
@@ -1004,7 +1031,7 @@ JSRuntime::initSelfHosting(JSContext *cx)
      * early in the startup process for any other reporter to be registered
      * and we don't want errors in self-hosted code to be silently swallowed.
      */
-    JSErrorReporter oldReporter = JS_SetErrorReporter(cx, selfHosting_ErrorReporter);
+    JSErrorReporter oldReporter = JS_SetErrorReporter(cx->runtime(), selfHosting_ErrorReporter);
     RootedValue rv(cx);
     bool ok = false;
 
@@ -1016,24 +1043,18 @@ JSRuntime::initSelfHosting(JSContext *cx)
     } else {
         uint32_t srcLen = GetRawScriptsSize();
 
-#ifdef USE_ZLIB
         const unsigned char *compressed = compressedSources;
         uint32_t compressedLen = GetCompressedSize();
-        ScopedJSFreePtr<char> src(reinterpret_cast<char *>(cx->malloc_(srcLen)));
+        ScopedJSFreePtr<char> src(selfHostingGlobal_->zone()->pod_malloc<char>(srcLen));
         if (!src || !DecompressString(compressed, compressedLen,
                                       reinterpret_cast<unsigned char *>(src.get()), srcLen))
         {
             return false;
         }
-#else
-        const char *src = rawSources;
-#endif
 
         ok = Evaluate(cx, shg, options, src, srcLen, &rv);
     }
-    JS_SetErrorReporter(cx, oldReporter);
-    if (receivesDefaultObject)
-        js::SetDefaultObjectForContext(cx, savedGlobal);
+    JS_SetErrorReporter(cx->runtime(), oldReporter);
     return ok;
 }
 
@@ -1205,7 +1226,7 @@ CloneObject(JSContext *cx, HandleObject selfHostedObject)
     } else {
         JS_ASSERT(selfHostedObject->isNative());
         clone = NewObjectWithGivenProto(cx, selfHostedObject->getClass(), TaggedProto(nullptr), cx->global(),
-                                        selfHostedObject->tenuredGetAllocKind(),
+                                        selfHostedObject->asTenured()->getAllocKind(),
                                         SingletonObject);
     }
     if (!clone)

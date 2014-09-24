@@ -265,44 +265,28 @@ CodeGeneratorX86::visitAsmJSUInt32ToFloat32(LAsmJSUInt32ToFloat32 *lir)
     return true;
 }
 
-// Load a NaN or zero into a register for an out of bounds AsmJS or static
-// typed array load.
-class jit::OutOfLineLoadTypedArrayOutOfBounds : public OutOfLineCodeBase<CodeGeneratorX86>
-{
-    AnyRegister dest_;
-    bool isFloat32Load_;
-  public:
-    OutOfLineLoadTypedArrayOutOfBounds(AnyRegister dest, bool isFloat32Load)
-      : dest_(dest), isFloat32Load_(isFloat32Load)
-    {}
-
-    AnyRegister dest() const { return dest_; }
-    bool isFloat32Load() const { return isFloat32Load_; }
-    bool accept(CodeGeneratorX86 *codegen) { return codegen->visitOutOfLineLoadTypedArrayOutOfBounds(this); }
-};
-
 template<typename T>
 void
-CodeGeneratorX86::loadViewTypeElement(ArrayBufferView::ViewType vt, const T &srcAddr,
+CodeGeneratorX86::loadViewTypeElement(Scalar::Type vt, const T &srcAddr,
                                       const LDefinition *out)
 {
     switch (vt) {
-      case ArrayBufferView::TYPE_INT8:    masm.movsblWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_UINT8_CLAMPED:
-      case ArrayBufferView::TYPE_UINT8:   masm.movzblWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_INT16:   masm.movswlWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_UINT16:  masm.movzwlWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_INT32:
-      case ArrayBufferView::TYPE_UINT32:  masm.movlWithPatch(srcAddr, ToRegister(out)); break;
-      case ArrayBufferView::TYPE_FLOAT32: masm.movssWithPatch(srcAddr, ToFloatRegister(out)); break;
-      case ArrayBufferView::TYPE_FLOAT64: masm.movsdWithPatch(srcAddr, ToFloatRegister(out)); break;
-      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
+      case Scalar::Int8:    masm.movsblWithPatch(srcAddr, ToRegister(out)); break;
+      case Scalar::Uint8Clamped:
+      case Scalar::Uint8:   masm.movzblWithPatch(srcAddr, ToRegister(out)); break;
+      case Scalar::Int16:   masm.movswlWithPatch(srcAddr, ToRegister(out)); break;
+      case Scalar::Uint16:  masm.movzwlWithPatch(srcAddr, ToRegister(out)); break;
+      case Scalar::Int32:
+      case Scalar::Uint32:  masm.movlWithPatch(srcAddr, ToRegister(out)); break;
+      case Scalar::Float32: masm.movssWithPatch(srcAddr, ToFloatRegister(out)); break;
+      case Scalar::Float64: masm.movsdWithPatch(srcAddr, ToFloatRegister(out)); break;
+      default: MOZ_CRASH("unexpected array type");
     }
 }
 
 template<typename T>
 bool
-CodeGeneratorX86::loadAndNoteViewTypeElement(ArrayBufferView::ViewType vt, const T &srcAddr,
+CodeGeneratorX86::loadAndNoteViewTypeElement(Scalar::Type vt, const T &srcAddr,
                                              const LDefinition *out)
 {
     uint32_t before = masm.size();
@@ -316,17 +300,17 @@ bool
 CodeGeneratorX86::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic *ins)
 {
     const MLoadTypedArrayElementStatic *mir = ins->mir();
-    ArrayBufferView::ViewType vt = mir->viewType();
-    JS_ASSERT_IF(vt == ArrayBufferView::TYPE_FLOAT32, mir->type() == MIRType_Float32);
+    Scalar::Type vt = mir->viewType();
+    JS_ASSERT_IF(vt == Scalar::Float32, mir->type() == MIRType_Float32);
 
     Register ptr = ToRegister(ins->ptr());
     const LDefinition *out = ins->output();
 
     OutOfLineLoadTypedArrayOutOfBounds *ool = nullptr;
-    bool isFloat32Load = (vt == ArrayBufferView::TYPE_FLOAT32);
+    bool isFloat32Load = (vt == Scalar::Float32);
     if (!mir->fallible()) {
         ool = new(alloc()) OutOfLineLoadTypedArrayOutOfBounds(ToAnyRegister(out), isFloat32Load);
-        if (!addOutOfLineCode(ool))
+        if (!addOutOfLineCode(ool, ins->mir()))
             return false;
     }
 
@@ -338,9 +322,9 @@ CodeGeneratorX86::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic 
 
     Address srcAddr(ptr, (int32_t) mir->base());
     loadViewTypeElement(vt, srcAddr, out);
-    if (vt == ArrayBufferView::TYPE_FLOAT64)
+    if (vt == Scalar::Float64)
         masm.canonicalizeDouble(ToFloatRegister(out));
-    if (vt == ArrayBufferView::TYPE_FLOAT32)
+    if (vt == Scalar::Float32)
         masm.canonicalizeFloat(ToFloatRegister(out));
     if (ool)
         masm.bind(ool->rejoin());
@@ -348,10 +332,37 @@ CodeGeneratorX86::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic 
 }
 
 bool
+CodeGeneratorX86::visitAsmJSCall(LAsmJSCall *ins)
+{
+    MAsmJSCall *mir = ins->mir();
+
+    emitAsmJSCall(ins);
+
+    if (IsFloatingPointType(mir->type()) && mir->callee().which() == MAsmJSCall::Callee::Builtin) {
+        if (mir->type() == MIRType_Float32) {
+            masm.reserveStack(sizeof(float));
+            Operand op(esp, 0);
+            masm.fstp32(op);
+            masm.loadFloat32(op, ReturnFloat32Reg);
+            masm.freeStack(sizeof(float));
+        } else {
+            JS_ASSERT(mir->type() == MIRType_Double);
+            masm.reserveStack(sizeof(double));
+            Operand op(esp, 0);
+            masm.fstp(op);
+            masm.loadDouble(op, ReturnDoubleReg);
+            masm.freeStack(sizeof(double));
+        }
+    }
+
+    return true;
+}
+
+bool
 CodeGeneratorX86::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
 {
     const MAsmJSLoadHeap *mir = ins->mir();
-    ArrayBufferView::ViewType vt = mir->viewType();
+    Scalar::Type vt = mir->viewType();
     const LAllocation *ptr = ins->ptr();
     const LDefinition *out = ins->output();
 
@@ -370,9 +381,9 @@ CodeGeneratorX86::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
     if (mir->skipBoundsCheck())
         return loadAndNoteViewTypeElement(vt, srcAddr, out);
 
-    bool isFloat32Load = vt == ArrayBufferView::TYPE_FLOAT32;
+    bool isFloat32Load = vt == Scalar::Float32;
     OutOfLineLoadTypedArrayOutOfBounds *ool = new(alloc()) OutOfLineLoadTypedArrayOutOfBounds(ToAnyRegister(out), isFloat32Load);
-    if (!addOutOfLineCode(ool))
+    if (!addOutOfLineCode(ool, mir))
         return false;
 
     CodeOffsetLabel cmp = masm.cmplWithPatch(ptrReg, Imm32(0));
@@ -386,44 +397,28 @@ CodeGeneratorX86::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
     return true;
 }
 
-bool
-CodeGeneratorX86::visitOutOfLineLoadTypedArrayOutOfBounds(OutOfLineLoadTypedArrayOutOfBounds *ool)
-{
-    if (ool->dest().isFloat()) {
-        if (ool->isFloat32Load())
-            masm.loadConstantFloat32(float(GenericNaN()), ool->dest().fpu());
-        else
-            masm.loadConstantDouble(GenericNaN(), ool->dest().fpu());
-    } else {
-        Register destReg = ool->dest().gpr();
-        masm.mov(ImmWord(0), destReg);
-    }
-    masm.jmp(ool->rejoin());
-    return true;
-}
-
 template<typename T>
 void
-CodeGeneratorX86::storeViewTypeElement(ArrayBufferView::ViewType vt, const LAllocation *value,
+CodeGeneratorX86::storeViewTypeElement(Scalar::Type vt, const LAllocation *value,
                                        const T &dstAddr)
 {
     switch (vt) {
-      case ArrayBufferView::TYPE_INT8:
-      case ArrayBufferView::TYPE_UINT8_CLAMPED:
-      case ArrayBufferView::TYPE_UINT8:   masm.movbWithPatch(ToRegister(value), dstAddr); break;
-      case ArrayBufferView::TYPE_INT16:
-      case ArrayBufferView::TYPE_UINT16:  masm.movwWithPatch(ToRegister(value), dstAddr); break;
-      case ArrayBufferView::TYPE_INT32:
-      case ArrayBufferView::TYPE_UINT32:  masm.movlWithPatch(ToRegister(value), dstAddr); break;
-      case ArrayBufferView::TYPE_FLOAT32: masm.movssWithPatch(ToFloatRegister(value), dstAddr); break;
-      case ArrayBufferView::TYPE_FLOAT64: masm.movsdWithPatch(ToFloatRegister(value), dstAddr); break;
-      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
+      case Scalar::Int8:
+      case Scalar::Uint8Clamped:
+      case Scalar::Uint8:   masm.movbWithPatch(ToRegister(value), dstAddr); break;
+      case Scalar::Int16:
+      case Scalar::Uint16:  masm.movwWithPatch(ToRegister(value), dstAddr); break;
+      case Scalar::Int32:
+      case Scalar::Uint32:  masm.movlWithPatch(ToRegister(value), dstAddr); break;
+      case Scalar::Float32: masm.movssWithPatch(ToFloatRegister(value), dstAddr); break;
+      case Scalar::Float64: masm.movsdWithPatch(ToFloatRegister(value), dstAddr); break;
+      default: MOZ_CRASH("unexpected array type");
     }
 }
 
 template<typename T>
 void
-CodeGeneratorX86::storeAndNoteViewTypeElement(ArrayBufferView::ViewType vt, const LAllocation *value,
+CodeGeneratorX86::storeAndNoteViewTypeElement(Scalar::Type vt, const LAllocation *value,
                                               const T &dstAddr)
 {
     uint32_t before = masm.size();
@@ -436,7 +431,7 @@ bool
 CodeGeneratorX86::visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic *ins)
 {
     MStoreTypedArrayElementStatic *mir = ins->mir();
-    ArrayBufferView::ViewType vt = mir->viewType();
+    Scalar::Type vt = mir->viewType();
 
     Register ptr = ToRegister(ins->ptr());
     const LAllocation *value = ins->value();
@@ -455,7 +450,7 @@ bool
 CodeGeneratorX86::visitAsmJSStoreHeap(LAsmJSStoreHeap *ins)
 {
     MAsmJSStoreHeap *mir = ins->mir();
-    ArrayBufferView::ViewType vt = mir->viewType();
+    Scalar::Type vt = mir->viewType();
     const LAllocation *value = ins->value();
     const LAllocation *ptr = ins->ptr();
 
@@ -494,15 +489,30 @@ CodeGeneratorX86::visitAsmJSLoadGlobalVar(LAsmJSLoadGlobalVar *ins)
 {
     MAsmJSLoadGlobalVar *mir = ins->mir();
     MIRType type = mir->type();
-    JS_ASSERT(IsNumberType(type));
+    JS_ASSERT(IsNumberType(type) || IsSimdType(type));
 
     CodeOffsetLabel label;
-    if (type == MIRType_Int32)
+    switch (type) {
+      case MIRType_Int32:
         label = masm.movlWithPatch(PatchedAbsoluteAddress(), ToRegister(ins->output()));
-    else if (type == MIRType_Float32)
+        break;
+      case MIRType_Float32:
         label = masm.movssWithPatch(PatchedAbsoluteAddress(), ToFloatRegister(ins->output()));
-    else
+        break;
+      case MIRType_Double:
         label = masm.movsdWithPatch(PatchedAbsoluteAddress(), ToFloatRegister(ins->output()));
+        break;
+      // Aligned access: code is aligned on PageSize + there is padding
+      // before the global data section.
+      case MIRType_Int32x4:
+        label = masm.movdqaWithPatch(PatchedAbsoluteAddress(), ToFloatRegister(ins->output()));
+        break;
+      case MIRType_Float32x4:
+        label = masm.movapsWithPatch(PatchedAbsoluteAddress(), ToFloatRegister(ins->output()));
+        break;
+      default:
+        MOZ_CRASH("unexpected type in visitAsmJSLoadGlobalVar");
+    }
     masm.append(AsmJSGlobalAccess(label, mir->globalDataOffset()));
     return true;
 }
@@ -513,15 +523,30 @@ CodeGeneratorX86::visitAsmJSStoreGlobalVar(LAsmJSStoreGlobalVar *ins)
     MAsmJSStoreGlobalVar *mir = ins->mir();
 
     MIRType type = mir->value()->type();
-    JS_ASSERT(IsNumberType(type));
+    JS_ASSERT(IsNumberType(type) || IsSimdType(type));
 
     CodeOffsetLabel label;
-    if (type == MIRType_Int32)
+    switch (type) {
+      case MIRType_Int32:
         label = masm.movlWithPatch(ToRegister(ins->value()), PatchedAbsoluteAddress());
-    else if (type == MIRType_Float32)
+        break;
+      case MIRType_Float32:
         label = masm.movssWithPatch(ToFloatRegister(ins->value()), PatchedAbsoluteAddress());
-    else
+        break;
+      case MIRType_Double:
         label = masm.movsdWithPatch(ToFloatRegister(ins->value()), PatchedAbsoluteAddress());
+        break;
+      // Aligned access: code is aligned on PageSize + there is padding
+      // before the global data section.
+      case MIRType_Int32x4:
+        label = masm.movdqaWithPatch(ToFloatRegister(ins->value()), PatchedAbsoluteAddress());
+        break;
+      case MIRType_Float32x4:
+        label = masm.movapsWithPatch(ToFloatRegister(ins->value()), PatchedAbsoluteAddress());
+        break;
+      default:
+        MOZ_CRASH("unexpected type in visitAsmJSStoreGlobalVar");
+    }
     masm.append(AsmJSGlobalAccess(label, mir->globalDataOffset()));
     return true;
 }
@@ -550,33 +575,11 @@ CodeGeneratorX86::visitAsmJSLoadFFIFunc(LAsmJSLoadFFIFunc *ins)
 }
 
 void
-CodeGeneratorX86::postAsmJSCall(LAsmJSCall *lir)
-{
-    MAsmJSCall *mir = lir->mir();
-    if (!IsFloatingPointType(mir->type()) || mir->callee().which() != MAsmJSCall::Callee::Builtin)
-        return;
-
-    if (mir->type() == MIRType_Float32) {
-        masm.reserveStack(sizeof(float));
-        Operand op(esp, 0);
-        masm.fstp32(op);
-        masm.loadFloat32(op, ReturnFloat32Reg);
-        masm.freeStack(sizeof(float));
-    } else {
-        masm.reserveStack(sizeof(double));
-        Operand op(esp, 0);
-        masm.fstp(op);
-        masm.loadDouble(op, ReturnDoubleReg);
-        masm.freeStack(sizeof(double));
-    }
-}
-
-void
 DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addState)
 {
     // On x86, where there is no general purpose scratch register available,
     // child cache classes must manually specify a dispatch scratch register.
-    MOZ_ASSUME_UNREACHABLE("x86 needs manual assignment of dispatchScratch");
+    MOZ_CRASH("x86 needs manual assignment of dispatchScratch");
 }
 
 void
@@ -673,7 +676,7 @@ CodeGeneratorX86::visitTruncateDToInt32(LTruncateDToInt32 *ins)
     Register output = ToRegister(ins->output());
 
     OutOfLineTruncate *ool = new(alloc()) OutOfLineTruncate(ins);
-    if (!addOutOfLineCode(ool))
+    if (!addOutOfLineCode(ool, ins->mir()))
         return false;
 
     masm.branchTruncateDouble(input, output, ool->entry());
@@ -688,7 +691,7 @@ CodeGeneratorX86::visitTruncateFToInt32(LTruncateFToInt32 *ins)
     Register output = ToRegister(ins->output());
 
     OutOfLineTruncateFloat32 *ool = new(alloc()) OutOfLineTruncateFloat32(ins);
-    if (!addOutOfLineCode(ool))
+    if (!addOutOfLineCode(ool, ins->mir()))
         return false;
 
     masm.branchTruncateFloat32(input, output, ool->entry());

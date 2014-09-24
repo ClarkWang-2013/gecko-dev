@@ -37,6 +37,7 @@
 #include "nsDataHashtable.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/dom/bluetooth/BluetoothTypes.h"
 #include "mozilla/Hal.h"
 #include "mozilla/ipc/UnixSocket.h"
@@ -370,6 +371,7 @@ DispatchToBtThread(nsIRunnable* aRunnable)
     sBluetoothThread = new LazyIdleThread(BT_LAZY_THREAD_TIMEOUT_MS,
                                           NS_LITERAL_CSTRING("BluetoothDBusService"),
                                           LazyIdleThread::ManualShutdown);
+    ClearOnShutdown(&sBluetoothThread);
   }
   return sBluetoothThread->Dispatch(aRunnable, NS_DISPATCH_NORMAL);
 }
@@ -2814,6 +2816,13 @@ BluetoothDBusService::GetPairedDevicePropertiesInternal(
   return NS_OK;
 }
 
+nsresult
+FetchUuidsInternal(const nsAString& aDeviceAddress,
+                   BluetoothReplyRunnable* aRunnable)
+{
+  return NS_OK;
+}
+
 class SetPropertyTask : public Task
 {
 public:
@@ -3188,7 +3197,7 @@ private:
   nsRefPtr<BluetoothReplyRunnable> mRunnable;
 };
 
-bool
+void
 BluetoothDBusService::SetPinCodeInternal(const nsAString& aDeviceAddress,
                                          const nsAString& aPinCode,
                                          BluetoothReplyRunnable* aRunnable)
@@ -3197,8 +3206,6 @@ BluetoothDBusService::SetPinCodeInternal(const nsAString& aDeviceAddress,
                                   NS_ConvertUTF16toUTF8(aPinCode),
                                   aRunnable);
   DispatchToDBusThread(task);
-
-  return true;
 }
 
 class SetPasskeyTask : public Task
@@ -3264,7 +3271,7 @@ private:
   nsRefPtr<BluetoothReplyRunnable> mRunnable;
 };
 
-bool
+void
 BluetoothDBusService::SetPasskeyInternal(const nsAString& aDeviceAddress,
                                          uint32_t aPasskey,
                                          BluetoothReplyRunnable* aRunnable)
@@ -3273,12 +3280,10 @@ BluetoothDBusService::SetPasskeyInternal(const nsAString& aDeviceAddress,
                                   aPasskey,
                                   aRunnable);
   DispatchToDBusThread(task);
-
-  return true;
 }
 
 
-bool
+void
 BluetoothDBusService::SetPairingConfirmationInternal(
                                               const nsAString& aDeviceAddress,
                                               bool aConfirm,
@@ -3290,8 +3295,6 @@ BluetoothDBusService::SetPairingConfirmationInternal(
                                               aConfirm,
                                               aRunnable);
   DispatchToDBusThread(task);
-
-  return true;
 }
 
 static void

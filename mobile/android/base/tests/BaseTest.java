@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.HashSet;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -77,9 +78,9 @@ abstract class BaseTest extends BaseRobocopTest {
     protected String mProfile;
     public Device mDevice;
     protected DatabaseHelper mDatabaseHelper;
-    protected StringHelper mStringHelper;
     protected int mScreenMidWidth;
     protected int mScreenMidHeight;
+    private final HashSet<Integer> mKnownTabIDs = new HashSet<Integer>();
 
     protected void blockForGeckoReady() {
         try {
@@ -98,12 +99,12 @@ abstract class BaseTest extends BaseRobocopTest {
         super.setUp();
 
         // Create the intent to be used with all the important arguments.
-        mBaseUrl = ((String) mConfig.get("host")).replaceAll("(/$)", "");
-        mRawBaseUrl = ((String) mConfig.get("rawhost")).replaceAll("(/$)", "");
+        mBaseUrl = mConfig.get("host").replaceAll("(/$)", "");
+        mRawBaseUrl = mConfig.get("rawhost").replaceAll("(/$)", "");
         Intent i = new Intent(Intent.ACTION_MAIN);
-        mProfile = (String) mConfig.get("profile");
+        mProfile = mConfig.get("profile");
         i.putExtra("args", "-no-remote -profile " + mProfile);
-        String envString = (String) mConfig.get("envvars");
+        String envString = mConfig.get("envvars");
         if (envString != "") {
             String[] envStrings = envString.split(",");
             for (int iter = 0; iter < envStrings.length; iter++) {
@@ -120,7 +121,6 @@ abstract class BaseTest extends BaseRobocopTest {
         mActions = new FennecNativeActions(mActivity, mSolo, getInstrumentation(), mAsserter);
         mDevice = new Device();
         mDatabaseHelper = new DatabaseHelper(mActivity, mAsserter);
-        mStringHelper = new StringHelper();
     }
 
     protected void initializeProfile() {
@@ -273,8 +273,8 @@ abstract class BaseTest extends BaseRobocopTest {
     }
 
     class VerifyTextViewText implements Condition {
-        private TextView mTextView;
-        private String mExpected;
+        private final TextView mTextView;
+        private final String mExpected;
         public VerifyTextViewText(TextView textView, String expected) {
             mTextView = textView;
             mExpected = expected;
@@ -302,7 +302,7 @@ abstract class BaseTest extends BaseRobocopTest {
         boolean result = mSolo.waitForCondition(condition, timeout);
         if (!result) {
             // Log timeout failure for diagnostic purposes only; a failed wait may
-            // be normal and does not necessarily warrant a test asssertion/failure.
+            // be normal and does not necessarily warrant a test assertion/failure.
             mAsserter.dumpLog("waitForCondition timeout after " + timeout + " ms.");
         }
         return result;
@@ -554,9 +554,25 @@ abstract class BaseTest extends BaseRobocopTest {
             }
         }, MAX_WAIT_MS);
         mAsserter.ok(success, "waiting for add tab view", "add tab view available");
-        Actions.EventExpecter pageShowExpecter = mActions.expectGeckoEvent("Content:PageShow");
+        final Actions.RepeatedEventExpecter pageShowExpecter = mActions.expectGeckoEvent("Content:PageShow");
         mSolo.clickOnView(mSolo.getView(R.id.add_tab));
-        pageShowExpecter.blockForEvent();
+        // Wait until we get a PageShow event for a new tab ID
+        for(;;) {
+            try {
+                JSONObject data = new JSONObject(pageShowExpecter.blockForEventData());
+                int tabID = data.getInt("tabID");
+                if (tabID == 0) {
+                    mAsserter.dumpLog("addTab ignoring PageShow for tab 0");
+                    continue;
+                }
+                if (!mKnownTabIDs.contains(tabID)) {
+                    mKnownTabIDs.add(tabID);
+                    break;
+                }
+            } catch(JSONException e) {
+                mAsserter.ok(false, "Exception in addTab", getStackTraceString(e));
+            }
+        }
         pageShowExpecter.unregisterListener();
     }
 
@@ -565,6 +581,12 @@ abstract class BaseTest extends BaseRobocopTest {
 
         // Adding a new tab opens about:home, so now we just need to load the url in it.
         inputAndLoadUrl(url);
+    }
+
+    public void closeAddedTabs() {
+        for(int tabID : mKnownTabIDs) {
+            closeTab(tabID);
+        }
     }
 
     /**
@@ -733,8 +755,8 @@ abstract class BaseTest extends BaseRobocopTest {
     }
 
     class Navigation {
-        private String devType;
-        private String osVersion;
+        private final String devType;
+        private final String osVersion;
 
         public Navigation(Device mDevice) {
             devType = mDevice.type;
@@ -838,8 +860,8 @@ abstract class BaseTest extends BaseRobocopTest {
      */
     private class DescriptionCondition<T extends View> implements Condition {
         public T mView;
-        private String mDescr;
-        private Class<T> mCls;
+        private final String mDescr;
+        private final Class<T> mCls;
 
         public DescriptionCondition(Class<T> cls, String descr) {
             mDescr = descr;

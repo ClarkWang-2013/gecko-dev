@@ -7,7 +7,6 @@
 #include "cms.h"
 #include "cryptohi.h"
 #include "keyhi.h"
-#include "nsCertificatePrincipal.h"
 #include "nsCOMPtr.h"
 #include "nsNSSComponent.h"
 #include "nssb64.h"
@@ -130,7 +129,7 @@ VerifyCMSDetachedSignatureIncludingCertificate(
     return NS_ERROR_INVALID_ARG;
   }
 
-  ScopedPtr<NSSCMSMessage, NSS_CMSMessage_Destroy>
+  ScopedNSSCMSMessage
     cmsMsg(NSS_CMSMessage_CreateFromDER(const_cast<SECItem*>(&buffer), nullptr,
                                         nullptr, nullptr, nullptr, nullptr,
                                         nullptr));
@@ -162,20 +161,20 @@ VerifyCMSDetachedSignatureIncludingCertificate(
 
   // Parse the certificates into CERTCertificate objects held in memory so
   // verifyCertificate will be able to find them during path building.
-  mozilla::pkix::ScopedCERTCertList certs(CERT_NewCertList());
+  ScopedCERTCertList certs(CERT_NewCertList());
   if (!certs) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   if (signedData->rawCerts) {
     for (size_t i = 0; signedData->rawCerts[i]; ++i) {
-      mozilla::pkix::ScopedCERTCertificate
+      ScopedCERTCertificate
         cert(CERT_NewTempCertificate(CERT_GetDefaultCertDB(),
                                      signedData->rawCerts[i], nullptr, false,
                                      true));
       // Skip certificates that fail to parse
       if (cert) {
         if (CERT_AddCertToListTail(certs.get(), cert.get()) == SECSuccess) {
-          cert.release(); // ownership transfered
+          cert.forget(); // ownership transfered
         } else {
           return NS_ERROR_OUT_OF_MEMORY;
         }
@@ -222,8 +221,8 @@ namespace {
 
 struct VerifyCertificateContext
 {
-  nsCOMPtr<nsICertificatePrincipal> principal;
-  mozilla::pkix::ScopedCERTCertList builtChain;
+  nsCOMPtr<nsIX509Cert> signingCert;
+  ScopedCERTCertList builtChain;
 };
 
 static nsresult
@@ -242,34 +241,14 @@ VerifyCertificate(CERTCertificate* cert, void* voidContext, void* pinArg)
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  nsAutoString fingerprint;
-  nsresult rv = xpcomCert->GetSha1Fingerprint(fingerprint);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  nsAutoString orgName;
-  rv = xpcomCert->GetOrganization(orgName);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  nsAutoString subjectName;
-  rv = xpcomCert->GetSubjectName(subjectName);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  context->principal =
-    new nsCertificatePrincipal(NS_ConvertUTF16toUTF8(fingerprint),
-                               NS_ConvertUTF16toUTF8(subjectName),
-                               NS_ConvertUTF16toUTF8(orgName),
-                               xpcomCert);
+  context->signingCert = xpcomCert;
 
   RefPtr<SharedCertVerifier> certVerifier(GetDefaultCertVerifier());
   NS_ENSURE_TRUE(certVerifier, NS_ERROR_UNEXPECTED);
 
   return MapSECStatus(certVerifier->VerifyCert(cert,
                                                certificateUsageObjectSigner,
-                                               PR_Now(), pinArg,
+                                               Now(), pinArg,
                                                nullptr, // hostname
                                                0, // flags
                                                nullptr, // stapledOCSPResponse
@@ -284,14 +263,14 @@ nsDataSignatureVerifier::VerifySignature(const char* aRSABuf,
                                          const char* aPlaintext,
                                          uint32_t aPlaintextLen,
                                          int32_t* aErrorCode,
-                                         nsICertificatePrincipal** aPrincipal)
+                                         nsIX509Cert** aSigningCert)
 {
-  if (!aPlaintext || !aPrincipal || !aErrorCode) {
+  if (!aPlaintext || !aSigningCert || !aErrorCode) {
     return NS_ERROR_INVALID_ARG;
   }
 
   *aErrorCode = VERIFY_ERROR_OTHER;
-  *aPrincipal = nullptr;
+  *aSigningCert = nullptr;
 
   nsNSSShutDownPreventionLock locker;
 
@@ -325,7 +304,7 @@ nsDataSignatureVerifier::VerifySignature(const char* aRSABuf,
     rv = NS_OK;
   }
   if (rv == NS_OK) {
-    context.principal.forget(aPrincipal);
+    context.signingCert.forget(aSigningCert);
   }
 
   return rv;

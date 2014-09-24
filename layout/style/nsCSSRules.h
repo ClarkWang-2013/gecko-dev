@@ -47,7 +47,7 @@ class MediaRule MOZ_FINAL : public GroupRule,
                             public nsIDOMCSSMediaRule
 {
 public:
-  MediaRule();
+  MediaRule(uint32_t aLineNumber, uint32_t aColumnNumber);
 private:
   MediaRule(const MediaRule& aCopy);
   ~MediaRule();
@@ -105,7 +105,7 @@ class DocumentRule MOZ_FINAL : public GroupRule,
                                public nsIDOMCSSMozDocumentRule
 {
 public:
-  DocumentRule();
+  DocumentRule(uint32_t aLineNumber, uint32_t aColumnNumber);
 private:
   DocumentRule(const DocumentRule& aCopy);
   ~DocumentRule();
@@ -184,7 +184,7 @@ protected:
 
 // A nsCSSFontFaceStyleDecl is always embedded in a nsCSSFontFaceRule.
 class nsCSSFontFaceRule;
-class nsCSSFontFaceStyleDecl : public nsICSSDeclaration
+class nsCSSFontFaceStyleDecl MOZ_FINAL : public nsICSSDeclaration
 {
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -231,7 +231,8 @@ class nsCSSFontFaceRule MOZ_FINAL : public mozilla::css::Rule,
                                     public nsIDOMCSSFontFaceRule
 {
 public:
-  nsCSSFontFaceRule() {}
+  nsCSSFontFaceRule(uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::Rule(aLineNumber, aColumnNumber) {}
 
   nsCSSFontFaceRule(const nsCSSFontFaceRule& aCopy)
     // copy everything except our reference count
@@ -296,7 +297,8 @@ class nsCSSFontFeatureValuesRule MOZ_FINAL :
                                        public nsIDOMCSSFontFeatureValuesRule
 {
 public:
-  nsCSSFontFeatureValuesRule() {}
+  nsCSSFontFeatureValuesRule(uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::Rule(aLineNumber, aColumnNumber) {}
 
   nsCSSFontFeatureValuesRule(const nsCSSFontFeatureValuesRule& aCopy)
     // copy everything except our reference count
@@ -336,15 +338,6 @@ public:
 
   virtual size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
 
-  static bool PrefEnabled()
-  {
-    // font-variant-alternates enabled ==> layout.css.font-features.enabled is true
-    bool fontFeaturesEnabled =
-      nsCSSProps::IsEnabled(eCSSProperty_font_variant_alternates);
-
-    return fontFeaturesEnabled;
-  }
-
 protected:
   ~nsCSSFontFeatureValuesRule() {}
 
@@ -359,7 +352,8 @@ class CharsetRule MOZ_FINAL : public Rule,
                               public nsIDOMCSSCharsetRule
 {
 public:
-  CharsetRule(const nsAString& aEncoding);
+  CharsetRule(const nsAString& aEncoding,
+              uint32_t aLineNumber, uint32_t aColumnNumber);
 private:
   // For |Clone|
   CharsetRule(const CharsetRule& aCopy);
@@ -400,7 +394,7 @@ class nsCSSKeyframeRule;
 class nsCSSKeyframeStyleDeclaration MOZ_FINAL : public nsDOMCSSDeclaration
 {
 public:
-  nsCSSKeyframeStyleDeclaration(nsCSSKeyframeRule *aRule);
+  explicit nsCSSKeyframeStyleDeclaration(nsCSSKeyframeRule *aRule);
 
   NS_IMETHOD GetParentRule(nsIDOMCSSRule **aParent) MOZ_OVERRIDE;
   void DropReference() { mRule = nullptr; }
@@ -429,8 +423,10 @@ class nsCSSKeyframeRule MOZ_FINAL : public mozilla::css::Rule,
 public:
   // WARNING: Steals the contents of aKeys *and* aDeclaration
   nsCSSKeyframeRule(InfallibleTArray<float>& aKeys,
-                    nsAutoPtr<mozilla::css::Declaration>&& aDeclaration)
-    : mDeclaration(mozilla::Move(aDeclaration))
+                    nsAutoPtr<mozilla::css::Declaration>&& aDeclaration,
+                    uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::Rule(aLineNumber, aColumnNumber)
+    , mDeclaration(mozilla::Move(aDeclaration))
   {
     mKeys.SwapElements(aKeys);
   }
@@ -477,8 +473,10 @@ class nsCSSKeyframesRule MOZ_FINAL : public mozilla::css::GroupRule,
                                      public nsIDOMMozCSSKeyframesRule
 {
 public:
-  nsCSSKeyframesRule(const nsSubstring& aName)
-    : mName(aName)
+  nsCSSKeyframesRule(const nsSubstring& aName,
+                     uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::GroupRule(aLineNumber, aColumnNumber)
+    , mName(aName)
   {
   }
 private:
@@ -529,7 +527,7 @@ class nsCSSPageRule;
 class nsCSSPageStyleDeclaration MOZ_FINAL : public nsDOMCSSDeclaration
 {
 public:
-  nsCSSPageStyleDeclaration(nsCSSPageRule *aRule);
+  explicit nsCSSPageStyleDeclaration(nsCSSPageRule *aRule);
 
   NS_IMETHOD GetParentRule(nsIDOMCSSRule **aParent) MOZ_OVERRIDE;
   void DropReference() { mRule = nullptr; }
@@ -557,9 +555,11 @@ class nsCSSPageRule MOZ_FINAL : public mozilla::css::Rule,
 {
 public:
   // WARNING: Steals the contents of aDeclaration
-  nsCSSPageRule(nsAutoPtr<mozilla::css::Declaration>&& aDeclaration)
-    : mDeclaration(mozilla::Move(aDeclaration)),
-      mImportantRule(nullptr)
+  nsCSSPageRule(nsAutoPtr<mozilla::css::Declaration>&& aDeclaration,
+                uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::Rule(aLineNumber, aColumnNumber)
+    , mDeclaration(mozilla::Move(aDeclaration))
+    , mImportantRule(nullptr)
   {
   }
 private:
@@ -605,7 +605,8 @@ class CSSSupportsRule : public css::GroupRule,
                         public nsIDOMCSSSupportsRule
 {
 public:
-  CSSSupportsRule(bool aConditionMet, const nsString& aCondition);
+  CSSSupportsRule(bool aConditionMet, const nsString& aCondition,
+                  uint32_t aLineNumber, uint32_t aColumnNumber);
   CSSSupportsRule(const CSSSupportsRule& aCopy);
 
   // nsIStyleRule methods
@@ -644,6 +645,8 @@ public:
   virtual size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 protected:
+  virtual ~CSSSupportsRule();
+
   bool mUseGroup;
   nsString mCondition;
 };
@@ -654,9 +657,11 @@ class nsCSSCounterStyleRule MOZ_FINAL : public mozilla::css::Rule,
                                         public nsIDOMCSSCounterStyleRule
 {
 public:
-  explicit nsCSSCounterStyleRule(const nsAString& aName)
-    : mName(aName),
-      mGeneration(0)
+  explicit nsCSSCounterStyleRule(const nsAString& aName,
+                                 uint32_t aLineNumber, uint32_t aColumnNumber)
+    : mozilla::css::Rule(aLineNumber, aColumnNumber)
+    , mName(aName)
+    , mGeneration(0)
   {
   }
 

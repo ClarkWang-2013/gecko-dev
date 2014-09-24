@@ -8,10 +8,11 @@
 
 #include "mozilla/dom/MozVoicemailBinding.h"
 #include "mozilla/dom/MozVoicemailEvent.h"
-#include "nsIDOMMozVoicemailStatus.h"
+#include "mozilla/dom/MozVoicemailStatusBinding.h"
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
 #include "nsServiceManagerUtils.h"
 
@@ -39,6 +40,12 @@ public:
     MOZ_ASSERT(mVoicemail);
     mVoicemail = nullptr;
   }
+
+private:
+  ~Listener()
+  {
+    MOZ_ASSERT(!mVoicemail);
+  }
 };
 
 NS_IMPL_ISUPPORTS(Voicemail::Listener, nsIVoicemailListener)
@@ -61,6 +68,8 @@ Voicemail::~Voicemail()
   mListener->Disconnect();
   mProvider->UnregisterVoicemailMsg(mListener);
 }
+
+NS_IMPL_ISUPPORTS_INHERITED0(Voicemail, DOMEventTargetHelper)
 
 JSObject*
 Voicemail::WrapObject(JSContext* aCx)
@@ -94,7 +103,7 @@ Voicemail::PassedOrDefaultServiceId(const Optional<uint32_t>& aServiceId,
 
 // MozVoicemail WebIDL
 
-already_AddRefed<nsIDOMMozVoicemailStatus>
+already_AddRefed<MozVoicemailStatus>
 Voicemail::GetStatus(const Optional<uint32_t>& aServiceId,
                      ErrorResult& aRv) const
 {
@@ -108,14 +117,20 @@ Voicemail::GetStatus(const Optional<uint32_t>& aServiceId,
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return nullptr;
   }
-  nsCOMPtr<nsIDOMMozVoicemailStatus> status;
-  nsresult rv = mProvider->GetVoicemailStatus(id, getter_AddRefs(status));
+  JSContext *cx = nsContentUtils::GetCurrentJSContext();
+  JS::Rooted<JS::Value> status(cx);
+  nsresult rv = mProvider->GetVoicemailStatus(id, &status);
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
     return nullptr;
   }
-
-  return status.forget();
+  if (!status.isObject()) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return nullptr;
+  }
+  JS::Rooted<JSObject*> statusObj(cx, &status.toObject());
+  nsRefPtr<MozVoicemailStatus> res = new MozVoicemailStatus(statusObj, GetParentObject());
+  return res.forget();
 }
 
 void
@@ -161,12 +176,16 @@ Voicemail::GetDisplayName(const Optional<uint32_t>& aServiceId, nsString& aDispl
 // nsIVoicemailListener
 
 NS_IMETHODIMP
-Voicemail::NotifyStatusChanged(nsIDOMMozVoicemailStatus* aStatus)
+Voicemail::NotifyStatusChanged(JS::HandleValue aStatus)
 {
   MozVoicemailEventInit init;
   init.mBubbles = false;
   init.mCancelable = false;
-  init.mStatus = aStatus;
+  if (aStatus.isObject()) {
+    JSContext *cx = nsContentUtils::GetCurrentJSContext();
+    JS::Rooted<JSObject*> statusObj(cx, &aStatus.toObject());
+    init.mStatus = new MozVoicemailStatus(statusObj, GetParentObject());
+  }
 
   nsRefPtr<MozVoicemailEvent> event =
     MozVoicemailEvent::Constructor(this, NS_LITERAL_STRING("statuschanged"), init);

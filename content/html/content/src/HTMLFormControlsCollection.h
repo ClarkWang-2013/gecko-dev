@@ -20,14 +20,14 @@ namespace mozilla {
 namespace dom {
 class HTMLFormElement;
 class HTMLImageElement;
-class OwningNodeListOrElement;
+class OwningRadioNodeListOrElement;
 template<typename> struct Nullable;
 
 class HTMLFormControlsCollection : public nsIHTMLCollection
                                  , public nsWrapperCache
 {
 public:
-  HTMLFormControlsCollection(HTMLFormElement* aForm);
+  explicit HTMLFormControlsCollection(HTMLFormElement* aForm);
 
   void DropFormReference();
 
@@ -45,10 +45,10 @@ public:
   void
   NamedGetter(const nsAString& aName,
               bool& aFound,
-              Nullable<OwningNodeListOrElement>& aResult);
+              Nullable<OwningRadioNodeListOrElement>& aResult);
   void
   NamedItem(const nsAString& aName,
-            Nullable<OwningNodeListOrElement>& aResult)
+            Nullable<OwningRadioNodeListOrElement>& aResult)
   {
     bool dummy;
     NamedGetter(aName, dummy, aResult);

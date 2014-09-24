@@ -8,11 +8,10 @@
 
 #include "jit/Ion.h"
 #include "jit/IonAnalysis.h"
-#include "jit/IonSpewer.h"
+#include "jit/JitSpewer.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
-#include "jit/UnreachableCodeElimination.h"
 
 #include "jsinferinlines.h"
 #include "jsobjinlines.h"
@@ -65,7 +64,7 @@ using parallel::SpewCompile;
         return insertWriteGuard(prop, prop->obj());                           \
     }
 
-class ParallelSafetyVisitor : public MInstructionVisitor
+class ParallelSafetyVisitor : public MDefinitionVisitor
 {
     MIRGraph &graph_;
     bool unsafe_;
@@ -112,9 +111,19 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     // obviously safe for now.  We can loosen as we need.
 
     SAFE_OP(Constant)
+    SAFE_OP(SimdValueX4)
+    SAFE_OP(SimdSplatX4)
+    SAFE_OP(SimdConstant)
+    SAFE_OP(SimdExtractElement)
+    SAFE_OP(SimdSignMask)
+    SAFE_OP(SimdBinaryComp)
+    SAFE_OP(SimdBinaryArith)
+    SAFE_OP(SimdBinaryBitwise)
+    SAFE_OP(SimdTernaryBitwise)
     UNSAFE_OP(CloneLiteral)
     SAFE_OP(Parameter)
     SAFE_OP(Callee)
+    SAFE_OP(IsConstructing)
     SAFE_OP(TableSwitch)
     SAFE_OP(Goto)
     SAFE_OP(Test)
@@ -157,6 +166,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(Ursh)
     SPECIALIZED_OP(MinMax, PERMIT_NUMERIC)
     SAFE_OP(Abs)
+    SAFE_OP(Clz)
     SAFE_OP(Sqrt)
     UNSAFE_OP(Atan2)
     UNSAFE_OP(Hypot)
@@ -183,10 +193,13 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(MaybeToDoubleElement)
     CUSTOM_OP(ToString)
     CUSTOM_OP(NewArray)
+    UNSAFE_OP(NewArrayCopyOnWrite)
     CUSTOM_OP(NewObject)
     CUSTOM_OP(NewCallObject)
     CUSTOM_OP(NewRunOnceCallObject)
     CUSTOM_OP(NewDerivedTypedObject)
+    SAFE_OP(ObjectState)
+    SAFE_OP(ArrayState)
     UNSAFE_OP(InitElem)
     UNSAFE_OP(InitElemGetterSetter)
     UNSAFE_OP(MutateProto)
@@ -261,8 +274,8 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(DeleteElement)
     WRITE_GUARDED_OP(SetPropertyCache, object)
     UNSAFE_OP(IteratorStart)
-    UNSAFE_OP(IteratorNext)
     UNSAFE_OP(IteratorMore)
+    UNSAFE_OP(IsNoIter)
     UNSAFE_OP(IteratorEnd)
     SAFE_OP(StringLength)
     SAFE_OP(ArgumentsLength)
@@ -276,6 +289,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(Round)
     UNSAFE_OP(InstanceOf)
     CUSTOM_OP(InterruptCheck)
+    UNSAFE_OP(AsmJSInterruptCheck)
     SAFE_OP(ForkJoinContext)
     SAFE_OP(ForkJoinGetSlice)
     SAFE_OP(NewPar)
@@ -283,6 +297,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(NewCallObjectPar)
     SAFE_OP(LambdaPar)
     UNSAFE_OP(ArrayConcat)
+    UNSAFE_OP(ArrayJoin)
     UNSAFE_OP(GetDOMProperty)
     UNSAFE_OP(GetDOMMember)
     UNSAFE_OP(SetDOMProperty)
@@ -325,19 +340,21 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(AsmJSParameter)
     UNSAFE_OP(AsmJSCall)
     DROP_OP(RecompileCheck)
+    UNSAFE_OP(UnknownValue)
+    UNSAFE_OP(LexicalCheck)
+    UNSAFE_OP(ThrowUninitializedLexical)
 
     // It looks like this could easily be made safe:
     UNSAFE_OP(ConvertElementsToDoubles)
+    UNSAFE_OP(MaybeCopyElementsForWrite)
 };
 
 static void
 TransplantResumePoint(MInstruction *oldInstruction, MInstruction *replacementInstruction)
 {
-    if (MResumePoint *rp = oldInstruction->resumePoint()) {
-        replacementInstruction->setResumePoint(rp);
-        if (rp->instruction() == oldInstruction)
-            rp->setInstruction(replacementInstruction);
-    }
+    MOZ_ASSERT(!oldInstruction->isDiscarded());
+    if (oldInstruction->resumePoint())
+        replacementInstruction->stealResumePoint(oldInstruction);
 }
 
 bool
@@ -413,8 +430,9 @@ ParallelSafetyAnalysis::analyze()
     Spew(SpewCompile, "Safe");
     IonSpewPass("ParallelSafetyAnalysis");
 
-    UnreachableCodeElimination uce(mir_, graph_);
-    if (!uce.removeUnmarkedBlocks(marked))
+    // Sweep away any unmarked blocks. Note that this doesn't preserve
+    // AliasAnalysis dependencies, but we're not expected to at this point.
+    if (!RemoveUnmarkedBlocks(mir_, graph_, marked))
         return false;
     IonSpewPass("UCEAfterParallelSafetyAnalysis");
     AssertExtendedGraphCoherency(graph_);
@@ -433,6 +451,10 @@ ParallelSafetyVisitor::convertToBailout(MInstructionIterator &iter)
 
     clearUnsafe();
 
+    // Allocate a new bailout instruction and transplant the resume point.
+    MBail *bail = MBail::New(graph_.alloc(), Bailout_ParallelUnsafe);
+    TransplantResumePoint(ins, bail);
+
     // Discard the rest of the block and sever its link to its successors in
     // the CFG.
     for (size_t i = 0; i < block->numSuccessors(); i++)
@@ -440,8 +462,6 @@ ParallelSafetyVisitor::convertToBailout(MInstructionIterator &iter)
     block->discardAllInstructionsStartingAt(iter);
 
     // End the block in a bail.
-    MBail *bail = MBail::New(graph_.alloc(), Bailout_ParallelUnsafe);
-    TransplantResumePoint(ins, bail);
     block->add(bail);
     block->end(MUnreachable::New(alloc()));
     return true;
@@ -670,7 +690,7 @@ ParallelSafetyVisitor::insertWriteGuard(MInstruction *writeInstruction,
     MGuardThreadExclusive *writeGuard =
         MGuardThreadExclusive::New(alloc(), ForkJoinContext(), object);
     block->insertBefore(writeInstruction, writeGuard);
-    writeGuard->adjustInputs(alloc(), writeGuard);
+    writeGuard->typePolicy()->adjustInputs(alloc(), writeGuard);
     return true;
 }
 

@@ -41,6 +41,11 @@ interface RsaHashedKeyAlgorithm : RsaKeyAlgorithm {
   readonly attribute KeyAlgorithm hash;
 };
 
+[NoInterfaceObject]
+interface EcKeyAlgorithm : KeyAlgorithm {
+  readonly attribute NamedCurve namedCurve;
+};
+
 
 /***** Algorithm dictionaries *****/
 
@@ -67,6 +72,12 @@ dictionary HmacImportParams : Algorithm {
   AlgorithmIdentifier hash;
 };
 
+dictionary Pbkdf2Params : Algorithm {
+  CryptoOperationData salt;
+  [EnforceRange] unsigned long iterations;
+  AlgorithmIdentifier hash;
+};
+
 dictionary RsaHashedImportParams {
   AlgorithmIdentifier hash;
 };
@@ -89,6 +100,10 @@ dictionary RsaHashedKeyGenParams : RsaKeyGenParams {
   AlgorithmIdentifier hash;
 };
 
+dictionary RsaOaepParams : Algorithm {
+  CryptoOperationData? label;
+};
+
 dictionary DhKeyGenParams : Algorithm {
   BigInteger prime;
   BigInteger generator;
@@ -98,6 +113,55 @@ typedef DOMString NamedCurve;
 dictionary EcKeyGenParams : Algorithm {
   NamedCurve namedCurve;
 };
+
+dictionary AesDerivedKeyParams : Algorithm {
+  [EnforceRange] unsigned long length;
+};
+
+dictionary HmacDerivedKeyParams : HmacImportParams {
+  [EnforceRange] unsigned long length;
+};
+
+dictionary EcdhKeyDeriveParams : Algorithm {
+  CryptoKey public;
+};
+
+
+/***** JWK *****/
+
+dictionary RsaOtherPrimesInfo {
+  // The following fields are defined in Section 6.3.2.7 of JSON Web Algorithms
+  DOMString r;
+  DOMString d;
+  DOMString t;
+};
+
+dictionary JsonWebKey {
+  // The following fields are defined in Section 3.1 of JSON Web Key
+  DOMString kty;
+  DOMString use;
+  sequence<DOMString> key_ops;
+  DOMString alg;
+
+  // The following fields are defined in JSON Web Key Parameters Registration
+  boolean ext;
+
+  // The following fields are defined in Section 6 of JSON Web Algorithms
+  DOMString crv;
+  DOMString x;
+  DOMString y;
+  DOMString d;
+  DOMString n;
+  DOMString e;
+  DOMString p;
+  DOMString q;
+  DOMString dp;
+  DOMString dq;
+  DOMString qi;
+  sequence<RsaOtherPrimesInfo> oth;
+  DOMString k;
+};
+
 
 /***** The Main API *****/
 
@@ -117,44 +181,68 @@ interface CryptoKeyPair {
 
 typedef DOMString KeyFormat;
 typedef (ArrayBufferView or ArrayBuffer) CryptoOperationData;
-typedef (ArrayBufferView or ArrayBuffer) KeyData;
 typedef (object or DOMString) AlgorithmIdentifier;
 
 [Pref="dom.webcrypto.enabled"]
 interface SubtleCrypto {
-  Promise encrypt(AlgorithmIdentifier algorithm,
-                  CryptoKey key,
-                  CryptoOperationData data);
-  Promise decrypt(AlgorithmIdentifier algorithm,
-                  CryptoKey key,
-                  CryptoOperationData data);
-  Promise sign(AlgorithmIdentifier algorithm,
-               CryptoKey key,
-               CryptoOperationData data);
-  Promise verify(AlgorithmIdentifier algorithm,
-                 CryptoKey key,
-                 CryptoOperationData signature,
-                 CryptoOperationData data);
-  Promise digest(AlgorithmIdentifier algorithm,
-                 CryptoOperationData data);
+  [Throws]
+  Promise<any> encrypt(AlgorithmIdentifier algorithm,
+                       CryptoKey key,
+                       CryptoOperationData data);
+  [Throws]
+  Promise<any> decrypt(AlgorithmIdentifier algorithm,
+                       CryptoKey key,
+                       CryptoOperationData data);
+  [Throws]
+  Promise<any> sign(AlgorithmIdentifier algorithm,
+                     CryptoKey key,
+                     CryptoOperationData data);
+  [Throws]
+  Promise<any> verify(AlgorithmIdentifier algorithm,
+                      CryptoKey key,
+                      CryptoOperationData signature,
+                      CryptoOperationData data);
+  [Throws]
+  Promise<any> digest(AlgorithmIdentifier algorithm,
+                      CryptoOperationData data);
 
-  Promise generateKey(AlgorithmIdentifier algorithm,
-                      boolean extractable,
-                      sequence<KeyUsage> keyUsages );
-  Promise deriveKey(AlgorithmIdentifier algorithm,
-                    CryptoKey baseKey,
-                    AlgorithmIdentifier derivedKeyType,
-                    boolean extractable,
-                    sequence<KeyUsage> keyUsages );
-  Promise deriveBits(AlgorithmIdentifier algorithm,
-                     CryptoKey baseKey,
-                     unsigned long length);
+  [Throws]
+  Promise<any> generateKey(AlgorithmIdentifier algorithm,
+                           boolean extractable,
+                           sequence<KeyUsage> keyUsages );
+  [Throws]
+  Promise<any> deriveKey(AlgorithmIdentifier algorithm,
+                         CryptoKey baseKey,
+                         AlgorithmIdentifier derivedKeyType,
+                         boolean extractable,
+                         sequence<KeyUsage> keyUsages );
+  [Throws]
+  Promise<any> deriveBits(AlgorithmIdentifier algorithm,
+                          CryptoKey baseKey,
+                          unsigned long length);
 
-  Promise importKey(KeyFormat format,
-                    KeyData keyData,
-                    AlgorithmIdentifier algorithm,
-                    boolean extractable,
-                    sequence<KeyUsage> keyUsages );
-  Promise exportKey(KeyFormat format, CryptoKey key);
+  [Throws]
+  Promise<any> importKey(KeyFormat format,
+                         object keyData,
+                         AlgorithmIdentifier algorithm,
+                         boolean extractable,
+                         sequence<KeyUsage> keyUsages );
+  [Throws]
+  Promise<any> exportKey(KeyFormat format, CryptoKey key);
+
+  [Throws]
+  Promise<any> wrapKey(KeyFormat format,
+                       CryptoKey key,
+                       CryptoKey wrappingKey,
+                       AlgorithmIdentifier wrapAlgorithm);
+
+  [Throws]
+  Promise<any> unwrapKey(KeyFormat format,
+                         CryptoOperationData wrappedKey,
+                         CryptoKey unwrappingKey,
+                         AlgorithmIdentifier unwrapAlgorithm,
+                         AlgorithmIdentifier unwrappedKeyAlgorithm,
+                         boolean extractable,
+                         sequence<KeyUsage> keyUsages );
 };
 

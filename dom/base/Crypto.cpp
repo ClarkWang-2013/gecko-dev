@@ -15,8 +15,6 @@
 
 using mozilla::dom::ContentChild;
 
-using namespace js::ArrayBufferView;
-
 namespace mozilla {
 namespace dom {
 
@@ -67,13 +65,13 @@ Crypto::GetRandomValues(JSContext* aCx, const ArrayBufferView& aArray,
   // Throw if the wrong type of ArrayBufferView is passed in
   // (Part of the Web Crypto API spec)
   switch (JS_GetArrayBufferViewType(view)) {
-    case TYPE_INT8:
-    case TYPE_UINT8:
-    case TYPE_UINT8_CLAMPED:
-    case TYPE_INT16:
-    case TYPE_UINT16:
-    case TYPE_INT32:
-    case TYPE_UINT32:
+    case js::Scalar::Int8:
+    case js::Scalar::Uint8:
+    case js::Scalar::Uint8Clamped:
+    case js::Scalar::Int16:
+    case js::Scalar::Uint16:
+    case js::Scalar::Int32:
+    case js::Scalar::Uint32:
       break;
     default:
       aRv.Throw(NS_ERROR_DOM_TYPE_MISMATCH_ERR);
@@ -128,82 +126,6 @@ Crypto::Subtle()
   }
   return mSubtle;
 }
-
-#ifndef MOZ_DISABLE_CRYPTOLEGACY
-// Stub out the legacy nsIDOMCrypto methods. The actual
-// implementations are in security/manager/ssl/src/nsCrypto.{cpp,h}
-
-NS_IMETHODIMP
-Crypto::GetEnableSmartCardEvents(bool *aEnableSmartCardEvents)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-Crypto::SetEnableSmartCardEvents(bool aEnableSmartCardEvents)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-bool
-Crypto::EnableSmartCardEvents()
-{
-  return false;
-}
-
-void
-Crypto::SetEnableSmartCardEvents(bool aEnable, ErrorResult& aRv)
-{
-  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-}
-
-void
-Crypto::GetVersion(nsString& aVersion)
-{
-}
-
-mozilla::dom::CRMFObject*
-Crypto::GenerateCRMFRequest(JSContext* aContext,
-                            const nsCString& aReqDN,
-                            const nsCString& aRegToken,
-                            const nsCString& aAuthenticator,
-                            const nsCString& aEaCert,
-                            const nsCString& aJsCallback,
-                            const Sequence<JS::Value>& aArgs,
-                            ErrorResult& aRv)
-{
-  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-  return nullptr;
-}
-
-void
-Crypto::ImportUserCertificates(const nsAString& aNickname,
-                               const nsAString& aCmmfResponse,
-                               bool aDoForcedBackup,
-                               nsAString& aReturn,
-                               ErrorResult& aRv)
-{
-  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-}
-
-void
-Crypto::SignText(JSContext* aContext,
-                 const nsAString& aStringToSign,
-                 const nsAString& aCaOption,
-                 const Sequence<nsCString>& aArgs,
-                 nsAString& aReturn)
-
-{
-  aReturn.AssignLiteral("error:internalError");
-}
-
-void
-Crypto::Logout(ErrorResult& aRv)
-{
-  aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-}
-
-#endif
 
 /* static */ uint8_t*
 Crypto::GetRandomValues(uint32_t aLength)

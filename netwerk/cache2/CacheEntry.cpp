@@ -76,7 +76,8 @@ CacheEntryHandle::~CacheEntryHandle()
 
 CacheEntry::Callback::Callback(CacheEntry* aEntry,
                                nsICacheEntryOpenCallback *aCallback,
-                               bool aReadOnly, bool aCheckOnAnyThread)
+                               bool aReadOnly, bool aCheckOnAnyThread,
+                               bool aSecret)
 : mEntry(aEntry)
 , mCallback(aCallback)
 , mTargetThread(do_GetCurrentThread())
@@ -84,6 +85,7 @@ CacheEntry::Callback::Callback(CacheEntry* aEntry,
 , mCheckOnAnyThread(aCheckOnAnyThread)
 , mRecheckAfterWrite(false)
 , mNotWanted(false)
+, mSecret(aSecret)
 {
   MOZ_COUNT_CTOR(CacheEntry::Callback);
 
@@ -101,6 +103,7 @@ CacheEntry::Callback::Callback(CacheEntry::Callback const &aThat)
 , mCheckOnAnyThread(aThat.mCheckOnAnyThread)
 , mRecheckAfterWrite(aThat.mRecheckAfterWrite)
 , mNotWanted(aThat.mNotWanted)
+, mSecret(aThat.mSecret)
 {
   MOZ_COUNT_CTOR(CacheEntry::Callback);
 
@@ -175,6 +178,7 @@ CacheEntry::CacheEntry(const nsACString& aStorageID,
 , mRegistration(NEVERREGISTERED)
 , mWriter(nullptr)
 , mPredictedDataSize(0)
+, mUseCount(0)
 , mReleaseThread(NS_GetCurrentThread())
 {
   MOZ_COUNT_CTOR(CacheEntry);
@@ -211,12 +215,12 @@ char const * CacheEntry::StateString(uint32_t aState)
 
 #endif
 
-nsresult CacheEntry::HashingKeyWithStorage(nsACString &aResult)
+nsresult CacheEntry::HashingKeyWithStorage(nsACString &aResult) const
 {
   return HashingKey(mStorageID, mEnhanceID, mURI, aResult);
 }
 
-nsresult CacheEntry::HashingKey(nsACString &aResult)
+nsresult CacheEntry::HashingKey(nsACString &aResult) const
 {
   return HashingKey(EmptyCString(), mEnhanceID, mURI, aResult);
 }
@@ -268,11 +272,12 @@ void CacheEntry::AsyncOpen(nsICacheEntryOpenCallback* aCallback, uint32_t aFlags
   bool truncate = aFlags & nsICacheStorage::OPEN_TRUNCATE;
   bool priority = aFlags & nsICacheStorage::OPEN_PRIORITY;
   bool multithread = aFlags & nsICacheStorage::CHECK_MULTITHREADED;
+  bool secret = aFlags & nsICacheStorage::OPEN_SECRETLY;
 
   MOZ_ASSERT(!readonly || !truncate, "Bad flags combination");
   MOZ_ASSERT(!(truncate && mState > LOADING), "Must not call truncate on already loaded entry");
 
-  Callback callback(this, aCallback, readonly, multithread);
+  Callback callback(this, aCallback, readonly, multithread, secret);
 
   if (!Open(callback, truncate, priority, bypassIfBusy)) {
     // We get here when the callback wants to bypass cache when it's busy.
@@ -362,10 +367,14 @@ bool CacheEntry::Load(bool aTruncate, bool aPriority)
   BackgroundOp(Ops::REGISTER);
 
   bool directLoad = aTruncate || !mUseDisk;
-  if (directLoad)
+  if (directLoad) {
     mFileStatus = NS_OK;
-  else
+    // mLoadStart will be used to calculate telemetry of life-time of this entry.
+    // Low resulution is then enough.
+    mLoadStart = TimeStamp::NowLoRes();
+  } else {
     mLoadStart = TimeStamp::Now();
+  }
 
   {
     mozilla::MutexAutoUnlock unlock(mLock);
@@ -754,6 +763,11 @@ void CacheEntry::InvokeAvailableCallback(Callback const & aCallback)
     return;
   }
 
+  if (NS_SUCCEEDED(mFileStatus) && !aCallback.mSecret) {
+    // Let the last-fetched and fetch-count properties be updated.
+    mFile->OnFetched();
+  }
+
   if (mIsDoomed || aCallback.mNotWanted) {
     LOG(("  doomed or not wanted, notifying OCEA with NS_ERROR_CACHE_KEY_NOT_FOUND"));
     aCallback.mCallback->OnCacheEntryAvailable(
@@ -763,6 +777,8 @@ void CacheEntry::InvokeAvailableCallback(Callback const & aCallback)
 
   if (state == READY) {
     LOG(("  ready/has-meta, notifying OCEA with entry and NS_OK"));
+
+    if (!aCallback.mSecret)
     {
       mozilla::MutexAutoLock lock(mLock);
       BackgroundOp(Ops::FRECENCYUPDATE);
@@ -812,7 +828,10 @@ CacheEntryHandle* CacheEntry::NewWriteHandle()
 {
   mozilla::MutexAutoLock lock(mLock);
 
+  // Ignore the OPEN_SECRETLY flag on purpose here, which should actually be
+  // used only along with OPEN_READONLY, but there is no need to enforce that.
   BackgroundOp(Ops::FRECENCYUPDATE);
+
   return (mWriter = NewHandle());
 }
 
@@ -847,6 +866,21 @@ void CacheEntry::OnHandleClosed(CacheEntryHandle const* aHandle)
     else if (mState == REVALIDATING) {
       LOG(("  reverting to state READY - reval failed"));
       mState = READY;
+    }
+
+    if (mState == READY && !mHasData) {
+      // We may get to this state when following steps happen:
+      // 1. a new entry is given to a consumer
+      // 2. the consumer calls MetaDataReady(), we transit to READY
+      // 3. abandons the entry w/o opening the output stream, mHasData left false
+      //
+      // In this case any following consumer will get a ready entry (with metadata)
+      // but in state like the entry data write was still happening (was in progress)
+      // and will indefinitely wait for the entry data or even the entry itself when
+      // RECHECK_AFTER_WRITE is returned from onCacheEntryCheck.
+      LOG(("  we are in READY state, pretend we have data regardless it"
+            " has actully been never touched"));
+      mHasData = true;
     }
 
     InvokeCallbacks();
@@ -938,6 +972,38 @@ NS_IMETHODIMP CacheEntry::GetExpirationTime(uint32_t *aExpirationTime)
   NS_ENSURE_SUCCESS(mFileStatus, NS_ERROR_NOT_AVAILABLE);
 
   return mFile->GetExpirationTime(aExpirationTime);
+}
+
+NS_IMETHODIMP CacheEntry::GetIsForcedValid(bool *aIsForcedValid)
+{
+  NS_ENSURE_ARG(aIsForcedValid);
+
+  nsAutoCString key;
+
+  nsresult rv = HashingKeyWithStorage(key);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  *aIsForcedValid = CacheStorageService::Self()->IsForcedValidEntry(key);
+  LOG(("CacheEntry::GetIsForcedValid [this=%p, IsForcedValid=%d]", this, *aIsForcedValid));
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP CacheEntry::ForceValidFor(uint32_t aSecondsToTheFuture)
+{
+  LOG(("CacheEntry::ForceValidFor [this=%p, aSecondsToTheFuture=%d]", this, aSecondsToTheFuture));
+
+  nsAutoCString key;
+  nsresult rv = HashingKeyWithStorage(key);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  CacheStorageService::Self()->ForceEntryValidFor(key, aSecondsToTheFuture);
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP CacheEntry::SetExpirationTime(uint32_t aExpirationTime)
@@ -1499,6 +1565,8 @@ void CacheEntry::BackgroundOp(uint32_t aOperations, bool aForceAsync)
     MOZ_ASSERT(CacheStorageService::IsOnManagementThread());
 
     if (aOperations & Ops::FRECENCYUPDATE) {
+      ++mUseCount;
+
       #ifndef M_LN2
       #define M_LN2 0.69314718055994530942
       #endif

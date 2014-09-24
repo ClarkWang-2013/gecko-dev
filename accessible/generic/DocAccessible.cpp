@@ -78,8 +78,8 @@ DocAccessible::
                   nsIPresShell* aPresShell) :
   HyperTextAccessibleWrap(aRootContent, this),
   // XXX aaronl should we use an algorithm for the initial cache size?
-  mAccessibleCache(kDefaultCacheSize),
-  mNodeToAccessibleMap(kDefaultCacheSize),
+  mAccessibleCache(kDefaultCacheLength),
+  mNodeToAccessibleMap(kDefaultCacheLength),
   mDocumentNode(aDocument),
   mScrollPositionChangedTicks(0),
   mLoadState(eTreeConstructionPending), mDocFlags(0), mLoadEventType(0),
@@ -313,20 +313,14 @@ DocAccessible::FocusedChild()
   return FocusMgr()->FocusedAccessible();
 }
 
-NS_IMETHODIMP
+void
 DocAccessible::TakeFocus()
 {
-  if (IsDefunct())
-    return NS_ERROR_FAILURE;
-
   // Focus the document.
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  NS_ENSURE_STATE(fm);
-
   nsCOMPtr<nsIDOMElement> newFocus;
-  return fm->MoveFocus(mDocumentNode->GetWindow(), nullptr,
-                       nsIFocusManager::MOVEFOCUS_ROOT, 0,
-                       getter_AddRefs(newFocus));
+  fm->MoveFocus(mDocumentNode->GetWindow(), nullptr,
+                nsFocusManager::MOVEFOCUS_ROOT, 0, getter_AddRefs(newFocus));
 }
 
 
@@ -645,19 +639,19 @@ DocAccessible::GetFrame() const
 }
 
 // DocAccessible protected member
-void
-DocAccessible::GetBoundsRect(nsRect& aBounds, nsIFrame** aRelativeFrame)
+nsRect
+DocAccessible::RelativeBounds(nsIFrame** aRelativeFrame) const
 {
   *aRelativeFrame = GetFrame();
 
   nsIDocument *document = mDocumentNode;
   nsIDocument *parentDoc = nullptr;
 
+  nsRect bounds;
   while (document) {
     nsIPresShell *presShell = document->GetShell();
-    if (!presShell) {
-      return;
-    }
+    if (!presShell)
+      return nsRect();
 
     nsRect scrollPort;
     nsIScrollableFrame* sf = presShell->GetRootScrollFrameAsScrollableExternal();
@@ -665,9 +659,9 @@ DocAccessible::GetBoundsRect(nsRect& aBounds, nsIFrame** aRelativeFrame)
       scrollPort = sf->GetScrollPortRect();
     } else {
       nsIFrame* rootFrame = presShell->GetRootFrame();
-      if (!rootFrame) {
-        return;
-      }
+      if (!rootFrame)
+        return nsRect();
+
       scrollPort = rootFrame->GetRect();
     }
 
@@ -676,14 +670,16 @@ DocAccessible::GetBoundsRect(nsRect& aBounds, nsIFrame** aRelativeFrame)
       // this document, but we're intersecting rectangles derived from
       // multiple documents and assuming they're all in the same coordinate
       // system. See bug 514117.
-      aBounds.IntersectRect(scrollPort, aBounds);
+      bounds.IntersectRect(scrollPort, bounds);
     }
     else {  // First time through loop
-      aBounds = scrollPort;
+      bounds = scrollPort;
     }
 
     document = parentDoc = document->GetParentDocument();
   }
+
+  return bounds;
 }
 
 // DocAccessible protected member
@@ -816,11 +812,12 @@ NS_IMETHODIMP
 DocAccessible::OnPivotChanged(nsIAccessiblePivot* aPivot,
                               nsIAccessible* aOldAccessible,
                               int32_t aOldStart, int32_t aOldEnd,
-                              PivotMoveReason aReason)
+                              PivotMoveReason aReason,
+                              bool aIsFromUserInput)
 {
-  nsRefPtr<AccEvent> event = new AccVCChangeEvent(this, aOldAccessible,
-                                                  aOldStart, aOldEnd,
-                                                  aReason);
+  nsRefPtr<AccEvent> event = new AccVCChangeEvent(
+    this, aOldAccessible, aOldStart, aOldEnd, aReason,
+    aIsFromUserInput ? eFromUserInput : eNoUserInput);
   nsEventShell::FireEvent(event);
 
   return NS_OK;
@@ -1093,9 +1090,11 @@ DocAccessible::ARIAAttributeChanged(Accessible* aAccessible, nsIAtom* aAttribute
   // For aria attributes like drag and drop changes we fire a generic attribute
   // change event; at least until native API comes up with a more meaningful event.
   uint8_t attrFlags = aria::AttrCharacteristicsFor(aAttribute);
-  if (!(attrFlags & ATTR_BYPASSOBJ))
-    FireDelayedEvent(nsIAccessibleEvent::EVENT_OBJECT_ATTRIBUTE_CHANGED,
-                     aAccessible);
+  if (!(attrFlags & ATTR_BYPASSOBJ)) {
+    nsRefPtr<AccEvent> event =
+      new AccObjectAttrChangedEvent(aAccessible, aAttribute);
+    FireDelayedEvent(event);
+  }
 
   nsIContent* elm = aAccessible->GetContent();
 
@@ -1308,8 +1307,22 @@ DocAccessible::GetAccessibleOrContainer(nsINode* aNode) const
 
   nsINode* currNode = aNode;
   Accessible* accessible = nullptr;
-  while (!(accessible = GetAccessible(currNode)) &&
-         (currNode = currNode->GetParentNode()));
+  while (!(accessible = GetAccessible(currNode))) {
+    nsINode* parent = nullptr;
+
+    // If this is a content node, try to get a flattened parent content node.
+    // This will smartly skip from the shadow root to the host element,
+    // over parentless document fragment
+    if (currNode->IsContent())
+      parent = currNode->AsContent()->GetFlattenedTreeParent();
+
+    // Fallback to just get parent node, in case there is no parent content
+    // node. Or current node is not a content node.
+    if (!parent)
+      parent = currNode->GetParentNode();
+
+    if (!(currNode = parent)) break;
+  }
 
   return accessible;
 }

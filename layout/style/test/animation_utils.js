@@ -101,11 +101,13 @@ function runOMTATest(aTestFunction, aOnSkip) {
         // We only call this when we know it will fail as otherwise in the
         // regular success case we will end up inflating the "passed tests"
         // count by 1
-        ok(isWorking, "OMTA is working as expected");
+        ok(isWorking, "OMTA should work");
         aOnSkip();
       }
     } else {
-      todo(isWorking, "OMTA is working");
+      todo(isWorking,
+           "OMTA should ideally work, though we don't expect it to work on " +
+           "this platform/configuration");
       aOnSkip();
     }
   }).catch(function(err) {
@@ -117,7 +119,7 @@ function runOMTATest(aTestFunction, aOnSkip) {
     // Create keyframes rule
     const animationName = "a6ce3091ed85"; // Random name to avoid clashes
     var ruleText = "@keyframes " + animationName +
-                   " { from { opacity: 0.5 } to { opacity 0.5 } }";
+                   " { from { opacity: 0.5 } to { opacity: 0.5 } }";
     var style = document.createElement("style");
     style.appendChild(document.createTextNode(ruleText));
     document.head.appendChild(style);

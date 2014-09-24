@@ -495,6 +495,36 @@ let emulator = (function() {
   }
 
   /**
+   * Make an outgoing emergency call.
+   *
+   * @param number
+   *        A string.
+   * @return A deferred promise.
+   */
+  function dialEmergency(number) {
+    log("Make an outgoing emergency call: " + number);
+
+    let deferred = Promise.defer();
+
+    telephony.dialEmergency(number).then(call => {
+      ok(call);
+      is(call.id.number, number);
+      is(call.state, "dialing");
+
+      call.onalerting = function onalerting(event) {
+        call.onalerting = null;
+        log("Received 'onalerting' call event.");
+        checkEventCallState(event, call, "alerting");
+        deferred.resolve(call);
+      };
+    }, cause => {
+      deferred.reject(cause);
+    });
+
+    return deferred.promise;
+  }
+
+  /**
    * Answer an incoming call.
    *
    * @param call
@@ -712,9 +742,11 @@ let emulator = (function() {
    * @param connectedCallback [optional]
    *        A callback function which is called when conference state becomes
    *        connected.
+   * @param twice [optional]
+   *        To send conference request twice. It is only used for special test.
    * @return A deferred promise.
    */
-  function addCallsToConference(callsToAdd, connectedCallback) {
+  function addCallsToConference(callsToAdd, connectedCallback, twice) {
     log("Add " + callsToAdd.length + " calls into conference.");
 
     let deferred = Promise.defer();
@@ -755,10 +787,13 @@ let emulator = (function() {
     });
 
     // Cannot use apply() through webidl, so just separate the cases to handle.
-    if (callsToAdd.length == 2) {
-      conference.add(callsToAdd[0], callsToAdd[1]);
-    } else {
-      conference.add(callsToAdd[0]);
+    let requestCount = twice ? 2 : 1;
+    for (let i = 0; i < requestCount; ++i) {
+      if (callsToAdd.length == 2) {
+        conference.add(callsToAdd[0], callsToAdd[1]);
+      } else {
+        conference.add(callsToAdd[0]);
+      }
     }
 
     return deferred.promise;
@@ -1155,6 +1190,7 @@ let emulator = (function() {
   this.gCheckState = checkState;
   this.gCheckAll = checkAll;
   this.gDial = dial;
+  this.gDialEmergency = dialEmergency;
   this.gAnswer = answer;
   this.gHangUp = hangUp;
   this.gHold = hold;

@@ -12,7 +12,9 @@
 
 #include "mozilla/dom/ElementInlines.h"
 
+#include "AnimationCommon.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/dom/AnimationPlayer.h"
 #include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsIAtom.h"
@@ -91,7 +93,6 @@
 #include "nsNodeInfoManager.h"
 #include "nsICategoryManager.h"
 #include "nsIDOMDocumentType.h"
-#include "nsIDOMUserDataHandler.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
@@ -307,7 +308,7 @@ Element::LockedStyleStates() const
 void
 Element::NotifyStyleStateChange(EventStates aStates)
 {
-  nsIDocument* doc = GetCurrentDoc();
+  nsIDocument* doc = GetComposedDoc();
   if (doc) {
     nsIPresShell *presShell = doc->GetShell();
     if (presShell) {
@@ -584,7 +585,13 @@ Element::GetScrollFrame(nsIFrame **aStyledFrame, bool aFlushLayout)
 }
 
 void
-Element::ScrollIntoView(bool aTop)
+Element::ScrollIntoView()
+{
+  ScrollIntoView(true, ScrollOptions());
+}
+
+void
+Element::ScrollIntoView(bool aTop, const ScrollOptions &aOptions)
 {
   nsIDocument *document = GetCurrentDoc();
   if (!document) {
@@ -600,12 +607,17 @@ Element::ScrollIntoView(bool aTop)
   int16_t vpercent = aTop ? nsIPresShell::SCROLL_TOP :
     nsIPresShell::SCROLL_BOTTOM;
 
+  uint32_t flags = nsIPresShell::SCROLL_OVERFLOW_HIDDEN;
+  if (aOptions.mBehavior == ScrollBehavior::Smooth) {
+    flags |= nsIPresShell::SCROLL_SMOOTH;
+  }
+
   presShell->ScrollContentIntoView(this,
                                    nsIPresShell::ScrollAxis(
                                      vpercent,
                                      nsIPresShell::SCROLL_ALWAYS),
                                    nsIPresShell::ScrollAxis(),
-                                   nsIPresShell::SCROLL_OVERFLOW_HIDDEN);
+                                   flags);
 }
 
 bool
@@ -957,10 +969,8 @@ Element::SetAttribute(const nsAString& aName,
     nsCOMPtr<nsIAtom> nameAtom;
     if (IsHTML() && IsInHTMLDocument()) {
       nsAutoString lower;
-      nsresult rv = nsContentUtils::ASCIIToLower(aName, lower);
-      if (NS_SUCCEEDED(rv)) {
-        nameAtom = do_GetAtom(lower);
-      }
+      nsContentUtils::ASCIIToLower(aName, lower);
+      nameAtom = do_GetAtom(lower);
     }
     else {
       nameAtom = do_GetAtom(aName);
@@ -1489,20 +1499,22 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
 
   // Unset this since that's what the old code effectively did.
   UnsetFlags(NODE_FORCE_XBL_BINDINGS);
-  
+  bool clearBindingParent = true;
+
 #ifdef MOZ_XUL
   nsXULElement* xulElem = nsXULElement::FromContent(this);
   if (xulElem) {
     xulElem->SetXULBindingParent(nullptr);
+    clearBindingParent = false;
   }
-  else
 #endif
-  {
-    nsDOMSlots *slots = GetExistingDOMSlots();
-    if (slots) {
+
+  nsDOMSlots* slots = GetExistingDOMSlots();
+  if (slots) {
+    if (clearBindingParent) {
       slots->mBindingParent = nullptr;
-      slots->mContainingShadow = nullptr;
     }
+    slots->mContainingShadow = nullptr;
   }
 
   // This has to be here, rather than in nsGenericHTMLElement::UnbindFromTree, 
@@ -1564,7 +1576,8 @@ Element::SetSMILOverrideStyleRule(css::StyleRule* aStyleRule,
     if (doc) {
       nsCOMPtr<nsIPresShell> shell = doc->GetShell();
       if (shell) {
-        shell->RestyleForAnimation(this, eRestyle_Self);
+        shell->RestyleForAnimation(this,
+          eRestyle_StyleAttribute | eRestyle_ChangeAnimationPhase);
       }
     }
   }
@@ -1650,7 +1663,7 @@ Element::ShouldBlur(nsIContent *aContent)
 {
   // Determine if the current element is focused, if it is not focused
   // then we should not try to blur
-  nsIDocument *document = aContent->GetDocument();
+  nsIDocument* document = aContent->GetComposedDoc();
   if (!document)
     return false;
 
@@ -1727,7 +1740,7 @@ Element::DispatchClickEvent(nsPresContext* aPresContext,
     clickCount = sourceMouseEvent->clickCount;
     pressure = sourceMouseEvent->pressure;
     inputSource = sourceMouseEvent->inputSource;
-  } else if (aSourceEvent->eventStructType == NS_KEY_EVENT) {
+  } else if (aSourceEvent->mClass == eKeyboardEventClass) {
     inputSource = nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD;
   }
   event.pressure = pressure;
@@ -1745,7 +1758,7 @@ Element::DispatchClickEvent(nsPresContext* aPresContext,
 nsIFrame*
 Element::GetPrimaryFrame(mozFlushType aType)
 {
-  nsIDocument* doc = GetCurrentDoc();
+  nsIDocument* doc = GetComposedDoc();
   if (!doc) {
     return nullptr;
   }
@@ -2734,9 +2747,35 @@ Element::SetTokenList(nsIAtom* aAtom, nsIVariant* aValue)
   return rv.ErrorCode();
 }
 
+Element*
+Element::Closest(const nsAString& aSelector, ErrorResult& aResult)
+{
+  nsCSSSelectorList* selectorList = ParseSelectorList(aSelector, aResult);
+  if (!selectorList) {
+    // Either we failed (and aResult already has the exception), or this
+    // is a pseudo-element-only selector that matches nothing.
+    return nullptr;
+  }
+  OwnerDoc()->FlushPendingLinkUpdates();
+  TreeMatchContext matchingContext(false,
+                                   nsRuleWalker::eRelevantLinkUnvisited,
+                                   OwnerDoc(),
+                                   TreeMatchContext::eNeverMatchVisited);
+  matchingContext.SetHasSpecifiedScope();
+  matchingContext.AddScopeElement(this);
+  for (nsINode* node = this; node; node = node->GetParentNode()) {
+    if (node->IsElement() &&
+        nsCSSRuleProcessor::SelectorListMatches(node->AsElement(),
+                                                matchingContext,
+                                                selectorList)) {
+      return node->AsElement();
+    }
+  }
+  return nullptr;
+}
+
 bool
-Element::MozMatchesSelector(const nsAString& aSelector,
-                            ErrorResult& aError)
+Element::Matches(const nsAString& aSelector, ErrorResult& aError)
 {
   nsCSSSelectorList* selectorList = ParseSelectorList(aSelector, aError);
   if (!selectorList) {
@@ -2862,6 +2901,30 @@ void
 Element::MozRequestPointerLock()
 {
   OwnerDoc()->RequestPointerLock(this);
+}
+
+void
+Element::GetAnimationPlayers(nsTArray<nsRefPtr<AnimationPlayer> >& aPlayers)
+{
+  nsIAtom* properties[] = { nsGkAtoms::transitionsProperty,
+                            nsGkAtoms::animationsProperty };
+  for (size_t propIdx = 0; propIdx < MOZ_ARRAY_LENGTH(properties);
+       propIdx++) {
+    AnimationPlayerCollection* collection =
+      static_cast<AnimationPlayerCollection*>(
+        GetProperty(properties[propIdx]));
+    if (!collection) {
+      continue;
+    }
+    for (size_t playerIdx = 0;
+         playerIdx < collection->mPlayers.Length();
+         playerIdx++) {
+      AnimationPlayer* player = collection->mPlayers[playerIdx];
+      if (player->IsCurrent()) {
+        aPlayers.AppendElement(player);
+      }
+    }
+  }
 }
 
 NS_IMETHODIMP
@@ -3069,6 +3132,50 @@ Element::SetBoolAttr(nsIAtom* aAttr, bool aValue)
   }
 
   return UnsetAttr(kNameSpaceID_None, aAttr, true);
+}
+
+void
+Element::GetEnumAttr(nsIAtom* aAttr,
+                     const char* aDefault,
+                     nsAString& aResult) const
+{
+  GetEnumAttr(aAttr, aDefault, aDefault, aResult);
+}
+
+void
+Element::GetEnumAttr(nsIAtom* aAttr,
+                     const char* aDefaultMissing,
+                     const char* aDefaultInvalid,
+                     nsAString& aResult) const
+{
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(aAttr);
+
+  aResult.Truncate();
+
+  if (!attrVal) {
+    if (aDefaultMissing) {
+      AppendASCIItoUTF16(nsDependentCString(aDefaultMissing), aResult);
+    } else {
+      SetDOMStringToNull(aResult);
+    }
+  } else {
+    if (attrVal->Type() == nsAttrValue::eEnum) {
+      attrVal->GetEnumString(aResult, true);
+    } else if (aDefaultInvalid) {
+      AppendASCIItoUTF16(nsDependentCString(aDefaultInvalid), aResult);
+    }
+  }
+}
+
+void
+Element::SetOrRemoveNullableStringAttr(nsIAtom* aName, const nsAString& aValue,
+                                       ErrorResult& aError)
+{
+  if (DOMStringIsNull(aValue)) {
+    UnsetAttr(aName, aError);
+  } else {
+    SetAttr(aName, aValue, aError);
+  }
 }
 
 Directionality

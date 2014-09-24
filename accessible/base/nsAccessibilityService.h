@@ -41,18 +41,20 @@ ApplicationAccessible* ApplicationAcc();
 } // namespace a11y
 } // namespace mozilla
 
-class nsAccessibilityService : public mozilla::a11y::DocManager,
-                               public mozilla::a11y::FocusManager,
-                               public mozilla::a11y::SelectionManager,
-                               public nsIAccessibilityService,
-                               public nsIObserver
+class nsAccessibilityService MOZ_FINAL : public mozilla::a11y::DocManager,
+                                         public mozilla::a11y::FocusManager,
+                                         public mozilla::a11y::SelectionManager,
+                                         public nsIAccessibilityService,
+                                         public nsIObserver
 {
 public:
   typedef mozilla::a11y::Accessible Accessible;
   typedef mozilla::a11y::DocAccessible DocAccessible;
 
+protected:
   virtual ~nsAccessibilityService();
 
+public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIACCESSIBLERETRIEVAL
   NS_DECL_NSIOBSERVER

@@ -139,11 +139,13 @@ AudioSink::AudioLoop()
   }
 
   while (1) {
-    WaitForAudioToPlay();
-    if (!IsPlaybackContinuing()) {
-      break;
+    {
+      ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+      WaitForAudioToPlay();
+      if (!IsPlaybackContinuing()) {
+        break;
+      }
     }
-
     // See if there's a gap in the audio. If there is, push silence into the
     // audio hardware, so we can play across the gap.
     // Calculate the timestamp of the next chunk of audio in numbers of
@@ -176,7 +178,8 @@ AudioSink::AudioLoop()
     }
   }
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
-  if (!mStopAudioThread && AudioQueue().AtEndOfStream()) {
+  MOZ_ASSERT(mStopAudioThread || AudioQueue().AtEndOfStream());
+  if (!mStopAudioThread && mPlaying) {
     Drain();
   }
   SINK_LOG("AudioLoop complete");
@@ -238,19 +241,19 @@ AudioSink::WaitForAudioToPlay()
 {
   // Wait while we're not playing, and we're not shutting down, or we're
   // playing and we've got no audio to play.
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  AssertCurrentThreadInMonitor();
   while (!mStopAudioThread && (!mPlaying || ExpectMoreAudioData())) {
     if (!mPlaying && !mAudioStream->IsPaused()) {
       mAudioStream->Pause();
     }
-    mon.Wait();
+    GetReentrantMonitor().Wait();
   }
 }
 
 bool
 AudioSink::IsPlaybackContinuing()
 {
-  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  AssertCurrentThreadInMonitor();
   if (mPlaying && mAudioStream->IsPaused()) {
     mAudioStream->Resume();
   }
@@ -291,15 +294,9 @@ AudioSink::PlayFromAudioQueue()
   AssertOnAudioThread();
   NS_ASSERTION(!mAudioStream->IsPaused(), "Don't play when paused");
   nsAutoPtr<AudioData> audio(AudioQueue().PopFront());
-  {
-    ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
-    NS_WARN_IF_FALSE(mPlaying, "Should be playing");
-    // Awaken the decode loop if it's waiting for space to free up in the
-    // audio queue.
-    GetReentrantMonitor().NotifyAll();
-  }
+
   SINK_LOG_V("playing %u frames of audio at time %lld",
-             this, audio->mFrames, audio->mTime);
+             audio->mFrames, audio->mTime);
   mAudioStream->Write(audio->mAudioData, audio->mFrames);
 
   StartAudioStreamPlaybackIfNeeded();

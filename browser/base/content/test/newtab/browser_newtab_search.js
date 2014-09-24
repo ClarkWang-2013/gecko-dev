@@ -8,6 +8,7 @@ const ENGINE_NO_LOGO = "searchEngineNoLogo.xml";
 const ENGINE_1X_LOGO = "searchEngine1xLogo.xml";
 const ENGINE_2X_LOGO = "searchEngine2xLogo.xml";
 const ENGINE_1X_2X_LOGO = "searchEngine1x2xLogo.xml";
+const ENGINE_SUGGESTIONS = "searchSuggestionEngine.xml";
 
 const SERVICE_EVENT_NAME = "ContentSearchService";
 
@@ -141,6 +142,87 @@ function runTests() {
     promiseClick(manageBox),
   ]).then(TestRunner.next);
 
+  // Add the engine that provides search suggestions and switch to it.
+  let suggestionEngine = null;
+  yield promiseNewSearchEngine(ENGINE_SUGGESTIONS, 0).then(engine => {
+    suggestionEngine = engine;
+    TestRunner.next();
+  });
+  Services.search.currentEngine = suggestionEngine;
+  yield promiseSearchEvents(["CurrentEngine"]).then(TestRunner.next);
+  yield checkCurrentEngine(ENGINE_SUGGESTIONS, false, false);
+
+  // Avoid intermittent failures.
+  gSearch()._suggestionController.remoteTimeout = 5000;
+
+  // Type an X in the search input.  This is only a smoke test.  See
+  // browser_searchSuggestionUI.js for comprehensive content search suggestion
+  // UI tests.
+  let input = $("text");
+  input.focus();
+  EventUtils.synthesizeKey("x", {});
+  let suggestionsPromise = promiseSearchEvents(["Suggestions"]);
+
+  // Wait for the search suggestions to become visible and for the Suggestions
+  // message.
+  let table = getContentDocument().getElementById("searchSuggestionTable");
+  info("Waiting for suggestions table to open");
+  let observer = new MutationObserver(() => {
+    if (input.getAttribute("aria-expanded") == "true") {
+      observer.disconnect();
+      ok(!table.hidden, "Search suggestion table unhidden");
+      TestRunner.next();
+    }
+  });
+  observer.observe(input, {
+    attributes: true,
+    attributeFilter: ["aria-expanded"],
+  });
+  yield undefined;
+  yield suggestionsPromise.then(TestRunner.next);
+
+  // Empty the search input, causing the suggestions to be hidden.
+  EventUtils.synthesizeKey("a", { accelKey: true });
+  EventUtils.synthesizeKey("VK_DELETE", {});
+  ok(table.hidden, "Search suggestion table hidden");
+
+  // Remove the search bar from toolbar
+  CustomizableUI.removeWidgetFromArea("search-container");
+  // Focus a different element than the search input from the page.
+  let btn = getContentDocument().getElementById("newtab-customize-button");
+  yield promiseClick(btn).then(TestRunner.next);
+
+  isnot(input, getContentDocument().activeElement, "Search input should not be focused");
+  // Test that Ctrl/Cmd + K will focus the input field from the page.
+  EventUtils.synthesizeKey("k", { accelKey: true });
+  yield promiseSearchEvents(["FocusInput"]).then(TestRunner.next);
+  is(input, getContentDocument().activeElement, "Search input should be focused");
+  // Reset changes made to toolbar
+  CustomizableUI.reset();
+
+  // Test that Ctrl/Cmd + K will focus the search bar from toolbar.
+  let searchBar = gWindow.document.getElementById("searchbar");
+  EventUtils.synthesizeKey("k", { accelKey: true });
+  is(searchBar.textbox.inputField, gWindow.document.activeElement, "Toolbar's search bar should be focused");
+
+  // Test that Ctrl/Cmd + K will focus the search bar from a new about:home page if
+  // the newtab is disabled from `NewTabUtils.allPages.enabled`.
+  yield addNewTabPageTab();
+  // Remove the search bar from toolbar
+  CustomizableUI.removeWidgetFromArea("search-container");
+  NewTabUtils.allPages.enabled = false;
+  EventUtils.synthesizeKey("k", { accelKey: true });
+  let waitEvent = "AboutHomeLoadSnippetsCompleted";
+  yield promiseTabLoadEvent(gWindow.gBrowser.selectedTab, "about:home", waitEvent).then(TestRunner.next);
+
+  is(getContentDocument().documentURI.toLowerCase(), "about:home", "New tab's uri should be about:home");
+  let searchInput = getContentDocument().getElementById("searchText");
+  is(searchInput, getContentDocument().activeElement, "Search input must be the selected element");
+
+  NewTabUtils.allPages.enabled = true;
+  CustomizableUI.reset();
+  gBrowser.removeCurrentTab();
+
   // Done.  Revert the current engine and remove the new engines.
   Services.search.currentEngine = oldCurrentEngine;
   yield promiseSearchEvents(["CurrentEngine"]).then(TestRunner.next);
@@ -264,6 +346,11 @@ function checkCurrentEngine(basename, has1xLogo, has2xLogo) {
     ok(/^url\("blob:/.test(logo.style.backgroundImage), "Logo URI"); //"
   }
 
+  if (logo.hidden) {
+    executeSoon(TestRunner.next);
+    return;
+  }
+
   // "selected" attributes of engines in the panel
   let panel = searchPanel();
   promisePanelShown(panel).then(() => {
@@ -283,7 +370,7 @@ function checkCurrentEngine(basename, has1xLogo, has2xLogo) {
     }
     TestRunner.next();
   });
-  panel.openPopup(logoImg());
+  panel.openPopup(logo);
 }
 
 function promisePanelShown(panel) {
@@ -344,4 +431,47 @@ function logoImg() {
 
 function gSearch() {
   return getContentWindow().gSearch;
+}
+
+/**
+ * Waits for a load (or custom) event to finish in a given tab. If provided
+ * load an uri into the tab.
+ *
+ * @param tab
+ *        The tab to load into.
+ * @param [optional] url
+ *        The url to load, or the current url.
+ * @param [optional] event
+ *        The load event type to wait for.  Defaults to "load".
+ * @return {Promise} resolved when the event is handled.
+ * @resolves to the received event
+ * @rejects if a valid load event is not received within a meaningful interval
+ */
+function promiseTabLoadEvent(tab, url, eventType="load") {
+  let deferred = Promise.defer();
+  info("Wait tab event: " + eventType);
+
+  function handle(event) {
+    if (event.originalTarget != tab.linkedBrowser.contentDocument ||
+        event.target.location.href == "about:blank" ||
+        (url && event.target.location.href != url)) {
+      info("Skipping spurious '" + eventType + "'' event" +
+           " for " + event.target.location.href);
+      return;
+    }
+    clearTimeout(timeout);
+    tab.linkedBrowser.removeEventListener(eventType, handle, true);
+    info("Tab event received: " + eventType);
+    deferred.resolve(event);
+  }
+
+  let timeout = setTimeout(() => {
+    tab.linkedBrowser.removeEventListener(eventType, handle, true);
+    deferred.reject(new Error("Timed out while waiting for a '" + eventType + "'' event"));
+  }, 20000);
+
+  tab.linkedBrowser.addEventListener(eventType, handle, true, true);
+  if (url)
+    tab.linkedBrowser.loadURI(url);
+  return deferred.promise;
 }

@@ -1073,6 +1073,37 @@ org.mozilla.crashes.crashes
 
 This measurement contains a historical record of application crashes.
 
+Version 5
+^^^^^^^^^
+
+This version adds support for Gecko media plugin (GMP) crashes.
+
+This measurement will be reported on each day there was a crash or crash
+submission. Records may contain the following fields, whose values indicate
+the number of crashes, hangs, or submissions that occurred on the given day:
+
+* content-crash
+* content-crash-submission-succeeded
+* content-crash-submission-failed
+* content-hang
+* content-hang-submission-succeeded
+* content-hang-submission-failed
+* gmplugin-crash
+* gmplugin-crash-submission-succeeded
+* gmplugin-crash-submission-failed
+* main-crash
+* main-crash-submission-succeeded
+* main-crash-submission-failed
+* main-hang
+* main-hang-submission-succeeded
+* main-hang-submission-failed
+* plugin-crash
+* plugin-crash-submission-succeeded
+* plugin-crash-submission-failed
+* plugin-hang
+* plugin-hang-submission-succeeded
+* plugin-hang-submission-failed
+
 Version 4
 ^^^^^^^^^
 
@@ -1244,6 +1275,55 @@ The result for an upload attempt is always attributed to the same day as
 the attempt, even if the result occurred on a different day from the attempt.
 Therefore, the sum of the result counts should equal the result of the attempt
 counts.
+
+org.mozilla.hotfix.update
+-------------------------
+
+This measurement contains results from the Firefox update hotfix.
+
+The Firefox update hotfix bypasses the built-in application update mechanism
+and installs a modern Firefox.
+
+Version 1
+^^^^^^^^^
+
+The fields in this measurement are dynamically created based on which
+versions of the update hotfix state file are found on disk.
+
+The general format of the fields is ``<version>.<thing>`` where ``version``
+is a hotfix version like ``v20140527`` and ``thing`` is a key from the
+hotfix state file, e.g. ``upgradedFrom``. Here are some of the ``things``
+that can be defined.
+
+upgradedFrom
+    String identifying the Firefox version that the hotfix upgraded from.
+    e.g. ``16.0`` or ``17.0.1``.
+
+uninstallReason
+    String with enumerated values identifying why the hotfix was uninstalled.
+    Value will be ``STILL_INSTALLED`` if the hotfix is still installed.
+
+downloadAttempts
+    Integer number of times the hotfix started downloading an installer.
+    Download resumes are part of this count.
+
+downloadFailures
+    Integer count of times a download supposedly completed but couldn't
+    be validated. This likely represents something wrong with the network
+    connection. The ratio of this to ``downloadAttempts`` should be low.
+
+installAttempts
+    Integer count of times the hotfix attempted to run the installer.
+    This should ideally be 1. It should only be greater than 1 if UAC
+    elevation was cancelled or not allowed.
+
+installFailures
+    Integer count of total installation failures this client experienced.
+    Can be 0. ``installAttempts - installFailures`` implies install successes.
+
+notificationsShown
+    Integer count of times a notification was displayed to the user that
+    they are running an older Firefox.
 
 org.mozilla.places.places
 -------------------------
@@ -1630,6 +1710,10 @@ deniedTranslationOffer
     Integer count of the number of times the user opted-out offered
     page translation, either by the Not Now button or by the notification's
     close button in the "offer" state.
+autoRejectedTranlationOffer
+    Integer count of the number of times the user is not offered page
+    translation because they had previously clicked "Never translate this
+    language" or "Never translate this site".
 showOriginalContent
     Integer count of the number of times the user activated the Show Original
     command.
@@ -1672,6 +1756,7 @@ Example
       "detectedLanguageChangedAfter": 2,
       "targetLanguageChanged": 0,
       "deniedTranslationOffer": 3,
+      "autoRejectedTranlationOffer": 1,
       "showOriginalContent": 2,
       "translationOpportunityCountsByLanguage": {
         "fr": 100,

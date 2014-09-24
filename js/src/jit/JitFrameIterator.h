@@ -7,8 +7,6 @@
 #ifndef jit_JitFrameIterator_h
 #define jit_JitFrameIterator_h
 
-#ifdef JS_ION
-
 #include "jsfun.h"
 #include "jsscript.h"
 #include "jstypes.h"
@@ -260,6 +258,12 @@ class JitFrameIterator
     void dump() const;
 
     inline BaselineFrame *baselineFrame() const;
+
+#ifdef DEBUG
+    bool verifyReturnAddressUsingNativeToBytecodeMap();
+#else
+    inline bool verifyReturnAddressUsingNativeToBytecodeMap() { return true; }
+#endif
 };
 
 class IonJSFrameLayout;
@@ -419,7 +423,8 @@ class SnapshotIterator
     template <class Op>
     void readFunctionFrameArgs(Op &op, ArgumentsObject **argsObj, Value *thisv,
                                unsigned start, unsigned end, JSScript *script,
-                               const Value &unreadablePlaceholder = UndefinedValue())
+                               const Value &unreadablePlaceholder = UndefinedValue(),
+                               bool silentFailure = false)
     {
         // Assumes that the common frame arguments have already been read.
         if (script->argumentsHasVarBinding()) {
@@ -447,7 +452,7 @@ class SnapshotIterator
             // We are not always able to read values from the snapshots, some values
             // such as non-gc things may still be live in registers and cause an
             // error while reading the machine state.
-            Value v = maybeRead(unreadablePlaceholder);
+            Value v = maybeRead(unreadablePlaceholder, silentFailure);
             op(v);
         }
     }
@@ -535,7 +540,8 @@ class InlineFrameIterator
                                 JSObject **scopeChain, Value *rval,
                                 ArgumentsObject **argsObj, Value *thisv,
                                 ReadFrameArgsBehavior behavior,
-                                const Value &unreadablePlaceholder = UndefinedValue()) const
+                                const Value &unreadablePlaceholder = UndefinedValue(),
+                                bool silentFailure = false) const
     {
         SnapshotIterator s(si_);
 
@@ -556,7 +562,7 @@ class InlineFrameIterator
             // done.
             if (behavior != ReadFrame_Overflown) {
                 s.readFunctionFrameArgs(argOp, argsObj, thisv, 0, nformal, script(),
-                                        unreadablePlaceholder);
+                                        unreadablePlaceholder, silentFailure);
             }
 
             if (behavior != ReadFrame_Formals) {
@@ -586,7 +592,7 @@ class InlineFrameIterator
                     parent_s.readCommonFrameSlots(nullptr, nullptr);
                     parent_s.readFunctionFrameArgs(argOp, nullptr, nullptr,
                                                    nformal, nactual, it.script(),
-                                                   unreadablePlaceholder);
+                                                   unreadablePlaceholder, silentFailure);
                 } else {
                     // There is no parent frame to this inlined frame, we can read
                     // from the frame's Value vector directly.
@@ -605,7 +611,7 @@ class InlineFrameIterator
             // recovering slots.
             //
             // FIXME bug 1029963.
-            localOp(s.maybeRead(unreadablePlaceholder));
+            localOp(s.maybeRead(unreadablePlaceholder, silentFailure));
         }
     }
 
@@ -691,7 +697,5 @@ class InlineFrameIterator
 
 } // namespace jit
 } // namespace js
-
-#endif // JS_ION
 
 #endif /* jit_JitFrameIterator_h */

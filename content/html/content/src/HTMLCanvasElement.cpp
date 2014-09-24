@@ -35,10 +35,7 @@
 #include "nsNetUtil.h"
 #include "nsStreamUtils.h"
 #include "ActiveLayerTracker.h"
-
-#ifdef MOZ_WEBGL
-#include "../canvas/src/WebGL2Context.h"
-#endif
+#include "WebGL2Context.h"
 
 using namespace mozilla::layers;
 using namespace mozilla::gfx;
@@ -293,7 +290,7 @@ HTMLCanvasElement::CopyInnerTo(Element* aDest)
 
 nsresult HTMLCanvasElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
-  if (aVisitor.mEvent->eventStructType == NS_MOUSE_EVENT) {
+  if (aVisitor.mEvent->mClass == eMouseEventClass) {
     WidgetMouseEventBase* evt = (WidgetMouseEventBase*)aVisitor.mEvent;
     if (mCurrentContext) {
       nsIFrame *frame = GetPrimaryFrame();
@@ -470,14 +467,12 @@ HTMLCanvasElement::ToDataURLImpl(JSContext* aCx,
   }
 
   nsAutoString type;
-  nsresult rv = nsContentUtils::ASCIIToLower(aMimeType, type);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  nsContentUtils::ASCIIToLower(aMimeType, type);
 
   nsAutoString params;
   bool usingCustomParseOptions;
-  rv = ParseParams(aCx, type, aEncoderOptions, params, &usingCustomParseOptions);
+  nsresult rv =
+    ParseParams(aCx, type, aEncoderOptions, params, &usingCustomParseOptions);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -518,10 +513,7 @@ HTMLCanvasElement::ToBlob(JSContext* aCx,
   }
 
   nsAutoString type;
-  aRv = nsContentUtils::ASCIIToLower(aType, type);
-  if (aRv.Failed()) {
-    return;
-  }
+  nsContentUtils::ASCIIToLower(aType, type);
 
   nsAutoString params;
   bool usingCustomParseOptions;
@@ -549,17 +541,49 @@ HTMLCanvasElement::ToBlob(JSContext* aCx,
     mCurrentContext->GetImageBuffer(&imageBuffer, &format);
   }
 
+  // Encoder callback when encoding is complete.
+  class EncodeCallback : public EncodeCompleteCallback
+  {
+  public:
+    EncodeCallback(nsIGlobalObject* aGlobal, FileCallback* aCallback)
+      : mGlobal(aGlobal)
+      , mFileCallback(aCallback) {}
+
+    // This is called on main thread.
+    nsresult ReceiveBlob(already_AddRefed<DOMFile> aBlob)
+    {
+      nsRefPtr<DOMFile> blob = aBlob;
+      uint64_t size;
+      nsresult rv = blob->GetSize(&size);
+      if (NS_SUCCEEDED(rv)) {
+        AutoJSAPI jsapi;
+        jsapi.Init(mGlobal);
+        JS_updateMallocCounter(jsapi.cx(), size);
+      }
+
+      mozilla::ErrorResult error;
+      mFileCallback->Call(blob, error);
+
+      mGlobal = nullptr;
+      mFileCallback = nullptr;
+
+      return error.ErrorCode();
+    }
+
+    nsCOMPtr<nsIGlobalObject> mGlobal;
+    nsRefPtr<FileCallback> mFileCallback;
+  };
+
   nsCOMPtr<nsIGlobalObject> global = OwnerDoc()->GetScopeObject();
   MOZ_ASSERT(global);
+  nsRefPtr<EncodeCompleteCallback> callback = new EncodeCallback(global, &aCallback);
   aRv = ImageEncoder::ExtractDataAsync(type,
                                        params,
                                        usingCustomParseOptions,
                                        imageBuffer,
                                        format,
                                        GetSize(),
-                                       mCurrentContext,
-                                       global,
-                                       aCallback);
+                                       callback);
 }
 
 already_AddRefed<nsIDOMFile>
@@ -636,7 +660,7 @@ HTMLCanvasElement::GetContextHelper(const nsAString& aContextId,
     ctx.forget(aContext);
     return NS_OK;
   }
-#ifdef MOZ_WEBGL
+
   if (WebGL2Context::IsSupported() &&
       aContextId.EqualsLiteral("experimental-webgl2"))
   {
@@ -651,7 +675,6 @@ HTMLCanvasElement::GetContextHelper(const nsAString& aContextId,
     ctx.forget(aContext);
     return NS_OK;
   }
-#endif
 
   NS_ConvertUTF16toUTF8 ctxId(aContextId);
 

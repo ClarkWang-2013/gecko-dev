@@ -23,10 +23,10 @@ class nsXPTType : public XPTTypeDescriptorPrefix
 public:
     nsXPTType()
         {}    // random contents
-    nsXPTType(const XPTTypeDescriptorPrefix& prefix)
+    MOZ_IMPLICIT nsXPTType(const XPTTypeDescriptorPrefix& prefix)
         {*(XPTTypeDescriptorPrefix*)this = prefix;}
 
-    nsXPTType(const uint8_t& prefix)
+    MOZ_IMPLICIT nsXPTType(const uint8_t& prefix)
         {*(uint8_t*)this = prefix;}
 
     nsXPTType& operator=(uint8_t val)
@@ -124,7 +124,7 @@ class nsXPTParamInfo : public XPTParamDescriptor
 {
 // NO DATA - this a flyweight wrapper
 public:
-    nsXPTParamInfo(const XPTParamDescriptor& desc)
+    MOZ_IMPLICIT nsXPTParamInfo(const XPTParamDescriptor& desc)
         {*(XPTParamDescriptor*)this = desc;}
 
 
@@ -132,9 +132,39 @@ public:
     bool IsOut() const    {return 0 != (XPT_PD_IS_OUT(flags));}
     bool IsRetval() const {return 0 != (XPT_PD_IS_RETVAL(flags));}
     bool IsShared() const {return 0 != (XPT_PD_IS_SHARED(flags));}
+
+    // Dipper types are one of the more inscrutable aspects of xpidl. In a
+    // nutshell, dippers are empty container objects, created and passed by
+    // the caller, and filled by the callee. The callee receives a fully-
+    // formed object, and thus does not have to construct anything. But
+    // the object is functionally empty, and the callee is responsible for
+    // putting something useful inside of it.
+    //
+    // XPIDL decides which types to make dippers. The list of these types
+    // is given in the isDipperType() function in typelib.py, and is currently
+    // limited to 4 string types.
+    //
+    // When a dipper type is declared as an 'out' parameter, xpidl internally
+    // converts it to an 'in', and sets the XPT_PD_DIPPER flag on it. For this
+    // reason, dipper types are sometimes referred to as 'out parameters
+    // masquerading as in'. The burden of maintaining this illusion falls mostly
+    // on XPConnect, which creates the empty containers, and harvest the results
+    // after the call.
     bool IsDipper() const {return 0 != (XPT_PD_IS_DIPPER(flags));}
     bool IsOptional() const {return 0 != (XPT_PD_IS_OPTIONAL(flags));}
     const nsXPTType GetType() const {return type.prefix;}
+
+    bool IsStringClass() const {
+      switch (GetType().TagPart()) {
+        case nsXPTType::T_ASTRING:
+        case nsXPTType::T_DOMSTRING:
+        case nsXPTType::T_UTF8STRING:
+        case nsXPTType::T_CSTRING:
+          return true;
+        default:
+          return false;
+      }
+    }
 
     // Whether this parameter is passed indirectly on the stack. This mainly
     // applies to out/inout params, but we use it unconditionally for certain
@@ -153,7 +183,7 @@ class nsXPTMethodInfo : public XPTMethodDescriptor
 {
 // NO DATA - this a flyweight wrapper
 public:
-    nsXPTMethodInfo(const XPTMethodDescriptor& desc)
+    MOZ_IMPLICIT nsXPTMethodInfo(const XPTMethodDescriptor& desc)
         {*(XPTMethodDescriptor*)this = desc;}
 
     bool IsGetter()      const {return 0 != (XPT_MD_IS_GETTER(flags) );}
@@ -186,7 +216,7 @@ class nsXPTConstant : public XPTConstDescriptor
 {
 // NO DATA - this a flyweight wrapper
 public:
-    nsXPTConstant(const XPTConstDescriptor& desc)
+    MOZ_IMPLICIT nsXPTConstant(const XPTConstDescriptor& desc)
         {*(XPTConstDescriptor*)this = desc;}
 
     const char* GetName() const

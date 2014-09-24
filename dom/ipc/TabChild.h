@@ -33,6 +33,7 @@
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/CompositorTypes.h"
+#include "nsIWebBrowserChrome3.h"
 
 class nsICachedFileDescriptorListener;
 class nsIDOMWindowUtils;
@@ -62,7 +63,7 @@ class TabChildGlobal : public DOMEventTargetHelper,
                        public nsIGlobalObject
 {
 public:
-  TabChildGlobal(TabChildBase* aTabChild);
+  explicit TabChildGlobal(TabChildBase* aTabChild);
   void Init();
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(TabChildGlobal, DOMEventTargetHelper)
@@ -139,12 +140,15 @@ public:
 
   nsCOMPtr<nsIContentFrameMessageManager> mMessageManager;
   nsRefPtr<TabChildBase> mTabChild;
+
+protected:
+  ~TabChildGlobal();
 };
 
 class ContentListener MOZ_FINAL : public nsIDOMEventListener
 {
 public:
-  ContentListener(TabChild* aTabChild) : mTabChild(aTabChild) {}
+  explicit ContentListener(TabChild* aTabChild) : mTabChild(aTabChild) {}
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMEVENTLISTENER
 protected:
@@ -162,8 +166,9 @@ class TabChildBase : public nsISupports,
 {
 public:
     TabChildBase();
+
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-    NS_DECL_CYCLE_COLLECTION_CLASS(TabChildBase)
+    NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TabChildBase)
 
     virtual nsIWebNavigation* WebNavigation() = 0;
     virtual nsIWidget* WebWidget() = 0;
@@ -174,7 +179,7 @@ public:
     // viewport data on a document may have changed. If it didn't
     // change, this function doesn't do anything.  However, it should
     // not be called all the time as it is fairly expensive.
-    bool HandlePossibleViewportChange();
+    bool HandlePossibleViewportChange(const ScreenIntSize& aOldScreenSize);
     virtual bool DoUpdateZoomConstraints(const uint32_t& aPresShellId,
                                          const mozilla::layers::FrameMetrics::ViewID& aViewId,
                                          const bool& aIsRoot,
@@ -185,7 +190,7 @@ public:
                                                 nsIWidget* aWidget);
 
 protected:
-    ~TabChildBase() {}
+    virtual ~TabChildBase();
     CSSSize GetPageSize(nsCOMPtr<nsIDocument> aDocument, const CSSSize& aViewport);
 
     // Get the DOMWindowUtils for the top-level window in this tab.
@@ -220,22 +225,23 @@ protected:
     ScreenIntSize mInnerSize;
     mozilla::layers::FrameMetrics mLastRootMetrics;
     mozilla::layout::ScrollingBehavior mScrolling;
+    nsCOMPtr<nsIWebBrowserChrome3> mWebBrowserChrome;
 };
 
-class TabChild : public TabChildBase,
-                 public PBrowserChild,
-                 public nsIWebBrowserChrome2,
-                 public nsIEmbeddingSiteWindow,
-                 public nsIWebBrowserChromeFocus,
-                 public nsIInterfaceRequestor,
-                 public nsIWindowProvider,
-                 public nsIDOMEventListener,
-                 public nsIWebProgressListener,
-                 public nsSupportsWeakReference,
-                 public nsITabChild,
-                 public nsIObserver,
-                 public TabContext,
-                 public nsITooltipListener
+class TabChild MOZ_FINAL : public TabChildBase,
+                           public PBrowserChild,
+                           public nsIWebBrowserChrome2,
+                           public nsIEmbeddingSiteWindow,
+                           public nsIWebBrowserChromeFocus,
+                           public nsIInterfaceRequestor,
+                           public nsIWindowProvider,
+                           public nsIDOMEventListener,
+                           public nsIWebProgressListener,
+                           public nsSupportsWeakReference,
+                           public nsITabChild,
+                           public nsIObserver,
+                           public TabContext,
+                           public nsITooltipListener
 {
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
     typedef mozilla::layout::RenderFrameChild RenderFrameChild;
@@ -256,8 +262,6 @@ public:
     /** Return a TabChild with the given attributes. */
     static already_AddRefed<TabChild>
     Create(nsIContentChild* aManager, const TabContext& aContext, uint32_t aChromeFlags);
-
-    virtual ~TabChild();
 
     bool IsRootContentDocument();
 
@@ -316,7 +320,7 @@ public:
                                          const FileDescriptor& aFileDescriptor)
                                          MOZ_OVERRIDE;
     virtual bool RecvShow(const nsIntSize& size) MOZ_OVERRIDE;
-    virtual bool RecvUpdateDimensions(const nsRect& rect,
+    virtual bool RecvUpdateDimensions(const nsIntRect& rect,
                                       const nsIntSize& size,
                                       const ScreenOrientation& orientation) MOZ_OVERRIDE;
     virtual bool RecvUpdateFrame(const mozilla::layers::FrameMetrics& aFrameMetrics) MOZ_OVERRIDE;
@@ -383,13 +387,6 @@ public:
     virtual PColorPickerChild*
     AllocPColorPickerChild(const nsString& title, const nsString& initialColor) MOZ_OVERRIDE;
     virtual bool DeallocPColorPickerChild(PColorPickerChild* actor) MOZ_OVERRIDE;
-
-#ifdef DEBUG
-    virtual PContentPermissionRequestChild*
-    SendPContentPermissionRequestConstructor(PContentPermissionRequestChild* aActor,
-                                             const InfallibleTArray<PermissionRequest>& aRequests,
-                                             const IPC::Principal& aPrincipal);
-#endif /* DEBUG */
 
     virtual PContentPermissionRequestChild*
     AllocPContentPermissionRequestChild(const InfallibleTArray<PermissionRequest>& aRequests,
@@ -482,6 +479,8 @@ public:
     virtual bool RecvUIResolutionChanged() MOZ_OVERRIDE;
 
 protected:
+    virtual ~TabChild();
+
     virtual PRenderFrameChild* AllocPRenderFrameChild(ScrollingBehavior* aScrolling,
                                                       TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                                       uint64_t* aLayersId,
@@ -497,6 +496,8 @@ protected:
 
     virtual bool DeallocPIndexedDBChild(PIndexedDBChild* aActor) MOZ_OVERRIDE;
 
+    virtual bool RecvRequestNotifyAfterRemotePaint();
+
 private:
     /**
      * Create a new TabChild object.
@@ -510,6 +511,8 @@ private:
 
     nsresult Init();
 
+    class DelayedFireSingleTapEvent;
+    class DelayedFireContextMenuEvent;
 
     // Notify others that our TabContext has been updated.  (At the moment, this
     // sets the appropriate app-id and is-browser flags on our docshell.)
@@ -517,8 +520,6 @@ private:
     // You should call this after calling TabContext::SetTabContext().  We also
     // call this during Init().
     void NotifyTabContextUpdated();
-
-    bool UseDirectCompositor();
 
     void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
@@ -551,6 +552,9 @@ private:
 
     bool HasValidInnerSize();
 
+    void SendPendingTouchPreventedResponse(bool aPreventDefault,
+                                           const ScrollableLayerGuid& aGuid);
+
     class CachedFileDescriptorInfo;
     class CachedFileDescriptorCallbackRunnable;
 
@@ -571,7 +575,7 @@ private:
     // A timer task that fires if the tap-hold timeout is exceeded by
     // the touch we're tracking.  That is, if touchend or a touchmove
     // that exceeds the gesture threshold doesn't happen.
-    CancelableTask* mTapHoldTimer;
+    nsCOMPtr<nsITimer> mTapHoldTimer;
     // Whether we have already received a FileDescriptor for the app package.
     bool mAppPackageFileDescriptorRecved;
     // At present only 1 of these is really expected.
@@ -583,15 +587,18 @@ private:
     bool mTriedBrowserInit;
     ScreenOrientation mOrientation;
     bool mUpdateHitRegion;
-    bool mContextMenuHandled;
-    bool mLongTapEventHandled;
-    bool mWaitingTouchListeners;
+    bool mPendingTouchPreventedResponse;
+    ScrollableLayerGuid mPendingTouchPreventedGuid;
     void FireSingleTapEvent(LayoutDevicePoint aPoint);
+
+    bool mTouchEndCancelled;
+    bool mEndTouchIsClick;
 
     bool mIgnoreKeyPressEvent;
     nsRefPtr<ActiveElementManager> mActiveElementManager;
     bool mHasValidInnerSize;
     uint64_t mUniqueId;
+    bool mDestroyed;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);
 };

@@ -14,6 +14,7 @@ namespace jit {
 
 class OutOfLineBailout;
 class OutOfLineUndoALUOperation;
+class OutOfLineLoadTypedArrayOutOfBounds;
 class MulNegativeZeroCheck;
 class ModOverflowCheck;
 class ReturnZero;
@@ -31,6 +32,25 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     bool bailout(const T &t, LSnapshot *snapshot);
 
   protected:
+
+    // Load a NaN or zero into a register for an out of bounds AsmJS or static
+    // typed array load.
+    class OutOfLineLoadTypedArrayOutOfBounds : public OutOfLineCodeBase<CodeGeneratorX86Shared>
+    {
+        AnyRegister dest_;
+        bool isFloat32Load_;
+      public:
+        OutOfLineLoadTypedArrayOutOfBounds(AnyRegister dest, bool isFloat32Load)
+          : dest_(dest), isFloat32Load_(isFloat32Load)
+        {}
+
+        AnyRegister dest() const { return dest_; }
+        bool isFloat32Load() const { return isFloat32Load_; }
+        bool accept(CodeGeneratorX86Shared *codegen) {
+            return codegen->visitOutOfLineLoadTypedArrayOutOfBounds(this);
+        }
+    };
+
     // Label for the common return path.
     NonAssertingLabel returnLabel_;
     NonAssertingLabel deoptLabel_;
@@ -97,7 +117,6 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
 
   protected:
     bool generatePrologue();
-    bool generateAsmJSPrologue(Label *stackOverflowLabe);
     bool generateEpilogue();
     bool generateOutOfLineCode();
 
@@ -134,6 +153,7 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual bool visitMinMaxD(LMinMaxD *ins);
     virtual bool visitAbsD(LAbsD *ins);
     virtual bool visitAbsF(LAbsF *ins);
+    virtual bool visitClzI(LClzI *ins);
     virtual bool visitSqrtD(LSqrtD *ins);
     virtual bool visitSqrtF(LSqrtF *ins);
     virtual bool visitPowHalfD(LPowHalfD *ins);
@@ -177,11 +197,29 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual bool visitUDivOrMod(LUDivOrMod *ins);
     virtual bool visitAsmJSPassStackArg(LAsmJSPassStackArg *ins);
 
+    bool visitOutOfLineLoadTypedArrayOutOfBounds(OutOfLineLoadTypedArrayOutOfBounds *ool);
+
     bool visitForkJoinGetSlice(LForkJoinGetSlice *ins);
 
     bool visitNegI(LNegI *lir);
     bool visitNegD(LNegD *lir);
     bool visitNegF(LNegF *lir);
+
+    // SIMD operators
+    bool visitSimdValueInt32x4(LSimdValueInt32x4 *lir);
+    bool visitSimdValueFloat32x4(LSimdValueFloat32x4 *lir);
+    bool visitSimdSplatX4(LSimdSplatX4 *lir);
+    bool visitInt32x4(LInt32x4 *ins);
+    bool visitFloat32x4(LFloat32x4 *ins);
+    bool visitSimdExtractElementI(LSimdExtractElementI *lir);
+    bool visitSimdExtractElementF(LSimdExtractElementF *lir);
+    bool visitSimdSignMaskX4(LSimdSignMaskX4 *ins);
+    bool visitSimdBinaryCompIx4(LSimdBinaryCompIx4 *lir);
+    bool visitSimdBinaryCompFx4(LSimdBinaryCompFx4 *lir);
+    bool visitSimdBinaryArithIx4(LSimdBinaryArithIx4 *lir);
+    bool visitSimdBinaryArithFx4(LSimdBinaryArithFx4 *lir);
+    bool visitSimdBinaryBitwiseX4(LSimdBinaryBitwiseX4 *lir);
+    bool visitSimdSelect(LSimdSelect *ins);
 
     // Out of line visitors.
     bool visitOutOfLineBailout(OutOfLineBailout *ool);

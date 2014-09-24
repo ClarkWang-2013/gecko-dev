@@ -47,10 +47,27 @@ GrallocTextureClientOGL::GrallocTextureClientOGL(ISurfaceAllocator* aAllocator,
 GrallocTextureClientOGL::~GrallocTextureClientOGL()
 {
   MOZ_COUNT_DTOR(GrallocTextureClientOGL);
-    if (ShouldDeallocateInDestructor()) {
-    ISurfaceAllocator* allocator = GetAllocator();
+  ISurfaceAllocator* allocator = GetAllocator();
+  if (ShouldDeallocateInDestructor()) {
     allocator->DeallocGrallocBuffer(&mGrallocHandle);
+  } else {
+    allocator->DropGrallocBuffer(&mGrallocHandle);
   }
+}
+
+TemporaryRef<TextureClient>
+GrallocTextureClientOGL::CreateSimilar(TextureFlags aFlags,
+                                       TextureAllocationFlags aAllocFlags) const
+{
+  RefPtr<TextureClient> tex = new GrallocTextureClientOGL(
+    mAllocator, mFormat, mBackend, mFlags | aFlags
+  );
+
+  if (!tex->AllocateForSurface(mSize, aAllocFlags)) {
+    return nullptr;
+  }
+
+  return tex;
 }
 
 void
@@ -177,7 +194,7 @@ GrallocTextureClientOGL::BorrowDrawTarget()
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(mMappedBuffer, "Calling TextureClient::BorrowDrawTarget without locking :(");
 
-  if (!IsValid() || !IsAllocated()) {
+  if (!IsValid() || !IsAllocated() || !mMappedBuffer) {
     return nullptr;
   }
 

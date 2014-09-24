@@ -45,7 +45,7 @@ add_task(function* SetCurrentEngine() {
     info("Test observed " + data);
     if (data == "engine-current") {
       ok(true, "Test observed engine-current");
-      Services.obs.removeObserver(obs, "browser-search-engine-modified", false);
+      Services.obs.removeObserver(obs, "browser-search-engine-modified");
       deferred.resolve();
     }
   }, "browser-search-engine-modified", false);
@@ -59,7 +59,7 @@ add_task(function* SetCurrentEngine() {
   });
 
   Services.search.currentEngine = oldCurrentEngine;
-  let msg = yield waitForTestMsg("CurrentEngine");
+  msg = yield waitForTestMsg("CurrentEngine");
   checkMsg(msg, {
     type: "CurrentEngine",
     data: yield currentEngineObj(oldCurrentEngine),
@@ -171,6 +171,94 @@ add_task(function* badImage() {
   yield waitForTestMsg("CurrentState");
 });
 
+add_task(function* GetSuggestions_AddFormHistoryEntry_RemoveFormHistoryEntry() {
+  yield addTab();
+
+  // Add the test engine that provides suggestions.
+  let vals = yield waitForNewEngine("contentSearchSuggestions.xml", 0);
+  let engine = vals[0];
+
+  let searchStr = "browser_ContentSearch.js-suggestions-";
+
+  // Add a form history suggestion and wait for Satchel to notify about it.
+  gMsgMan.sendAsyncMessage(TEST_MSG, {
+    type: "AddFormHistoryEntry",
+    data: searchStr + "form",
+  });
+  let deferred = Promise.defer();
+  Services.obs.addObserver(function onAdd(subj, topic, data) {
+    if (data == "formhistory-add") {
+      Services.obs.removeObserver(onAdd, "satchel-storage-changed");
+      executeSoon(() => deferred.resolve());
+    }
+  }, "satchel-storage-changed", false);
+  yield deferred.promise;
+
+  // Send GetSuggestions using the test engine.  Its suggestions should appear
+  // in the remote suggestions in the Suggestions response below.
+  gMsgMan.sendAsyncMessage(TEST_MSG, {
+    type: "GetSuggestions",
+    data: {
+      engineName: engine.name,
+      searchString: searchStr,
+      remoteTimeout: 5000,
+    },
+  });
+
+  // Check the Suggestions response.
+  let msg = yield waitForTestMsg("Suggestions");
+  checkMsg(msg, {
+    type: "Suggestions",
+    data: {
+      engineName: engine.name,
+      searchString: searchStr,
+      formHistory: [searchStr + "form"],
+      remote: [searchStr + "foo", searchStr + "bar"],
+    },
+  });
+
+  // Delete the form history suggestion and wait for Satchel to notify about it.
+  gMsgMan.sendAsyncMessage(TEST_MSG, {
+    type: "RemoveFormHistoryEntry",
+    data: searchStr + "form",
+  });
+  deferred = Promise.defer();
+  Services.obs.addObserver(function onRemove(subj, topic, data) {
+    if (data == "formhistory-remove") {
+      Services.obs.removeObserver(onRemove, "satchel-storage-changed");
+      executeSoon(() => deferred.resolve());
+    }
+  }, "satchel-storage-changed", false);
+  yield deferred.promise;
+
+  // Send GetSuggestions again.
+  gMsgMan.sendAsyncMessage(TEST_MSG, {
+    type: "GetSuggestions",
+    data: {
+      engineName: engine.name,
+      searchString: searchStr,
+      remoteTimeout: 5000,
+    },
+  });
+
+  // The formHistory suggestions in the Suggestions response should be empty.
+  msg = yield waitForTestMsg("Suggestions");
+  checkMsg(msg, {
+    type: "Suggestions",
+    data: {
+      engineName: engine.name,
+      searchString: searchStr,
+      formHistory: [],
+      remote: [searchStr + "foo", searchStr + "bar"],
+    },
+  });
+
+  // Finally, clean up by removing the test engine.
+  Services.search.removeEngine(engine);
+  yield waitForTestMsg("CurrentState");
+});
+
+
 function checkMsg(actualMsg, expectedMsgData) {
   SimpleTest.isDeeply(actualMsg.data, expectedMsgData, "Checking message");
 }
@@ -226,7 +314,7 @@ function addTab() {
   let tab = gBrowser.addTab();
   gBrowser.selectedTab = tab;
   tab.linkedBrowser.addEventListener("load", function load() {
-    tab.removeEventListener("load", load, true);
+    tab.linkedBrowser.removeEventListener("load", load, true);
     let url = getRootDirectory(gTestPath) + TEST_CONTENT_SCRIPT_BASENAME;
     gMsgMan = tab.linkedBrowser.messageManager;
     gMsgMan.sendAsyncMessage(CONTENT_SEARCH_MSG, {

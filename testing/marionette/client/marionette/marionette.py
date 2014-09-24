@@ -2,14 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import base64
 import ConfigParser
 import datetime
+import json
 import os
 import socket
 import StringIO
 import time
 import traceback
-import base64
+import warnings
+
 
 from application_cache import ApplicationCache
 from decorators import do_crash_check
@@ -81,7 +84,7 @@ class HTMLElement(object):
 
         :param x: X-coordinate of tap event. If not given, default to the
          center of the element.
-        :param x: X-coordinate of tap event. If not given, default to the
+        :param y: Y-coordinate of tap event. If not given, default to the
          center of the element.
         '''
         return self.marionette._send_message('singleTap', 'ok', id=self.id, x=x, y=y)
@@ -124,7 +127,11 @@ class HTMLElement(object):
 
     def is_enabled(self):
         '''
-        Returns True if the element is enabled.
+        This command will return False if all the following criteria are met otherwise return True:
+
+        * A form control is disabled.
+        * A HtmlElement has a disabled boolean attribute.
+
         '''
         return self.marionette._send_message('isElementEnabled', 'value', id=self.id)
 
@@ -139,6 +146,8 @@ class HTMLElement(object):
         '''
         A dictionary with the size of the element.
         '''
+        warnings.warn("The size property has been deprecated and will be removed in a future version. \
+            Please use HTMLElement#rect", DeprecationWarning)
         return self.marionette._send_message('getElementSize', 'value', id=self.id)
 
     @property
@@ -159,8 +168,21 @@ class HTMLElement(object):
         :returns: a dictionary containing x and y as entries
 
         """
-
+        warnings.warn("The location property has been deprecated and will be removed in a future version. \
+            Please use HTMLElement#rect", DeprecationWarning)
         return self.marionette._send_message("getElementLocation", "value", id=self.id)
+
+    @property
+    def rect(self):
+        """
+            this will return a dictionary with the following:
+
+            * x and y represent the top left coordinates of the WebElement relative to top left corner of the document.
+            * height and the width will contain the height and the width of the DOMRect of the WebElement.
+
+        """
+
+        return self.marionette._send_message("getElementRect", "value", id=self.id)
 
     def value_of_css_property(self, property_name):
         '''
@@ -449,8 +471,8 @@ class Marionette(object):
                  profile=None, emulator=None, sdcard=None, emulator_img=None,
                  emulator_binary=None, emulator_res=None, connect_to_running_emulator=False,
                  gecko_log=None, homedir=None, baseurl=None, no_window=False, logdir=None,
-                 busybox=None, symbols_path=None, timeout=None, device_serial=None,
-                 adb_path=None):
+                 busybox=None, symbols_path=None, timeout=None, socket_timeout=360,
+                 device_serial=None, adb_path=None, process_args=None):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -464,6 +486,7 @@ class Marionette(object):
         self.no_window = no_window
         self._test_name = None
         self.timeout = timeout
+        self.socket_timeout=socket_timeout
         self.device_serial = device_serial
 
         if bin:
@@ -506,21 +529,23 @@ class Marionette(object):
                                             userdata=emulator_img,
                                             resolution=emulator_res,
                                             profile=profile,
-                                            adb_path=adb_path)
+                                            adb_path=adb_path,
+                                            process_args=process_args)
             self.emulator = self.runner.device
             self.emulator.start()
-            self.port = self.emulator.setup_port_forwarding(self.port)
+            self.port = self.emulator.setup_port_forwarding(remote_port=self.port)
             assert(self.emulator.wait_for_port(self.port)), "Timed out waiting for port!"
 
         if connect_to_running_emulator:
             self.runner = B2GEmulatorRunner(b2g_home=homedir,
-                                            logdir=logdir)
+                                            logdir=logdir,
+                                            process_args=process_args)
             self.emulator = self.runner.device
             self.emulator.connect()
-            self.port = self.emulator.setup_port_forwarding(self.port)
+            self.port = self.emulator.setup_port_forwarding(remote_port=self.port)
             assert(self.emulator.wait_for_port(self.port)), "Timed out waiting for port!"
 
-        self.client = MarionetteTransport(self.host, self.port)
+        self.client = MarionetteTransport(self.host, self.port, self.socket_timeout)
 
         if emulator:
             if busybox:
@@ -683,26 +708,95 @@ class Marionette(object):
                 raise errors.FrameSendNotInitializedError(message=message, status=status, stacktrace=stacktrace)
             elif status == errors.ErrorCodes.FRAME_SEND_FAILURE_ERROR:
                 raise errors.FrameSendFailureError(message=message, status=status, stacktrace=stacktrace)
+            elif status == errors.ErrorCodes.UNSUPPORTED_OPERATION:
+                raise errors.UnsupportedOperationException(message=message, status=status, stacktrace=stacktrace)
             else:
                 raise errors.MarionetteException(message=message, status=status, stacktrace=stacktrace)
         raise errors.MarionetteException(message=response, status=500)
+
+    def _reset_timeouts(self):
+        if self.timeout is not None:
+            self.timeouts(self.TIMEOUT_SEARCH, self.timeout)
+            self.timeouts(self.TIMEOUT_SCRIPT, self.timeout)
+            self.timeouts(self.TIMEOUT_PAGE, self.timeout)
+        else:
+            self.timeouts(self.TIMEOUT_PAGE, 30000)
 
     def check_for_crash(self):
         returncode = None
         name = None
         crashed = False
         if self.runner:
-            if self.runner.check_for_crashes():
+            if self.runner.check_for_crashes(test_name=self.test_name):
                 returncode = self.emulator.proc.returncode
                 name = 'emulator'
                 crashed = True
         elif self.instance:
-            if self.instance.check_for_crashes():
+            if self.instance.runner.check_for_crashes(
+                    test_name=self.test_name):
                 crashed = True
         if returncode is not None:
             print ('PROCESS-CRASH | %s | abnormal termination with exit code %d' %
                 (name, returncode))
         return crashed
+
+    def enforce_gecko_prefs(self, prefs):
+        """
+        Checks if the running instance has the given prefs. If not, it will kill the
+        currently running instance, and spawn a new instance with the requested preferences.
+
+        : param prefs: A dictionary whose keys are preference names.
+        """
+        if not self.instance:
+            raise errors.MarionetteException("enforce_gecko_prefs can only be called " \
+                                             "on gecko instances launched by Marionette")
+        pref_exists = True
+        self.set_context(self.CONTEXT_CHROME)
+        for pref, value in prefs.iteritems():
+            if type(value) is not str:
+                value = json.dumps(value)
+            pref_exists = self.execute_script("""
+            let prefInterface = Components.classes["@mozilla.org/preferences-service;1"]
+                                          .getService(Components.interfaces.nsIPrefBranch);
+            let pref = '%s';
+            let value = '%s';
+            let type = prefInterface.getPrefType(pref);
+            switch(type) {
+                case prefInterface.PREF_STRING:
+                    return value == prefInterface.getCharPref(pref).toString();
+                case prefInterface.PREF_BOOL:
+                    return value == prefInterface.getBoolPref(pref).toString();
+                case prefInterface.PREF_INT:
+                    return value == prefInterface.getIntPref(pref).toString();
+                case prefInterface.PREF_INVALID:
+                    return false;
+            }
+            """ % (pref, value))
+            if not pref_exists:
+                break
+        self.set_context(self.CONTEXT_CONTENT)
+        if not pref_exists:
+            self.delete_session()
+            self.instance.restart(prefs)
+            assert(self.wait_for_port()), "Timed out waiting for port!"
+            self.start_session()
+            self._reset_timeouts()
+
+    def restart_with_clean_profile(self):
+        """
+        This will terminate the currently running instance, and spawn a new instance
+        with a clean profile.
+
+        : param prefs: A dictionary whose keys are preference names.
+        """
+        if not self.instance:
+            raise errors.MarionetteException("enforce_gecko_prefs can only be called " \
+                                             "on gecko instances launched by Marionette")
+        self.delete_session()
+        self.instance.restart()
+        assert(self.wait_for_port()), "Timed out waiting for port!"
+        self.start_session()
+        self._reset_timeouts()
 
     def absolute_url(self, relative_url):
         '''
@@ -720,11 +814,7 @@ class Marionette(object):
         :params desired_capabilities: An optional dict of desired
             capabilities.  This is currently ignored.
 
-        :returns: A dict of the capabilities offered.
-
-        """
-
-        # We are ignoring desired_capabilities, at least for now.
+        :returns: A dict of the capabilities offered."""
         self.session = self._send_message('newSession', 'value')
         self.b2g = 'b2g' in self.session
         return self.session
@@ -739,9 +829,7 @@ class Marionette(object):
             self._test_name = test_name
 
     def delete_session(self):
-        """
-        Close the current session and disconnect from the server.
-        """
+        """Close the current session and disconnect from the server."""
         response = self._send_message('deleteSession', 'ok')
         self.session = None
         self.window = None
@@ -797,9 +885,24 @@ class Marionette(object):
         :rtype: string
 
         """
-
         self.window = self._send_message("getWindowHandle", "value")
         return self.window
+
+    def get_window_position(self):
+        """Get the current window's position
+           Return a dictionary with the keys x and y
+           :returns: a dictionary with x and y
+        """
+        return self._send_message("getWindowPosition", "value")
+
+    def set_window_position(self, x, y):
+        """
+           Set the position of the current window
+            :param x: x coordinate for the top left of the window
+            :param y: y coordinate for the top left of the window
+        """
+        response = self._send_message("setWindowPosition", "ok", x=x, y=y)
+        return response
 
     @property
     def title(self):
@@ -1429,3 +1532,31 @@ class Marionette(object):
         self._send_message("setScreenOrientation", "ok", orientation=orientation)
         if self.emulator:
             self.emulator.screen.orientation = orientation.lower()
+
+    @property
+    def window_size(self):
+        """Get the current browser window size.
+
+        Will return the current browser window size in pixels. Refers to
+        window outerWidth and outerHeight values, which include scroll bars,
+        title bars, etc.
+
+        :returns: dictionary representation of current window width and height
+
+        """
+        return self._send_message("getWindowSize", "value")
+
+    def set_window_size(self, width, height):
+        """Resize the browser window currently in focus.
+
+        The supplied width and height values refer to the window outerWidth
+        and outerHeight values, which include scroll bars, title bars, etc.
+
+        An error will be returned if the requested window size would result
+        in the window being in the maximised state.
+
+        :param width: The width to resize the window to.
+        :param height: The height to resize the window to.
+
+        """
+        self._send_message("setWindowSize", "ok", width=width, height=height)

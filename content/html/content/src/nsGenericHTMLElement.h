@@ -51,7 +51,7 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase,
                              public nsIDOMHTMLElement
 {
 public:
-  nsGenericHTMLElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit nsGenericHTMLElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElementBase(aNodeInfo),
       mScrollgrab(false)
   {
@@ -292,6 +292,8 @@ public:
   }
 
 protected:
+  virtual ~nsGenericHTMLElement() {}
+
   // These methods are used to implement element-specific behavior of Get/SetItemValue
   // when an element has @itemprop but no @itemscope.
   virtual void GetItemValueText(nsAString& text);
@@ -467,7 +469,7 @@ public:
     if (!_argc) {
       top = true;
     }
-    mozilla::dom::Element::ScrollIntoView(top);
+    mozilla::dom::Element::ScrollIntoView(top, mozilla::dom::ScrollOptions());
     return NS_OK;
   }
   NS_IMETHOD GetOffsetParent(nsIDOMElement** aOffsetParent) MOZ_FINAL {
@@ -537,6 +539,8 @@ public:
                               bool aCompileEventHandlers) MOZ_OVERRIDE;
   virtual void UnbindFromTree(bool aDeep = true,
                               bool aNullParent = true) MOZ_OVERRIDE;
+
+  MOZ_ALWAYS_INLINE // Avoid a crashy hook from Avast 10 Beta
   nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                    const nsAString& aValue, bool aNotify)
   {
@@ -827,7 +831,12 @@ public:
    * Get the presentation context for this content node.
    * @return the presentation context
    */
-  nsPresContext* GetPresContext();
+  enum PresContextFor
+  {
+    eForComposedDoc,
+    eForUncomposedDoc
+  };
+  nsPresContext* GetPresContext(PresContextFor aFor);
 
   // Form Helper Routines
   /**
@@ -1004,11 +1013,11 @@ protected:
   }
   void SetHTMLAttr(nsIAtom* aName, const nsAString& aValue, mozilla::ErrorResult& aError)
   {
-    aError = SetAttr(kNameSpaceID_None, aName, aValue, true);
+    mozilla::dom::Element::SetAttr(aName, aValue, aError);
   }
   void UnsetHTMLAttr(nsIAtom* aName, mozilla::ErrorResult& aError)
   {
-    aError = UnsetAttr(kNameSpaceID_None, aName, true);
+    mozilla::dom::Element::UnsetAttr(aName, aError);
   }
   void SetHTMLBoolAttr(nsIAtom* aName, bool aValue, mozilla::ErrorResult& aError)
   {
@@ -1114,35 +1123,6 @@ protected:
    * @param aResult  result value [out]
    */
   nsresult GetURIListAttr(nsIAtom* aAttr, nsAString& aResult);
-
-  /**
-   * Helper method for NS_IMPL_ENUM_ATTR_DEFAULT_VALUE.
-   * Gets the enum value string of an attribute and using a default value if
-   * the attribute is missing or the string is an invalid enum value.
-   *
-   * @param aType     the name of the attribute.
-   * @param aDefault  the default value if the attribute is missing or invalid.
-   * @param aResult   string corresponding to the value [out].
-   */
-  void GetEnumAttr(nsIAtom* aAttr,
-                               const char* aDefault,
-                               nsAString& aResult) const;
-
-  /**
-   * Helper method for NS_IMPL_ENUM_ATTR_DEFAULT_MISSING_INVALID_VALUES.
-   * Gets the enum value string of an attribute and using the default missing
-   * value if the attribute is missing or the default invalid value if the
-   * string is an invalid enum value.
-   *
-   * @param aType            the name of the attribute.
-   * @param aDefaultMissing  the default value if the attribute is missing.
-   * @param aDefaultInvalid  the default value if the attribute is invalid.
-   * @param aResult          string corresponding to the value [out].
-   */
-  void GetEnumAttr(nsIAtom* aAttr,
-                               const char* aDefaultMissing,
-                               const char* aDefaultInvalid,
-                               nsAString& aResult) const;
 
   /**
    * Locates the nsIEditor associated with this node.  In general this is
@@ -1261,8 +1241,7 @@ class nsGenericHTMLFormElement : public nsGenericHTMLElement,
                                  public nsIFormControl
 {
 public:
-  nsGenericHTMLFormElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~nsGenericHTMLFormElement();
+  explicit nsGenericHTMLFormElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -1346,6 +1325,8 @@ public:
   virtual bool IsLabelable() const MOZ_OVERRIDE;
 
 protected:
+  virtual ~nsGenericHTMLFormElement();
+
   virtual nsresult BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                                  const nsAttrValueOrString* aValue,
                                  bool aNotify) MOZ_OVERRIDE;
@@ -1418,7 +1399,7 @@ protected:
 class nsGenericHTMLFormElementWithState : public nsGenericHTMLFormElement
 {
 public:
-  nsGenericHTMLFormElementWithState(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
+  explicit nsGenericHTMLFormElementWithState(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   /**
    * Get the presentation state for a piece of content, or create it if it does

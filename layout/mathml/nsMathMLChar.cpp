@@ -45,7 +45,7 @@ static void
 NormalizeDefaultFont(nsFont& aFont)
 {
   if (aFont.fontlist.GetDefaultFontType() != eFamily_none) {
-    aFont.fontlist.Append(aFont.fontlist.GetDefaultFontType());
+    aFont.fontlist.Append(FontFamilyName(aFont.fontlist.GetDefaultFontType()));
     aFont.fontlist.SetDefaultFontType(eFamily_none);
   }
 }
@@ -553,7 +553,9 @@ nsOpenTypeTable::MakeTextRun(gfxContext*        aThebesContext,
   };
   gfxTextRun* textRun = gfxTextRun::Create(&params, 1, aFontGroup, 0);
   textRun->AddGlyphRun(aFontGroup->GetFontAt(0), gfxTextRange::kFontGroup, 0,
-                       false);
+                       false, gfxTextRunFactory::TEXT_ORIENT_HORIZONTAL);
+                              // We don't care about CSS writing mode here;
+                              // math runs are assumed to be horizontal.
   gfxTextRun::DetailedGlyph detailedGlyph;
   detailedGlyph.mGlyphID = aGlyph.glyphID;
   detailedGlyph.mAdvance =
@@ -575,7 +577,7 @@ nsOpenTypeTable::MakeTextRun(gfxContext*        aThebesContext,
 // user' system. The class is an XPCOM shutdown observer to allow us to
 // free its allocated data at shutdown
 
-class nsGlyphTableList : public nsIObserver
+class nsGlyphTableList MOZ_FINAL : public nsIObserver
 {
 public:
   NS_DECL_ISUPPORTS
@@ -587,11 +589,6 @@ public:
     : mUnicodeTable(NS_LITERAL_STRING("Unicode"))
   {
     MOZ_COUNT_CTOR(nsGlyphTableList);
-  }
-
-  virtual ~nsGlyphTableList()
-  {
-    MOZ_COUNT_DTOR(nsGlyphTableList);
   }
 
   nsresult Initialize();
@@ -606,6 +603,11 @@ public:
   GetGlyphTableFor(const nsAString& aFamily);
 
 private:
+  ~nsGlyphTableList()
+  {
+    MOZ_COUNT_DTOR(nsGlyphTableList);
+  }
+
   nsPropertiesTable* PropertiesTableAt(int32_t aIndex) {
     return &mPropertiesTableList.ElementAt(aIndex);
   }
@@ -615,14 +617,6 @@ private:
   // List of glyph tables;
   nsTArray<nsPropertiesTable> mPropertiesTableList;
 };
-
-namespace mozilla {
-template<>
-struct HasDangerousPublicDestructor<nsGlyphTableList>
-{
-  static const bool value = true;
-};
-}
 
 NS_IMPL_ISUPPORTS(nsGlyphTableList, nsIObserver)
 
@@ -670,6 +664,7 @@ nsGlyphTableList::Finalize()
 
   gGlyphTableInitialized = false;
   // our oneself will be destroyed when our |Release| is called by the observer
+  NS_IF_RELEASE(gGlyphTableList);
   return rv;
 }
 
@@ -713,29 +708,28 @@ InitGlobals(nsPresContext* aPresContext)
 
   // Allocate the placeholders for the preferred parts and variants
   nsresult rv = NS_ERROR_OUT_OF_MEMORY;
-  gGlyphTableList = new nsGlyphTableList();
-  if (gGlyphTableList) {
-    rv = gGlyphTableList->Initialize();
+  nsRefPtr<nsGlyphTableList> glyphTableList = new nsGlyphTableList();
+  if (glyphTableList) {
+    rv = glyphTableList->Initialize();
   }
   if (NS_FAILED(rv)) {
-    delete gGlyphTableList;
-    gGlyphTableList = nullptr;
     return rv;
   }
   // The gGlyphTableList has been successfully registered as a shutdown
   // observer and will be deleted at shutdown. We now add some private
   // per font-family tables for stretchy operators, in order of preference.
   // Do not include the Unicode table in this list.
-  if (!gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("MathJax_Main")) ||
-      !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("STIXGeneral")) ||
-      !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("Standard Symbols L"))
+  if (!glyphTableList->AddGlyphTable(NS_LITERAL_STRING("MathJax_Main")) ||
+      !glyphTableList->AddGlyphTable(NS_LITERAL_STRING("STIXGeneral")) ||
+      !glyphTableList->AddGlyphTable(NS_LITERAL_STRING("Standard Symbols L"))
 #ifdef XP_WIN
-      || !gGlyphTableList->AddGlyphTable(NS_LITERAL_STRING("Symbol"))
+      || !glyphTableList->AddGlyphTable(NS_LITERAL_STRING("Symbol"))
 #endif
       ) {
     rv = NS_ERROR_OUT_OF_MEMORY;
   }
 
+  glyphTableList.forget(&gGlyphTableList);
   return rv;
 }
 
@@ -2036,16 +2030,18 @@ nsMathMLChar::ApplyTransforms(gfxContext* aThebesContext,
   // apply the transforms
   if (mMirrored) {
     nsPoint pt = r.TopRight();
-    aThebesContext->
-      Translate(gfxPoint(NSAppUnitsToFloatPixels(pt.x, aAppUnitsPerGfxUnit),
-                         NSAppUnitsToFloatPixels(pt.y, aAppUnitsPerGfxUnit)));
-    aThebesContext->Scale(-mScaleX, mScaleY);
+    gfxPoint devPixelOffset(NSAppUnitsToFloatPixels(pt.x, aAppUnitsPerGfxUnit),
+                            NSAppUnitsToFloatPixels(pt.y, aAppUnitsPerGfxUnit));
+    aThebesContext->SetMatrix(
+      aThebesContext->CurrentMatrix().Translate(devPixelOffset).
+                                      Scale(-mScaleX, mScaleY));
   } else {
     nsPoint pt = r.TopLeft();
-    aThebesContext->
-      Translate(gfxPoint(NSAppUnitsToFloatPixels(pt.x, aAppUnitsPerGfxUnit),
-                         NSAppUnitsToFloatPixels(pt.y, aAppUnitsPerGfxUnit)));
-    aThebesContext->Scale(mScaleX, mScaleY);
+    gfxPoint devPixelOffset(NSAppUnitsToFloatPixels(pt.x, aAppUnitsPerGfxUnit),
+                            NSAppUnitsToFloatPixels(pt.y, aAppUnitsPerGfxUnit));
+    aThebesContext->SetMatrix(
+      aThebesContext->CurrentMatrix().Translate(devPixelOffset).
+                                      Scale(mScaleX, mScaleY));
   }
 
   // update the bounding rectangle.

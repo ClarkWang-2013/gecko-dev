@@ -41,6 +41,7 @@
 #include "nsIDOMWindow.h"
 #include "nsIDOMWindowUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "nsILoadInfo.h"
 #include "nsIPromptFactory.h"
 #include "nsIURI.h"
 #include "nsIWebBrowserChrome.h"
@@ -148,7 +149,12 @@ private:
         FileDescriptor::PlatformHandleType handle =
             FileDescriptor::PlatformHandleType(PR_FileDesc2NativeHandle(mFD));
 
-        mozilla::unused << tabParent->SendCacheFileDescriptor(mPath, handle);
+        // Our TabParent may have been destroyed already.  If so, don't send any
+        // fds over, just go back to the IO thread and close them.
+        if (!tabParent->IsDestroyed()) {
+          mozilla::unused << tabParent->SendCacheFileDescriptor(mPath,
+                                                                FileDescriptor(handle));
+        }
 
         nsCOMPtr<nsIEventTarget> eventTarget;
         mEventTarget.swap(eventTarget);
@@ -559,7 +565,7 @@ TabParent::Show(const nsIntSize& size)
 }
 
 void
-TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
+TabParent::UpdateDimensions(const nsIntRect& rect, const nsIntSize& size)
 {
   if (mIsDestroyed) {
     return;
@@ -713,7 +719,7 @@ PContentPermissionRequestParent*
 TabParent::AllocPContentPermissionRequestParent(const InfallibleTArray<PermissionRequest>& aRequests,
                                                 const IPC::Principal& aPrincipal)
 {
-  return CreateContentPermissionRequestParent(aRequests, mFrameElement, aPrincipal);
+  return nsContentPermissionUtils::CreateContentPermissionRequestParent(aRequests, mFrameElement, aPrincipal);
 }
 
 bool
@@ -778,13 +784,13 @@ void
 TabParent::MapEventCoordinatesForChildProcess(
   const LayoutDeviceIntPoint& aOffset, WidgetEvent* aEvent)
 {
-  if (aEvent->eventStructType != NS_TOUCH_EVENT) {
+  if (aEvent->mClass != eTouchEventClass) {
     aEvent->refPoint = aOffset;
   } else {
     aEvent->refPoint = LayoutDeviceIntPoint();
     // Then offset all the touch points by that distance, to put them
     // in the space where top-left is 0,0.
-    const nsTArray< nsRefPtr<Touch> >& touches =
+    const WidgetTouchEvent::TouchArray& touches =
       aEvent->AsTouchEvent()->touches;
     for (uint32_t i = 0; i < touches.Length(); ++i) {
       Touch* touch = touches[i];
@@ -1014,7 +1020,7 @@ TabParent::TryCapture(const WidgetGUIEvent& aEvent)
 {
   MOZ_ASSERT(sEventCapturer == this && mEventCaptureDepth > 0);
 
-  if (aEvent.eventStructType != NS_TOUCH_EVENT) {
+  if (aEvent.mClass != eTouchEventClass) {
     // Only capture of touch events is implemented, for now.
     return false;
   }
@@ -1252,13 +1258,16 @@ TabParent::RecvNotifyIMETextChange(const uint32_t& aStart,
 }
 
 bool
-TabParent::RecvNotifyIMESelectedCompositionRect(const uint32_t& aOffset,
-                                                const nsIntRect& aRect,
-                                                const nsIntRect& aCaretRect)
+TabParent::RecvNotifyIMESelectedCompositionRect(
+  const uint32_t& aOffset,
+  const InfallibleTArray<nsIntRect>& aRects,
+  const uint32_t& aCaretOffset,
+  const nsIntRect& aCaretRect)
 {
   // add rect to cache for another query
   mIMECompositionRectOffset = aOffset;
-  mIMECompositionRect = aRect;
+  mIMECompositionRects = aRects;
+  mIMECaretOffset = aCaretOffset;
   mIMECaretRect = aCaretRect;
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
@@ -1301,6 +1310,22 @@ TabParent::RecvNotifyIMETextHint(const nsString& aText)
 {
   // Replace our cache with new text
   mIMECacheText = aText;
+  return true;
+}
+
+bool
+TabParent::RecvNotifyIMEMouseButtonEvent(
+             const IMENotification& aIMENotification,
+             bool* aConsumedByIME)
+{
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    *aConsumedByIME = false;
+    return true;
+  }
+  nsresult rv = widget->NotifyIME(aIMENotification);
+  *aConsumedByIME = rv == NS_SUCCESS_EVENT_CONSUMED;
   return true;
 }
 
@@ -1447,23 +1472,33 @@ TabParent::HandleQueryContentEvent(WidgetQueryContentEvent& aEvent)
     break;
   case NS_QUERY_TEXT_RECT:
     {
-      if (aEvent.mInput.mOffset != mIMECompositionRectOffset ||
-          aEvent.mInput.mLength != 1) {
+      if (aEvent.mInput.mOffset < mIMECompositionRectOffset ||
+          (aEvent.mInput.mOffset + aEvent.mInput.mLength >
+            mIMECompositionRectOffset + mIMECompositionRects.Length())) {
+        // XXX
+        // we doesn't have cache for this request.
         break;
       }
 
-      aEvent.mReply.mOffset = mIMECompositionRectOffset;
-      aEvent.mReply.mRect = mIMECompositionRect - GetChildProcessOffset();
+      uint32_t baseOffset = aEvent.mInput.mOffset - mIMECompositionRectOffset;
+      uint32_t endOffset = baseOffset + aEvent.mInput.mLength;
+      aEvent.mReply.mRect.SetEmpty();
+      for (uint32_t i = baseOffset; i < endOffset; i++) {
+        aEvent.mReply.mRect =
+          aEvent.mReply.mRect.Union(mIMECompositionRects[i]);
+      }
+      aEvent.mReply.mOffset = aEvent.mInput.mOffset;
+      aEvent.mReply.mRect = aEvent.mReply.mRect - GetChildProcessOffset();
       aEvent.mSucceeded = true;
     }
     break;
   case NS_QUERY_CARET_RECT:
     {
-      if (aEvent.mInput.mOffset != mIMECompositionRectOffset) {
+      if (aEvent.mInput.mOffset != mIMECaretOffset) {
         break;
       }
 
-      aEvent.mReply.mOffset = mIMECompositionRectOffset;
+      aEvent.mReply.mOffset = mIMECaretOffset;
       aEvent.mReply.mRect = mIMECaretRect - GetChildProcessOffset();
       aEvent.mSucceeded = true;
     }
@@ -2081,7 +2116,7 @@ TabParent::InjectTouchEvent(const nsAString& aType,
                             int32_t aModifiers)
 {
   uint32_t msg;
-  nsContentUtils::GetEventIdAndAtom(aType, NS_TOUCH_EVENT, &msg);
+  nsContentUtils::GetEventIdAndAtom(aType, eTouchEventClass, &msg);
   if (msg != NS_TOUCH_START && msg != NS_TOUCH_MOVE &&
       msg != NS_TOUCH_END && msg != NS_TOUCH_CANCEL) {
     return NS_ERROR_FAILURE;
@@ -2150,6 +2185,25 @@ TabParent::SetIsDocShellActive(bool isActive)
   return NS_OK;
 }
 
+bool
+TabParent::RecvRemotePaintIsReady()
+{
+  nsCOMPtr<mozilla::dom::EventTarget> target = do_QueryInterface(mFrameElement);
+  if (!target) {
+    NS_WARNING("Could not locate target for MozAfterRemotePaint message.");
+    return true;
+  }
+
+  nsCOMPtr<nsIDOMEvent> event;
+  NS_NewDOMEvent(getter_AddRefs(event), mFrameElement, nullptr, nullptr);
+  event->InitEvent(NS_LITERAL_STRING("MozAfterRemotePaint"), false, false);
+  event->SetTrusted(true);
+  event->GetInternalNSEvent()->mFlags.mOnlyChromeDispatch = true;
+  bool dummy;
+  mFrameElement->DispatchEvent(event, &dummy);
+  return true;
+}
+
 class FakeChannel MOZ_FINAL : public nsIChannel,
                               public nsIAuthPromptCallback,
                               public nsIInterfaceRequestor,
@@ -2185,6 +2239,16 @@ public:
   }
   NS_IMETHOD GetOwner(nsISupports**) NO_IMPL
   NS_IMETHOD SetOwner(nsISupports*) NO_IMPL
+  NS_IMETHOD GetLoadInfo(nsILoadInfo** aLoadInfo)
+  {
+    NS_IF_ADDREF(*aLoadInfo = mLoadInfo);
+    return NS_OK;
+  }
+  NS_IMETHOD SetLoadInfo(nsILoadInfo* aLoadInfo)
+  {
+    mLoadInfo = aLoadInfo;
+    return NS_OK;
+  }
   NS_IMETHOD GetNotificationCallbacks(nsIInterfaceRequestor** aRequestor)
   {
     NS_ADDREF(*aRequestor = this);
@@ -2237,6 +2301,7 @@ protected:
   nsCOMPtr<nsIURI> mUri;
   uint64_t mCallbackId;
   nsCOMPtr<Element> mElement;
+  nsCOMPtr<nsILoadInfo> mLoadInfo;
 };
 
 NS_IMPL_ISUPPORTS(FakeChannel, nsIChannel, nsIAuthPromptCallback,

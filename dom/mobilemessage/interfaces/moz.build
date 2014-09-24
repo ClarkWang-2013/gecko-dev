@@ -5,11 +5,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 XPIDL_SOURCES += [
+    'nsIDeletedMessageInfo.idl',
     'nsIDOMMozMmsMessage.idl',
     'nsIDOMMozMobileMessageThread.idl',
     'nsIDOMMozSmsMessage.idl',
-    'nsIDOMSmsFilter.idl',
-    'nsIDOMSmsSegmentInfo.idl',
     'nsIMmsService.idl',
     'nsIMobileMessageCallback.idl',
     'nsIMobileMessageCursorCallback.idl',

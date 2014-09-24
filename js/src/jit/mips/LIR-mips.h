@@ -345,12 +345,6 @@ class LGuardObjectType : public LInstructionHelper<0, 1, 1>
     }
 };
 
-class LInterruptCheck : public LInstructionHelper<0, 0, 0>
-{
-  public:
-    LIR_HEADER(InterruptCheck);
-};
-
 class LMulI : public LBinaryMath<0>
 {
   public:
@@ -381,22 +375,18 @@ class LUMod : public LBinaryMath<0>
     }
 };
 
-class LAsmJSLoadFuncPtr : public LInstructionHelper<1, 1, 1>
+class LAsmJSLoadFuncPtr : public LInstructionHelper<1, 1, 0>
 {
   public:
     LIR_HEADER(AsmJSLoadFuncPtr);
-    LAsmJSLoadFuncPtr(const LAllocation &index, const LDefinition &temp) {
+    LAsmJSLoadFuncPtr(const LAllocation &index) {
         setOperand(0, index);
-        setTemp(0, temp);
     }
     const MAsmJSLoadFuncPtr *mir() const {
         return mir_->toAsmJSLoadFuncPtr();
     }
     const LAllocation *index() {
         return getOperand(0);
-    }
-    const LDefinition *temp() {
-        return getTemp(0);
     }
 };
 

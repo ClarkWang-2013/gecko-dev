@@ -172,29 +172,12 @@ class MozbuildObject(ProcessExecutionMixin):
         # inside an objdir you probably want to perform actions on that objdir,
         # not another one. This prevents accidental usage of the wrong objdir
         # when the current objdir is ambiguous.
-        # However, if the found mozconfig resolves to another objdir that
-        # doesn't exist, we may be in a subtree like when building mozilla/
-        # under c-c, and the objdir was defined as a relative path. Try again
-        # adjusting for that.
-
         if topobjdir and config_topobjdir:
-            if not os.path.exists(config_topobjdir):
-                config_topobjdir = MozbuildObject.resolve_mozconfig_topobjdir(
-                    os.path.dirname(topsrcdir), config)
-                if current_project:
-                    config_topobjdir = os.path.join(config_topobjdir,
-                        current_project)
-                config_topobjdir = os.path.join(config_topobjdir,
-                    os.path.basename(topsrcdir))
-            elif current_project:
+            if current_project:
                 config_topobjdir = os.path.join(config_topobjdir, current_project)
 
             _config_topobjdir = config_topobjdir
-            mozilla_dir = os.path.join(_config_topobjdir, 'mozilla')
-            if not samepath(topobjdir, _config_topobjdir) \
-                and (not os.path.exists(mozilla_dir) or not samepath(topobjdir,
-                mozilla_dir)):
-
+            if not samepath(topobjdir, _config_topobjdir):
                 raise ObjdirMismatchException(topobjdir, _config_topobjdir)
 
         topobjdir = topobjdir or config_topobjdir
@@ -476,7 +459,7 @@ class MozbuildObject(ProcessExecutionMixin):
             'append_env': append_env,
             'explicit_env': explicit_env,
             'log_level': logging.INFO,
-            'require_unix_environment': True,
+            'require_unix_environment': False,
             'ensure_exit_code': ensure_exit_code,
             'pass_thru': pass_thru,
 
@@ -589,6 +572,19 @@ class MachCommandBase(MozbuildObject):
                     e.objdir2))
             sys.exit(1)
 
+        except MozconfigLoadException as e:
+            print('Error loading mozconfig: ' + e.path)
+            print('')
+            print(e.message)
+            if e.output:
+                print('')
+                print('mozconfig output:')
+                print('')
+                for line in e.output:
+                    print(line)
+
+            sys.exit(1)
+
         MozbuildObject.__init__(self, topsrcdir, context.settings,
             context.log_manager, topobjdir=topobjdir)
 
@@ -628,6 +624,19 @@ class MachCommandConditions(object):
         if hasattr(cls, 'substs'):
             return cls.substs.get('MOZ_BUILD_APP') == 'browser'
         return False
+
+    @staticmethod
+    def is_mulet(cls):
+        """Must have a Mulet build."""
+        if hasattr(cls, 'substs'):
+            return cls.substs.get('MOZ_BUILD_APP') == 'b2g/dev'
+        return False
+
+    @staticmethod
+    def is_firefox_or_mulet(cls):
+        """Must have a Firefox or Mulet build."""
+        return (MachCommandConditions.is_firefox(cls) or
+                MachCommandConditions.is_mulet(cls))
 
     @staticmethod
     def is_b2g(cls):

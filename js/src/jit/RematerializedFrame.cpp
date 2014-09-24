@@ -40,7 +40,7 @@ RematerializedFrame::RematerializedFrame(ThreadSafeContext *cx, uint8_t *top,
     CopyValueToRematerializedFrame op(slots_);
     iter.readFrameArgsAndLocals(cx, op, op, &scopeChain_, &returnValue_,
                                 &argsObj_, &thisValue_, ReadFrame_Actuals,
-                                MagicValue(JS_OPTIMIZED_OUT));
+                                MagicValue(JS_OPTIMIZED_OUT), /* silentFailure = */ true);
 }
 
 /* static */ RematerializedFrame *
@@ -52,7 +52,7 @@ RematerializedFrame::New(ThreadSafeContext *cx, uint8_t *top, InlineFrameIterato
         (numActualArgs + iter.script()->nfixed()) * sizeof(Value) -
         sizeof(Value); // 1 Value included in sizeof(RematerializedFrame)
 
-    void *buf = cx->calloc_(numBytes);
+    void *buf = cx->pod_calloc<uint8_t>(numBytes);
     if (!buf)
         return nullptr;
 

@@ -114,11 +114,19 @@ nsCanvasFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 }
 
 void
-nsCanvasFrame::AppendAnonymousContentTo(nsBaseContentList& aElements, uint32_t aFilter)
+nsCanvasFrame::AppendAnonymousContentTo(nsTArray<nsIContent*>& aElements, uint32_t aFilter)
 {
-  aElements.MaybeAppendElement(mTouchCaretElement);
-  aElements.MaybeAppendElement(mSelectionCaretsStartElement);
-  aElements.MaybeAppendElement(mSelectionCaretsEndElement);
+  if (mTouchCaretElement) {
+    aElements.AppendElement(mTouchCaretElement);
+  }
+
+  if (mSelectionCaretsStartElement) {
+    aElements.AppendElement(mSelectionCaretsStartElement);
+  }
+
+  if (mSelectionCaretsEndElement) {
+    aElements.AppendElement(mSelectionCaretsEndElement);
+  }
 }
 
 void
@@ -285,7 +293,8 @@ nsDisplayCanvasBackgroundImage::Paint(nsDisplayListBuilder* aBuilder,
     dt = destDT->CreateSimilarDrawTarget(IntSize(ceil(destRect.width), ceil(destRect.height)), SurfaceFormat::B8G8R8A8);
     if (dt) {
       nsRefPtr<gfxContext> ctx = new gfxContext(dt);
-      ctx->Translate(-gfxPoint(destRect.x, destRect.y));
+      ctx->SetMatrix(
+        ctx->CurrentMatrix().Translate(-destRect.x, -destRect.y));
       context = new nsRenderingContext();
       context->Init(aCtx->DeviceContext(), ctx);
     }
@@ -385,13 +394,23 @@ nsCanvasFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       return;
     }
 
+    bool needBlendContainer = false;
+
     // Create separate items for each background layer.
     NS_FOR_VISIBLE_BACKGROUND_LAYERS_BACK_TO_FRONT(i, bg) {
       if (bg->mLayers[i].mImage.IsEmpty()) {
         continue;
       }
+      if (bg->mLayers[i].mBlendMode != NS_STYLE_BLEND_NORMAL) {
+        needBlendContainer = true;
+      }
       aLists.BorderBackground()->AppendNewToTop(
         new (aBuilder) nsDisplayCanvasBackgroundImage(aBuilder, this, i, bg));
+    }
+
+    if (needBlendContainer) {
+      aLists.BorderBackground()->AppendNewToTop(
+        new (aBuilder) nsDisplayBlendContainer(aBuilder, this, aLists.BorderBackground()));
     }
   }
 
@@ -457,26 +476,26 @@ nsCanvasFrame::PaintFocus(nsRenderingContext& aRenderingContext, nsPoint aPt)
 }
 
 /* virtual */ nscoord
-nsCanvasFrame::GetMinWidth(nsRenderingContext *aRenderingContext)
+nsCanvasFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
   if (mFrames.IsEmpty())
     result = 0;
   else
-    result = mFrames.FirstChild()->GetMinWidth(aRenderingContext);
+    result = mFrames.FirstChild()->GetMinISize(aRenderingContext);
   return result;
 }
 
 /* virtual */ nscoord
-nsCanvasFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
+nsCanvasFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
   if (mFrames.IsEmpty())
     result = 0;
   else
-    result = mFrames.FirstChild()->GetPrefWidth(aRenderingContext);
+    result = mFrames.FirstChild()->GetPrefISize(aRenderingContext);
   return result;
 }
 
@@ -529,9 +548,9 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
     nsIFrame* kidFrame = mFrames.FirstChild();
     bool kidDirty = (kidFrame->GetStateBits() & NS_FRAME_IS_DIRTY) != 0;
 
-    nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,
-                                     nsSize(aReflowState.AvailableWidth(),
-                                            aReflowState.AvailableHeight()));
+    nsHTMLReflowState
+      kidReflowState(aPresContext, aReflowState, kidFrame,
+                     aReflowState.AvailableSize(kidFrame->GetWritingMode()));
 
     if (aReflowState.mFlags.mVResize &&
         (kidFrame->GetStateBits() & NS_FRAME_CONTAINS_RELATIVE_HEIGHT)) {
@@ -589,14 +608,17 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
     // Return our desired size. Normally it's what we're told, but
     // sometimes we can be given an unconstrained height (when a window
     // is sizing-to-content), and we should compute our desired height.
-    aDesiredSize.Width() = aReflowState.ComputedWidth();
-    if (aReflowState.ComputedHeight() == NS_UNCONSTRAINEDSIZE) {
-      aDesiredSize.Height() = kidFrame->GetRect().height +
-        kidReflowState.ComputedPhysicalMargin().TopBottom();
+    WritingMode wm = aReflowState.GetWritingMode();
+    LogicalSize finalSize(wm);
+    finalSize.ISize(wm) = aReflowState.ComputedISize();
+    if (aReflowState.ComputedBSize() == NS_UNCONSTRAINEDSIZE) {
+      finalSize.BSize(wm) = kidFrame->GetLogicalSize(wm).BSize(wm) +
+        kidReflowState.ComputedLogicalMargin().BStartEnd(wm);
     } else {
-      aDesiredSize.Height() = aReflowState.ComputedHeight();
+      finalSize.BSize(wm) = aReflowState.ComputedBSize();
     }
 
+    aDesiredSize.SetSize(wm, finalSize);
     aDesiredSize.SetOverflowAreasToDesiredBounds();
     aDesiredSize.mOverflowAreas.UnionWith(
       kidDesiredSize.mOverflowAreas + kidPt);

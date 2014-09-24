@@ -36,7 +36,7 @@ public:
     , mHasOrHasHadOwnerWindow(false)
   {
   }
-  DOMEventTargetHelper(nsPIDOMWindow* aWindow)
+  explicit DOMEventTargetHelper(nsPIDOMWindow* aWindow)
     : mParentObject(nullptr)
     , mOwnerWindow(nullptr)
     , mHasOrHasHadOwnerWindow(false)
@@ -45,7 +45,7 @@ public:
     // All objects coming through here are WebIDL objects
     SetIsDOMBinding();
   }
-  DOMEventTargetHelper(DOMEventTargetHelper* aOther)
+  explicit DOMEventTargetHelper(DOMEventTargetHelper* aOther)
     : mParentObject(nullptr)
     , mOwnerWindow(nullptr)
     , mHasOrHasHadOwnerWindow(false)
@@ -141,14 +141,15 @@ public:
   virtual void EventListenerWasRemoved(const nsAString& aType,
                                        ErrorResult& aRv,
                                        JSCompartment* aCompartment = nullptr) {}
+
+  // Dispatch a trusted, non-cancellable and non-bubbling event to |this|.
+  nsresult DispatchTrustedEvent(const nsAString& aEventName);
 protected:
   virtual ~DOMEventTargetHelper();
 
   nsresult WantsUntrusted(bool* aRetVal);
 
   nsRefPtr<EventListenerManager> mListenerManager;
-  // Dispatch a trusted, non-cancellable and non-bubbling event to |this|.
-  nsresult DispatchTrustedEvent(const nsAString& aEventName);
   // Make |event| trusted and dispatch |aEvent| to |this|.
   nsresult DispatchTrustedEvent(nsIDOMEvent* aEvent);
 

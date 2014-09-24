@@ -15,34 +15,34 @@ class HTMLLinkAccessible : public HyperTextAccessibleWrap
 {
 public:
   HTMLLinkAccessible(nsIContent* aContent, DocAccessible* aDoc);
- 
-  NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIAccessible
-  NS_IMETHOD GetActionName(uint8_t aIndex, nsAString& aName);
-  NS_IMETHOD DoAction(uint8_t aIndex);
+  NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
   virtual void Value(nsString& aValue);
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
-  virtual uint64_t NativeLinkState() const;
-  virtual uint64_t NativeInteractiveState() const;
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
+  virtual uint64_t NativeLinkState() const MOZ_OVERRIDE;
+  virtual uint64_t NativeInteractiveState() const MOZ_OVERRIDE;
 
   // ActionAccessible
-  virtual uint8_t ActionCount();
+  virtual uint8_t ActionCount() MOZ_OVERRIDE;
+  virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) MOZ_OVERRIDE;
+  virtual bool DoAction(uint8_t aIndex) MOZ_OVERRIDE;
 
   // HyperLinkAccessible
   virtual bool IsLink();
   virtual already_AddRefed<nsIURI> AnchorURIAt(uint32_t aAnchorIndex);
 
 protected:
+  virtual ~HTMLLinkAccessible() {}
+
   enum { eAction_Jump = 0 };
 
   /**
    * Returns true if the link has href attribute.
    */
-  bool IsLinked();
+  bool IsLinked() const;
 };
 
 } // namespace a11y

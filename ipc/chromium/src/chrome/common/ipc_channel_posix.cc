@@ -25,7 +25,6 @@
 #include "base/scoped_ptr.h"
 #include "base/string_util.h"
 #include "base/singleton.h"
-#include "base/stats_counters.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/file_descriptor_set_posix.h"
 #include "chrome/common/ipc_logging.h"
@@ -283,6 +282,8 @@ Channel::ChannelImpl::ChannelImpl(int fd, Mode mode, Listener* listener)
 }
 
 void Channel::ChannelImpl::Init(Mode mode, Listener* listener) {
+  DCHECK(kControlBufferSlopBytes >= CMSG_SPACE(0));
+
   mode_ = mode;
   is_blocked_on_write_ = false;
   message_send_bytes_written_ = 0;

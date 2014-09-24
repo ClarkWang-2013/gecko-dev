@@ -6,8 +6,8 @@
 #ifndef SHARED_SURFACE_GRALLOC_H_
 #define SHARED_SURFACE_GRALLOC_H_
 
-#include "SharedSurfaceGL.h"
 #include "mozilla/layers/LayersSurfaces.h"
+#include "SharedSurface.h"
 
 namespace mozilla {
 namespace layers {
@@ -20,17 +20,17 @@ class GLContext;
 class GLLibraryEGL;
 
 class SharedSurface_Gralloc
-    : public SharedSurface_GL
+    : public SharedSurface
 {
 public:
-    static SharedSurface_Gralloc* Create(GLContext* prodGL,
-                                         const GLFormats& formats,
-                                         const gfx::IntSize& size,
-                                         bool hasAlpha,
-                                         layers::ISurfaceAllocator* allocator);
+    static UniquePtr<SharedSurface_Gralloc> Create(GLContext* prodGL,
+                                                   const GLFormats& formats,
+                                                   const gfx::IntSize& size,
+                                                   bool hasAlpha,
+                                                   layers::ISurfaceAllocator* allocator);
 
     static SharedSurface_Gralloc* Cast(SharedSurface* surf) {
-        MOZ_ASSERT(surf->Type() == SharedSurfaceType::Gralloc);
+        MOZ_ASSERT(surf->mType == SharedSurfaceType::Gralloc);
 
         return (SharedSurface_Gralloc*)surf;
     }
@@ -57,6 +57,7 @@ public:
 
     virtual void Fence() MOZ_OVERRIDE;
     virtual bool WaitSync() MOZ_OVERRIDE;
+    virtual bool PollSync() MOZ_OVERRIDE;
 
     virtual void WaitForBufferOwnership() MOZ_OVERRIDE;
 
@@ -73,7 +74,7 @@ public:
 };
 
 class SurfaceFactory_Gralloc
-    : public SurfaceFactory_GL
+    : public SurfaceFactory
 {
 protected:
     RefPtr<layers::ISurfaceAllocator> mAllocator;
@@ -83,12 +84,15 @@ public:
                            const SurfaceCaps& caps,
                            layers::ISurfaceAllocator* allocator = nullptr);
 
-    virtual SharedSurface* CreateShared(const gfx::IntSize& size) MOZ_OVERRIDE {
+    virtual UniquePtr<SharedSurface> CreateShared(const gfx::IntSize& size) MOZ_OVERRIDE {
         bool hasAlpha = mReadCaps.alpha;
-        if (!mAllocator) {
-            return nullptr;
+
+        UniquePtr<SharedSurface> ret;
+        if (mAllocator) {
+            ret = SharedSurface_Gralloc::Create(mGL, mFormats, size,
+                                                hasAlpha, mAllocator);
         }
-        return SharedSurface_Gralloc::Create(mGL, mFormats, size, hasAlpha, mAllocator);
+        return Move(ret);
     }
 };
 

@@ -328,8 +328,6 @@ EventListenerManager::AddEventListenerInternal(
   } else if (aTypeAtom == nsGkAtoms::ontouchstart ||
              aTypeAtom == nsGkAtoms::ontouchend ||
              aTypeAtom == nsGkAtoms::ontouchmove ||
-             aTypeAtom == nsGkAtoms::ontouchenter ||
-             aTypeAtom == nsGkAtoms::ontouchleave ||
              aTypeAtom == nsGkAtoms::ontouchcancel) {
     mMayHaveTouchEventListener = true;
     nsPIDOMWindow* window = GetInnerWindowForTarget();
@@ -977,7 +975,7 @@ EventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
   nsAutoTObserverArray<Listener, 2>::EndLimitedIterator iter(mListeners);
   Maybe<nsAutoPopupStatePusher> popupStatePusher;
   if (mIsMainThreadELM) {
-    popupStatePusher.construct(Event::GetEventPopupControlState(aEvent));
+    popupStatePusher.emplace(Event::GetEventPopupControlState(aEvent));
   }
 
   bool hasListener = false;

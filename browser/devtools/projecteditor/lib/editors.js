@@ -40,12 +40,18 @@ var ItchEditor = Class({
     emit(this, name, ...args);
   },
 
+  /* Does the editor not have any unsaved changes? */
+  isClean: function() {
+    return true;
+  },
+
   /**
    * Initialize the editor with a single host.  This should be called
    * by objects extending this object with:
    * ItchEditor.prototype.initialize.apply(this, arguments)
    */
   initialize: function(host) {
+    this.host = host;
     this.doc = host.document;
     this.label = "";
     this.elt = this.doc.createElement("vbox");
@@ -145,6 +151,13 @@ var TextEditor = Class({
     return extraKeys;
   },
 
+  isClean: function() {
+    if (!this.editor.isAppended()) {
+      return true;
+    }
+    return this.editor.getText() === this._savedResourceContents;
+  },
+
   initialize: function(document, mode=Editor.modes.text) {
     ItchEditor.prototype.initialize.apply(this, arguments);
     this.label = mode.name;
@@ -153,23 +166,22 @@ var TextEditor = Class({
       lineNumbers: true,
       extraKeys: this.extraKeys,
       themeSwitching: false,
-      autocomplete: true
+      autocomplete: true,
+      contextMenu:  this.host.textEditorContextMenuPopup
     });
 
-    // Trigger editor specific events on `this`
+    // Trigger a few editor specific events on `this`.
     this.editor.on("change", (...args) => {
       this.emit("change", ...args);
     });
     this.editor.on("cursorActivity", (...args) => {
       this.emit("cursorActivity", ...args);
     });
+    this.editor.on("focus", (...args) => {
+      this.emit("focus", ...args);
+    });
 
     this.appended = this.editor.appendTo(this.elt);
-    this.appended.then(() => {
-      if (this.editor) {
-        this.editor.setupAutoCompletion();
-      }
-    });
   },
 
   /**
@@ -200,7 +212,9 @@ var TextEditor = Class({
       if (!this.editor) {
         return;
       }
+      this._savedResourceContents = resourceContents;
       this.editor.setText(resourceContents);
+      this.editor.clearHistory();
       this.editor.setClean();
       this.emit("load");
     }, console.error);
@@ -216,8 +230,9 @@ var TextEditor = Class({
    *          saved.
    */
   save: function(resource) {
-    return resource.save(this.editor.getText()).then(() => {
-      this.editor.setClean();
+    let newText = this.editor.getText();
+    return resource.save(newText).then(() => {
+      this._savedResourceContents = newText;
       this.emit("save", resource);
     });
   },

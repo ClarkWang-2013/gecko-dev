@@ -12,7 +12,6 @@
 #include "nsContentUtils.h"
 #include "xpcprivate.h"
 #include "jsfriendapi.h"
-#include "nsCxPusher.h"
 
 using namespace JS;
 using namespace mozilla;
@@ -483,6 +482,30 @@ WrapperAnswer::AnswerCallOrConstruct(const ObjectId &objId,
     }
 
     LOG("%s.call(%s) = %s", ReceiverObj(objId), argv, OutVariant(*result));
+
+    return ok(rs);
+}
+
+bool
+WrapperAnswer::AnswerHasInstance(const ObjectId &objId, const JSVariant &vVar, ReturnStatus *rs, bool *bp)
+{
+    AutoSafeJSContext cx;
+    JSAutoRequest request(cx);
+
+    RootedObject obj(cx, findObjectById(cx, objId));
+    if (!obj)
+        return fail(cx, rs);
+
+    JSAutoCompartment comp(cx, obj);
+
+    LOG("%s.hasInstance(%s)", ReceiverObj(objId), InVariant(vVar));
+
+    RootedValue val(cx);
+    if (!fromVariant(cx, vVar, &val))
+        return fail(cx, rs);
+
+    if (!JS_HasInstance(cx, obj, val, bp))
+        return fail(cx, rs);
 
     return ok(rs);
 }

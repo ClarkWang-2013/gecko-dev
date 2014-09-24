@@ -16,11 +16,10 @@ class HTMLDivElement MOZ_FINAL : public nsGenericHTMLElement,
                                  public nsIDOMHTMLDivElement
 {
 public:
-  HTMLDivElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLDivElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLDivElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -58,6 +57,8 @@ public:
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLDivElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

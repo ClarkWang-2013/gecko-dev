@@ -82,6 +82,7 @@ interface DeviceStorage : EventTarget {
   // for storing new files.
   readonly attribute boolean default;
 
-  [NewObject]
-  Promise getRoot();
+  [NewObject, Throws]
+  // XXXbz what type does this really return?
+  Promise<any> getRoot();
 };

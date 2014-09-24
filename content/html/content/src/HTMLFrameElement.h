@@ -22,9 +22,8 @@ class HTMLFrameElement MOZ_FINAL : public nsGenericHTMLFrameElement,
 public:
   using nsGenericHTMLFrameElement::SwapFrameLoaders;
 
-  HTMLFrameElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
-                   FromParser aFromParser = NOT_FROM_PARSER);
-  virtual ~HTMLFrameElement();
+  explicit HTMLFrameElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+                            FromParser aFromParser = NOT_FROM_PARSER);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -95,6 +94,8 @@ public:
   using nsGenericHTMLFrameElement::GetContentWindow;
 
 protected:
+  virtual ~HTMLFrameElement();
+
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 
 private:

@@ -294,7 +294,7 @@ protected:
     typedef pixman_region32 RawRef;
 
     nsSimpleRef() { data = nullptr; }
-    nsSimpleRef(const RawRef &aRawRef) : pixman_region32(aRawRef) { }
+    explicit nsSimpleRef(const RawRef &aRawRef) : pixman_region32(aRawRef) { }
 
     static void Release(pixman_region32& region) {
         pixman_region32_fini(&region);
@@ -5004,8 +5004,6 @@ get_gtk_cursor(nsCursor aCursor)
     case eCursor_grab:
         gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "openhand");
         if (!gdkcursor)
-            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "hand1");
-        if (!gdkcursor)
             newType = MOZ_CURSOR_HAND_GRAB;
         break;
     case eCursor_grabbing:
@@ -5882,7 +5880,7 @@ nsWindow::DispatchEventToRootAccessible(uint32_t aEventType)
     }
 
     nsCOMPtr<nsIAccessibilityService> accService =
-        do_GetService("@mozilla.org/accessibilityService;1");
+        services::GetAccessibilityService();
     if (!accService) {
         return;
     }
@@ -6211,7 +6209,7 @@ NS_IMETHODIMP
 nsWindow::BeginMoveDrag(WidgetMouseEvent* aEvent)
 {
     NS_ABORT_IF_FALSE(aEvent, "must have event");
-    NS_ABORT_IF_FALSE(aEvent->eventStructType == NS_MOUSE_EVENT,
+    NS_ABORT_IF_FALSE(aEvent->mClass == eMouseEventClass,
                       "event must have correct struct type");
 
     GdkWindow *gdk_window;
@@ -6234,7 +6232,7 @@ nsWindow::BeginResizeDrag(WidgetGUIEvent* aEvent,
 {
     NS_ENSURE_ARG_POINTER(aEvent);
 
-    if (aEvent->eventStructType != NS_MOUSE_EVENT) {
+    if (aEvent->mClass != eMouseEventClass) {
         // you can only begin a resize drag with a mouse event
         return NS_ERROR_INVALID_ARG;
     }

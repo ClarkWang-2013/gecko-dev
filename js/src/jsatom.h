@@ -88,7 +88,7 @@ struct AtomHasher
     {
         union {
             const JS::Latin1Char *latin1Chars;
-            const jschar *twoByteChars;
+            const char16_t *twoByteChars;
         };
         bool isLatin1;
         size_t length;
@@ -97,7 +97,7 @@ struct AtomHasher
 
         HashNumber hash;
 
-        Lookup(const jschar *chars, size_t length)
+        Lookup(const char16_t *chars, size_t length)
           : twoByteChars(chars), isLatin1(false), length(length), atom(nullptr)
         {
             hash = mozilla::HashString(chars, length);
@@ -175,8 +175,6 @@ extern const char js_while_str[];
 extern const char js_with_str[];
 
 namespace js {
-
-extern const char * const TypeStrings[];
 
 /*
  * Atom tracing and garbage collection hooks.

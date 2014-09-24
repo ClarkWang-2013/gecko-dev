@@ -82,9 +82,9 @@ ALL_JARS = \
   gecko-browser.jar \
   gecko-mozglue.jar \
   gecko-util.jar \
+  nineoldandroids.jar \
   squareup-picasso.jar \
   sync-thirdparty.jar \
-  websockets.jar \
   $(NULL)
 
 ifdef MOZ_WEBRTC
@@ -95,6 +95,12 @@ ifdef MOZ_ANDROID_SEARCH_ACTIVITY
 extra_packages += org.mozilla.search
 ALL_JARS += search-activity.jar
 generated/org/mozilla/search/R.java: .aapt.deps ;
+endif
+
+ifdef MOZ_ANDROID_MLS_STUMBLER
+extra_packages += org.mozilla.mozstumbler
+ALL_JARS += ../stumbler/stumbler.jar
+generated/org/mozilla/mozstumbler/R.java: .aapt.deps ;
 endif
 
 include $(topsrcdir)/config/config.mk
@@ -137,7 +143,9 @@ endif
 .proguard.deps: $(ALL_JARS)
 	$(REPORT_BUILD)
 	@$(TOUCH) $@
-	java -jar $(ANDROID_SDK_ROOT)/tools/proguard/lib/proguard.jar \
+	java \
+		-Xmx512m -Xms128m \
+		-jar $(ANDROID_SDK_ROOT)/tools/proguard/lib/proguard.jar \
 		@$(topsrcdir)/mobile/android/config/proguard.cfg \
 		-optimizationpasses $(PROGUARD_PASSES) \
 		-injars $(subst ::,:,$(subst $(NULL) ,:,$(strip $(ALL_JARS)))) \
@@ -346,12 +354,14 @@ extra_packages := $(subst $(NULL) ,:,$(strip $(extra_packages)))
 # are fresher than the target, preventing a subsequent invocation from
 # thinking aapt's outputs are stale.  This is safe because Make
 # removes the target file if any recipe command fails.
+
 define aapt_command
 $(1): $$(call mkdir_deps,$(filter-out ./,$(dir $(3) $(4) $(5)))) $(2)
 	@$$(TOUCH) $$@
 	$$(AAPT) package -f -m \
 		-M AndroidManifest.xml \
 		-I $(ANDROID_SDK)/android.jar \
+		$(if $(MOZ_ANDROID_MAX_SDK_VERSION),--max-res-version $(MOZ_ANDROID_MAX_SDK_VERSION),) \
 		--auto-add-overlay \
 		$$(addprefix -S ,$$(ANDROID_RES_DIRS)) \
 		$(if $(extra_res_dirs),$$(addprefix -S ,$$(extra_res_dirs)),) \
@@ -361,6 +371,7 @@ $(1): $$(call mkdir_deps,$(filter-out ./,$(dir $(3) $(4) $(5)))) $(2)
 		-F $(3) \
 		-J $(4) \
 		--output-text-symbols $(5) \
+		$(if $(MOZ_ANDROID_RESOURCE_CONSTRAINED),-c hdpi,) \
 		--ignore-assets "$$(ANDROID_AAPT_IGNORE)"
 endef
 

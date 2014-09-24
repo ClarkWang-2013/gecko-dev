@@ -504,6 +504,7 @@ function Item(aOwnerView, aElement, aValue, aAttachment) {
 Item.prototype = {
   get value() { return this._value; },
   get target() { return this._target; },
+  get prebuiltNode() { return this._prebuiltNode; },
 
   /**
    * Immediately appends a child item to this item.
@@ -795,6 +796,16 @@ this.WidgetMethods = {
   },
 
   /**
+   * Removes the items in this container based on a predicate.
+   */
+  removeForPredicate: function(aPredicate) {
+    let item;
+    while (item = this.getItemForPredicate(aPredicate)) {
+      this.remove(item);
+    }
+  },
+
+  /**
    * Removes all items from this container.
    */
   empty: function() {
@@ -1074,6 +1085,8 @@ this.WidgetMethods = {
       targetElement.focus();
     }
     if (this.maintainSelectionVisible && targetElement) {
+      // Some methods are optional. See the WidgetMethods object documentation
+      // for a comprehensive list.
       if ("ensureElementIsVisible" in this._widget) {
         this._widget.ensureElementIsVisible(targetElement);
       }
@@ -1108,6 +1121,20 @@ this.WidgetMethods = {
    */
   set selectedValue(aValue) {
     this.selectedItem = this._itemsByValue.get(aValue);
+  },
+
+  /**
+   * Deselects and re-selects an item in this container.
+   *
+   * Useful when you want a "select" event to be emitted, even though
+   * the specified item was already selected.
+   *
+   * @param Item | function aItem
+   * @see `set selectedItem`
+   */
+  forceSelect: function(aItem) {
+    this.selectedItem = null;
+    this.selectedItem = aItem;
   },
 
   /**

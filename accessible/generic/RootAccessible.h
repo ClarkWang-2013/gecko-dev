@@ -24,7 +24,6 @@ class RootAccessible : public DocAccessibleWrap,
 public:
   RootAccessible(nsIDocument* aDocument, nsIContent* aRootContent,
                  nsIPresShell* aPresShell);
-  virtual ~RootAccessible();
 
   // nsIDOMEventListener
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
@@ -34,7 +33,7 @@ public:
   virtual mozilla::a11y::ENameValueFlag Name(nsString& aName);
   virtual Relation RelationByType(RelationType aType) MOZ_OVERRIDE;
   virtual mozilla::a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
 
   // RootAccessible
 
@@ -44,6 +43,7 @@ public:
   virtual void DocumentActivated(DocAccessible* aDocument);
 
 protected:
+  virtual ~RootAccessible();
 
   /**
    * Add/remove DOM event listeners.

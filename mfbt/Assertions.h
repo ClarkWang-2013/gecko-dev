@@ -149,7 +149,8 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename, int aLine)
 }
 
 static MOZ_ALWAYS_INLINE void
-MOZ_ReportCrash(const char* aStr, const char* aFilename, int aLine) MOZ_PRETEND_NORETURN_FOR_STATIC_ANALYSIS
+MOZ_ReportCrash(const char* aStr, const char* aFilename, int aLine)
+  MOZ_PRETEND_NORETURN_FOR_STATIC_ANALYSIS
 {
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_FATAL, "MOZ_CRASH",
@@ -254,7 +255,7 @@ __declspec(noreturn) __inline void MOZ_NoReturn() {}
      do { \
        MOZ_ReportCrash("" __VA_ARGS__, __FILE__, __LINE__); \
        MOZ_REALLY_CRASH(); \
-     } while(0)
+     } while (0)
 #endif
 
 #ifdef __cplusplus
@@ -331,7 +332,7 @@ struct IsFunction<R(A...)>
 };
 
 template<typename T>
-void ValidateAssertConditionType()
+struct AssertionConditionType
 {
   typedef typename RemoveReference<T>::Type ValueT;
   static_assert(!IsArray<ValueT>::value,
@@ -346,12 +347,15 @@ void ValidateAssertConditionType()
                 "fail. Shouldn't your code gracefully handle this case instead "
                 "of asserting? Anyway, if you really want to do that, write an "
                 "explicit boolean condition, like !!x or x!=0.");
-}
+
+  static const bool isValid = true;
+};
 
 } // namespace detail
 } // namespace mozilla
 #  define MOZ_VALIDATE_ASSERT_CONDITION_TYPE(x) \
-     mozilla::detail::ValidateAssertConditionType<decltype(x)>()
+     static_assert(mozilla::detail::AssertionConditionType<decltype(x)>::isValid, \
+                   "invalid assertion condition")
 #else
 #  define MOZ_VALIDATE_ASSERT_CONDITION_TYPE(x)
 #endif
@@ -384,7 +388,7 @@ void ValidateAssertConditionType()
 #ifdef DEBUG
 #  define MOZ_ASSERT(...) MOZ_RELEASE_ASSERT(__VA_ARGS__)
 #else
-#  define MOZ_ASSERT(...) do { } while(0)
+#  define MOZ_ASSERT(...) do { } while (0)
 #endif /* DEBUG */
 
 /*

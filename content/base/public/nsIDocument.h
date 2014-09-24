@@ -66,6 +66,7 @@ class nsIStyleRule;
 class nsIStyleSheet;
 class nsIURI;
 class nsIVariant;
+class nsLocation;
 class nsViewManager;
 class nsPresContext;
 class nsRange;
@@ -84,6 +85,7 @@ namespace mozilla {
 class CSSStyleSheet;
 class ErrorResult;
 class EventStates;
+class SVGAttrAnimationRuleProcessor;
 
 namespace css {
 class Loader;
@@ -132,8 +134,8 @@ typedef CallbackObjectHolder<NodeFilter, nsIDOMNodeFilter> NodeFilterHolder;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0xc9e11955, 0xaa55, 0x49a1, \
-  { 0x94, 0x29, 0x58, 0xe9, 0xbe, 0xf6, 0x79, 0x54 } }
+{ 0x613ea294, 0x0288, 0x48b4, \
+  { 0x9e, 0x7b, 0x0f, 0xe9, 0x3f, 0x8c, 0xf8, 0x95 } }
 
 // Enum for requesting a particular type of document when creating a doc
 enum DocumentFlavor {
@@ -532,6 +534,38 @@ public:
   }
 
   /**
+   * Get tracking content blocked flag for this document.
+   */
+  bool GetHasTrackingContentBlocked()
+  {
+    return mHasTrackingContentBlocked;
+  }
+
+  /**
+   * Set the tracking content blocked flag for this document.
+   */
+  void SetHasTrackingContentBlocked(bool aHasTrackingContentBlocked)
+  {
+    mHasTrackingContentBlocked = aHasTrackingContentBlocked;
+  }
+
+  /**
+   * Get tracking content loaded flag for this document.
+   */
+  bool GetHasTrackingContentLoaded()
+  {
+    return mHasTrackingContentLoaded;
+  }
+
+  /**
+   * Set the tracking content loaded flag for this document.
+   */
+  void SetHasTrackingContentLoaded(bool aHasTrackingContentLoaded)
+  {
+    mHasTrackingContentLoaded = aHasTrackingContentLoaded;
+  }
+
+  /**
    * Get the sandbox flags for this document.
    * @see nsSandboxFlags.h for the possible flags
    */
@@ -687,7 +721,7 @@ private:
   class SelectorCacheKey
   {
     public:
-      SelectorCacheKey(const nsAString& aString) : mKey(aString)
+      explicit SelectorCacheKey(const nsAString& aString) : mKey(aString)
       {
         MOZ_COUNT_CTOR(SelectorCacheKey);
       }
@@ -851,6 +885,7 @@ public:
   };
 
   virtual nsresult LoadAdditionalStyleSheet(additionalSheetType aType, nsIURI* aSheetURI) = 0;
+  virtual nsresult AddAdditionalStyleSheet(additionalSheetType aType, nsIStyleSheet* aSheet) = 0;
   virtual void RemoveAdditionalStyleSheet(additionalSheetType aType, nsIURI* sheetURI) = 0;
   virtual nsIStyleSheet* FirstAdditionalAuthorSheet() = 0;
 
@@ -889,6 +924,16 @@ public:
    */
   nsHTMLCSSStyleSheet* GetInlineStyleSheet() const {
     return mStyleAttrStyleSheet;
+  }
+
+  /**
+   * Get this document's SVG Animation rule processor.  May return null
+   * if there isn't one.
+   */
+  mozilla::SVGAttrAnimationRuleProcessor*
+  GetSVGAttrAnimationRuleProcessor() const
+  {
+    return mSVGAttrAnimationRuleProcessor;
   }
 
   virtual void SetScriptGlobalObject(nsIScriptGlobalObject* aGlobalObject) = 0;
@@ -1991,6 +2036,7 @@ public:
     eDeprecatedOperationCount
   };
 #undef DEPRECATED_OPERATION
+  bool HasWarnedAbout(DeprecatedOperations aOperation);
   void WarnOnceAbout(DeprecatedOperations aOperation, bool asError = false);
 
   virtual void PostVisibilityUpdateEvent() = 0;
@@ -2183,7 +2229,7 @@ public:
                       const nsAString& aQualifiedName,
                       mozilla::ErrorResult& rv);
   void GetInputEncoding(nsAString& aInputEncoding);
-  already_AddRefed<nsIDOMLocation> GetLocation() const;
+  already_AddRefed<nsLocation> GetLocation() const;
   void GetReferrer(nsAString& aReferrer) const;
   void GetLastModified(nsAString& aLastModified) const;
   void GetReadyState(nsAString& aReadyState) const;
@@ -2314,14 +2360,30 @@ public:
   virtual nsHTMLDocument* AsHTMLDocument() { return nullptr; }
   virtual mozilla::dom::SVGDocument* AsSVGDocument() { return nullptr; }
 
-  virtual JSObject* WrapObject(JSContext *aCx) MOZ_OVERRIDE;
-
   // Each import tree has exactly one master document which is
   // the root of the tree, and owns the browser context.
   virtual already_AddRefed<nsIDocument> MasterDocument() = 0;
   virtual void SetMasterDocument(nsIDocument* master) = 0;
   virtual bool IsMasterDocument() = 0;
   virtual already_AddRefed<mozilla::dom::ImportManager> ImportManager() = 0;
+
+  /*
+   * Given a node, get a weak reference to it and append that reference to
+   * mBlockedTrackingNodes. Can be used later on to look up a node in it.
+   * (e.g., by the UI)
+   */
+  void AddBlockedTrackingNode(nsINode *node)
+  {
+    if (!node) {
+      return;
+    }
+
+    nsWeakPtr weakNode = do_GetWeakReference(node);
+
+    if (weakNode) {
+      mBlockedTrackingNodes.AppendElement(weakNode);
+    }
+  }
 
 private:
   uint64_t mWarnedAbout;
@@ -2392,6 +2454,7 @@ protected:
   nsRefPtr<mozilla::css::ImageLoader> mStyleImageLoader;
   nsRefPtr<nsHTMLStyleSheet> mAttrStyleSheet;
   nsRefPtr<nsHTMLCSSStyleSheet> mStyleAttrStyleSheet;
+  nsRefPtr<mozilla::SVGAttrAnimationRuleProcessor> mSVGAttrAnimationRuleProcessor;
 
   // The set of all object, embed, applet, video/audio elements or
   // nsIObjectLoadingContent or nsIDocumentActivity for which this is the
@@ -2510,6 +2573,12 @@ protected:
   // True if a document has blocked Mixed Display/Passive Content (see nsMixedContentBlocker.cpp)
   bool mHasMixedDisplayContentBlocked;
 
+  // True if a document has blocked Tracking Content
+  bool mHasTrackingContentBlocked;
+
+  // True if a document has loaded Tracking Content
+  bool mHasTrackingContentLoaded;
+
   // True if DisallowBFCaching has been called on this document.
   bool mBFCacheDisallowed;
 
@@ -2625,6 +2694,13 @@ protected:
    */
   int32_t mFrameRequestCallbackCounter;
 
+  // Array of nodes that have been blocked to prevent user tracking.
+  // They most likely have had their nsIChannel canceled by the URL
+  // classifier. (Safebrowsing)
+  //
+  // Weak nsINode pointers are used to allow nodes to disappear.
+  nsTArray<nsWeakPtr> mBlockedTrackingNodes;
+
   // Weak reference to mScriptGlobalObject QI:d to nsPIDOMWindow,
   // updated on every set of mSecriptGlobalObject.
   nsPIDOMWindow *mWindow;
@@ -2700,7 +2776,7 @@ private:
 class MOZ_STACK_CLASS nsAutoSyncOperation
 {
 public:
-  nsAutoSyncOperation(nsIDocument* aDocument);
+  explicit nsAutoSyncOperation(nsIDocument* aDocument);
   ~nsAutoSyncOperation();
 private:
   nsCOMArray<nsIDocument> mDocuments;

@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 
+import org.mozilla.gecko.AppConstants.Versions;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.Telemetry;
 import org.mozilla.gecko.TelemetryContract;
@@ -20,7 +21,6 @@ import org.mozilla.gecko.util.ThreadUtils;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.LoaderManager;
@@ -70,6 +70,7 @@ public class HomePager extends ViewPager {
     public static final String LIST_TAG_TOP_SITES = "top_sites";
     public static final String LIST_TAG_RECENT_TABS = "recent_tabs";
     public static final String LIST_TAG_BROWSER_SEARCH = "browser_search";
+    public static final String LIST_TAG_REMOTE_TABS = "remote_tabs";
 
     public interface OnUrlOpenListener {
         public enum Flags {
@@ -120,8 +121,8 @@ public class HomePager extends ViewPager {
         LOADED
     }
 
-    static final String CAN_LOAD_ARG = "canLoad";
-    static final String PANEL_CONFIG_ARG = "panelConfig";
+    public static final String CAN_LOAD_ARG = "canLoad";
+    public static final String PANEL_CONFIG_ARG = "panelConfig";
 
     public HomePager(Context context) {
         this(context, null);
@@ -197,7 +198,7 @@ public class HomePager extends ViewPager {
         }
 
         // Only animate on post-HC devices, when a non-null animator is given
-        final boolean shouldAnimate = (animator != null && Build.VERSION.SDK_INT >= 11);
+        final boolean shouldAnimate = Versions.feature11Plus && animator != null;
 
         final HomeAdapter adapter = new HomeAdapter(mContext, fm);
         adapter.setOnAddPanelListener(mAddPanelListener);
@@ -231,7 +232,6 @@ public class HomePager extends ViewPager {
                             PropertyAnimator.Property.ALPHA,
                             1.0f);
         }
-        Telemetry.startUISession(TelemetryContract.Session.HOME);
     }
 
     /**
@@ -244,7 +244,6 @@ public class HomePager extends ViewPager {
 
         // Stop UI Telemetry sessions.
         stopCurrentPanelTelemetrySession();
-        Telemetry.stopUISession(TelemetryContract.Session.HOME);
     }
 
     /**

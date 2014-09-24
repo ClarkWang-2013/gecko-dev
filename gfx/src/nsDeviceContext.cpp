@@ -399,9 +399,14 @@ nsDeviceContext::CreateRenderingContext()
       gfxPlatform::GetPlatform()->CreateDrawTargetForSurface(printingSurface,
                                                              gfx::IntSize(mWidth, mHeight));
 
+#ifdef XP_MACOSX
+    dt->AddUserData(&gfxContext::sDontUseAsSourceKey, dt, nullptr);
+#endif
+
     pContext->Init(this, dt);
     pContext->ThebesContext()->SetFlag(gfxContext::FLAG_DISABLE_SNAPPING);
-    pContext->Scale(mPrintingScale, mPrintingScale);
+    pContext->ThebesContext()->SetMatrix(gfxMatrix::Scaling(mPrintingScale,
+                                                            mPrintingScale));
 
     return pContext.forget();
 }
@@ -631,11 +636,17 @@ nsDeviceContext::ComputeFullAreaUsingScreen(nsRect* outRect)
 void
 nsDeviceContext::FindScreen(nsIScreen** outScreen)
 {
-    if (mWidget && mWidget->GetNativeData(NS_NATIVE_WINDOW))
+    if (mWidget && mWidget->GetOwningTabChild()) {
+        mScreenManager->ScreenForNativeWidget((void *)mWidget->GetOwningTabChild(),
+                                              outScreen);
+    }
+    else if (mWidget && mWidget->GetNativeData(NS_NATIVE_WINDOW)) {
         mScreenManager->ScreenForNativeWidget(mWidget->GetNativeData(NS_NATIVE_WINDOW),
                                               outScreen);
-    else
+    }
+    else {
         mScreenManager->GetPrimaryScreen(outScreen);
+    }
 }
 
 void

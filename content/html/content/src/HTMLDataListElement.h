@@ -15,11 +15,10 @@ namespace dom {
 class HTMLDataListElement MOZ_FINAL : public nsGenericHTMLElement
 {
 public:
-  HTMLDataListElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLDataListElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLDataListElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -43,6 +42,8 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLDataListElement,
                                            nsGenericHTMLElement)
 protected:
+  virtual ~HTMLDataListElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
   // <option>'s list inside the datalist element.

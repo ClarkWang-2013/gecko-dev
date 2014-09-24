@@ -30,7 +30,9 @@ class nsXPCClassInfo;
 
 namespace mozilla {
 
+class DOMLocalMediaStream;
 class MediaStream;
+class MediaEngineSource;
 
 namespace dom {
 class AudioNode;
@@ -81,6 +83,8 @@ public:
 
   void GetAudioTracks(nsTArray<nsRefPtr<AudioStreamTrack> >& aTracks);
   void GetVideoTracks(nsTArray<nsRefPtr<VideoStreamTrack> >& aTracks);
+  void GetTracks(nsTArray<nsRefPtr<MediaStreamTrack> >& aTracks);
+  bool HasTrack(const MediaStreamTrack& aTrack) const;
 
   MediaStream* GetStream() const { return mStream; }
 
@@ -97,6 +101,10 @@ public:
    * media at the SourceMediaStream.
    */
   virtual void SetTrackEnabled(TrackID aTrackID, bool aEnabled);
+
+  virtual void StopTrack(TrackID aTrackID);
+
+  virtual DOMLocalMediaStream* AsDOMLocalMediaStream() { return nullptr; }
 
   bool IsFinished();
   /**
@@ -157,7 +165,8 @@ public:
   // Indicate what track types we eventually expect to add to this stream
   enum {
     HINT_CONTENTS_AUDIO = 1 << 0,
-    HINT_CONTENTS_VIDEO = 1 << 1
+    HINT_CONTENTS_VIDEO = 1 << 1,
+    HINT_CONTENTS_UNKNOWN = 1 << 2
   };
   TrackTypeHints GetHintContents() const { return mHintContents; }
   void SetHintContents(TrackTypeHints aHintContents) { mHintContents = aHintContents; }
@@ -186,7 +195,7 @@ public:
 
   class OnTracksAvailableCallback {
   public:
-    OnTracksAvailableCallback(uint8_t aExpectedTracks = 0)
+    explicit OnTracksAvailableCallback(uint8_t aExpectedTracks = 0)
       : mExpectedTracks(aExpectedTracks) {}
     virtual ~OnTracksAvailableCallback() {}
     virtual void NotifyTracksAvailable(DOMMediaStream* aStream) = 0;
@@ -225,9 +234,9 @@ public:
   void ConstructMediaTracks(AudioTrackList* aAudioTrackList,
                             VideoTrackList* aVideoTrackList);
 
-  void NotifyMediaStreamTrackCreated(MediaStreamTrack* aTrack);
+  virtual void NotifyMediaStreamTrackCreated(MediaStreamTrack* aTrack);
 
-  void NotifyMediaStreamTrackEnded(MediaStreamTrack* aTrack);
+  virtual void NotifyMediaStreamTrackEnded(MediaStreamTrack* aTrack);
 
 protected:
   virtual ~DOMMediaStream();
@@ -289,13 +298,14 @@ class DOMLocalMediaStream : public DOMMediaStream,
 {
 public:
   DOMLocalMediaStream() {}
-  virtual ~DOMLocalMediaStream();
 
   NS_DECL_ISUPPORTS_INHERITED
 
   virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
   virtual void Stop();
+
+  virtual MediaEngineSource* GetMediaEngine(TrackID aTrackID) { return nullptr; }
 
   /**
    * Create an nsDOMLocalMediaStream whose underlying stream is a SourceMediaStream.
@@ -308,14 +318,16 @@ public:
    */
   static already_AddRefed<DOMLocalMediaStream>
   CreateTrackUnionStream(nsIDOMWindow* aWindow, TrackTypeHints aHintContents = 0);
+
+protected:
+  virtual ~DOMLocalMediaStream();
 };
 
 class DOMAudioNodeMediaStream : public DOMMediaStream
 {
   typedef dom::AudioNode AudioNode;
 public:
-  DOMAudioNodeMediaStream(AudioNode* aNode);
-  ~DOMAudioNodeMediaStream();
+  explicit DOMAudioNodeMediaStream(AudioNode* aNode);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(DOMAudioNodeMediaStream, DOMMediaStream)
@@ -327,6 +339,9 @@ public:
   CreateTrackUnionStream(nsIDOMWindow* aWindow,
                          AudioNode* aNode,
                          TrackTypeHints aHintContents = 0);
+
+protected:
+  ~DOMAudioNodeMediaStream();
 
 private:
   // If this object wraps a stream owned by an AudioNode, we need to ensure that

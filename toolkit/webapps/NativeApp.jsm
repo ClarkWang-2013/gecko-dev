@@ -57,7 +57,8 @@ function CommonNativeApp(aApp, aManifest, aCategories, aRegistryDir) {
   aApp.name = aManifest.name;
   this.uniqueName = WebappOSUtils.getUniqueName(aApp);
 
-  let localeManifest = new ManifestHelper(aManifest, aApp.origin);
+  let localeManifest =
+    new ManifestHelper(aManifest, aApp.origin, aApp.manifestURL);
 
   this.appLocalizedName = localeManifest.name;
   this.appNameAsFilename = stripStringForFilename(aApp.name);
@@ -80,7 +81,7 @@ function CommonNativeApp(aApp, aManifest, aCategories, aRegistryDir) {
 
 CommonNativeApp.prototype = {
   uniqueName: null,
-  appName: null,
+  appLocalizedName: null,
   appNameAsFilename: null,
   iconURI: null,
   developerName: null,
@@ -99,7 +100,7 @@ CommonNativeApp.prototype = {
    *
    */
   _setData: function(aApp, aManifest) {
-    let manifest = new ManifestHelper(aManifest, aApp.origin);
+    let manifest = new ManifestHelper(aManifest, aApp.origin, aApp.manifestURL);
     let origin = Services.io.newURI(aApp.origin, null, null);
 
     this.iconURI = Services.io.newURI(manifest.biggestIconURL || DEFAULT_ICON_URL,
@@ -125,7 +126,7 @@ CommonNativeApp.prototype = {
                       : firstLine.substr(0, 253) + "…";
       this.shortDescription = shortDesc;
     } else {
-      this.shortDescription = this.appName;
+      this.shortDescription = this.appLocalizedName;
     }
 
     if (manifest.version) {

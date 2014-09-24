@@ -335,7 +335,7 @@ AlphaBoxBlur::AlphaBoxBlur(const Rect& aRect,
                            const Rect* aSkipRect)
  : mSpreadRadius(aSpreadRadius),
    mBlurRadius(aBlurRadius),
-   mSurfaceAllocationSize(-1)
+   mSurfaceAllocationSize(0)
 {
   Rect rect(aRect);
   rect.Inflate(Size(aBlurRadius + aSpreadRadius));
@@ -400,7 +400,7 @@ AlphaBoxBlur::AlphaBoxBlur(const Rect& aRect,
     mSpreadRadius(),
     mBlurRadius(CalculateBlurRadius(Point(aSigmaX, aSigmaY))),
     mStride(aStride),
-    mSurfaceAllocationSize(-1)
+    mSurfaceAllocationSize(0)
 {
   IntRect intRect;
   if (aRect.ToIntRect(&intRect)) {
@@ -445,7 +445,7 @@ AlphaBoxBlur::GetDirtyRect()
   return nullptr;
 }
 
-int32_t
+size_t
 AlphaBoxBlur::GetSurfaceAllocationSize() const
 {
   return mSurfaceAllocationSize;
@@ -498,7 +498,11 @@ AlphaBoxBlur::Blur(uint8_t* aData)
 
       // No need to use CheckedInt here - we have validated it in the constructor.
       size_t szB = stride * size.height;
-      uint8_t* tmpData = new uint8_t[szB];
+      uint8_t* tmpData = new (std::nothrow) uint8_t[szB];
+      if (!tmpData) {
+        return;
+      }
+
       memset(tmpData, 0, szB);
 
       uint8_t* a = aData;
@@ -730,8 +734,8 @@ static const Float GAUSSIAN_SCALE_FACTOR = Float((3 * sqrt(2 * M_PI) / 4) * 1.5)
 IntSize
 AlphaBoxBlur::CalculateBlurRadius(const Point& aStd)
 {
-    IntSize size(static_cast<int32_t>(floor(aStd.x * GAUSSIAN_SCALE_FACTOR + 0.5)),
-                 static_cast<int32_t>(floor(aStd.y * GAUSSIAN_SCALE_FACTOR + 0.5)));
+    IntSize size(static_cast<int32_t>(floor(aStd.x * GAUSSIAN_SCALE_FACTOR + 0.5f)),
+                 static_cast<int32_t>(floor(aStd.y * GAUSSIAN_SCALE_FACTOR + 0.5f)));
 
     return size;
 }

@@ -105,7 +105,7 @@ class RemoteOptions(ReftestOptions):
 
         # Ensure our defaults are set properly for everything we can infer
         if not options.remoteTestRoot:
-            options.remoteTestRoot = self.automation._devicemanager.getDeviceRoot() + '/reftest'
+            options.remoteTestRoot = self.automation._devicemanager.deviceRoot + '/reftest'
         options.remoteProfile = options.remoteTestRoot + "/profile"
 
         # Verify that our remotewebserver is set properly
@@ -269,6 +269,7 @@ class RemoteReftest(RefTest):
         else:
             self.SERVER_STARTUP_TIMEOUT = 90
         self.automation.deleteANRs()
+        self.automation.deleteTombstones()
 
     def findPath(self, paths, filename = None):
         for path in paths:
@@ -402,7 +403,7 @@ class RemoteReftest(RefTest):
                 logcat = self._devicemanager.getLogcat(filterOutRegexps=fennecLogcatFilters)
                 print ''.join(logcat)
             print "Device info: %s" % self._devicemanager.getInfo()
-            print "Test root: %s" % self._devicemanager.getDeviceRoot()
+            print "Test root: %s" % self._devicemanager.deviceRoot
         except devicemanager.DMError:
             print "WARNING: Error getting device information"
 

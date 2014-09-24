@@ -9,6 +9,7 @@
 
 #include "mozilla/HashFunctions.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/UniquePtr.h"
 
 #include "jsutil.h"
 #include "NamespaceImports.h"
@@ -62,7 +63,7 @@ CompareChars(const Char1 *s1, size_t len1, const Char2 *s2, size_t len2)
 }
 
 extern int32_t
-CompareChars(const jschar *s1, size_t len1, JSLinearString *s2);
+CompareChars(const char16_t *s1, size_t len1, JSLinearString *s2);
 
 }  /* namespace js */
 
@@ -106,70 +107,28 @@ js_ValueToPrintable(JSContext *cx, const js::Value &,
                     JSAutoByteString *bytes, bool asSource = false);
 
 extern size_t
-js_strlen(const jschar *s);
+js_strlen(const char16_t *s);
 
 extern int32_t
-js_strcmp(const jschar *lhs, const jschar *rhs);
+js_strcmp(const char16_t *lhs, const char16_t *rhs);
 
 template <typename CharT>
 extern const CharT *
-js_strchr_limit(const CharT *s, jschar c, const CharT *limit);
+js_strchr_limit(const CharT *s, char16_t c, const CharT *limit);
 
 static MOZ_ALWAYS_INLINE void
-js_strncpy(jschar *dst, const jschar *src, size_t nelem)
+js_strncpy(char16_t *dst, const char16_t *src, size_t nelem)
 {
     return mozilla::PodCopy(dst, src, nelem);
 }
 
-extern jschar *
-js_strdup(js::ThreadSafeContext *cx, const jschar *s);
-
 namespace js {
 
-/* GC-allocate a string descriptor for the given malloc-allocated chars. */
-template <js::AllowGC allowGC, typename CharT>
-extern JSFlatString *
-NewString(js::ThreadSafeContext *cx, CharT *chars, size_t length);
+extern mozilla::UniquePtr<char[], JS::FreePolicy>
+DuplicateString(ThreadSafeContext *cx, const char *s);
 
-/* Like NewString, but doesn't try to deflate to Latin1. */
-template <js::AllowGC allowGC, typename CharT>
-extern JSFlatString *
-NewStringDontDeflate(js::ThreadSafeContext *cx, CharT *chars, size_t length);
-
-extern JSLinearString *
-NewDependentString(JSContext *cx, JSString *base, size_t start, size_t length);
-
-/* Copy a counted string and GC-allocate a descriptor for it. */
-template <js::AllowGC allowGC, typename CharT>
-extern JSFlatString *
-NewStringCopyN(js::ThreadSafeContext *cx, const CharT *s, size_t n);
-
-template <js::AllowGC allowGC>
-inline JSFlatString *
-NewStringCopyN(ThreadSafeContext *cx, const char *s, size_t n)
-{
-    return NewStringCopyN<allowGC>(cx, reinterpret_cast<const Latin1Char *>(s), n);
-}
-
-/* Like NewStringCopyN, but doesn't try to deflate to Latin1. */
-template <js::AllowGC allowGC, typename CharT>
-extern JSFlatString *
-NewStringCopyNDontDeflate(js::ThreadSafeContext *cx, const CharT *s, size_t n);
-
-/* Copy a C string and GC-allocate a descriptor for it. */
-template <js::AllowGC allowGC>
-inline JSFlatString *
-NewStringCopyZ(js::ExclusiveContext *cx, const jschar *s)
-{
-    return NewStringCopyN<allowGC>(cx, s, js_strlen(s));
-}
-
-template <js::AllowGC allowGC>
-inline JSFlatString *
-NewStringCopyZ(js::ThreadSafeContext *cx, const char *s)
-{
-    return NewStringCopyN<allowGC>(cx, s, strlen(s));
-}
+extern mozilla::UniquePtr<char16_t[], JS::FreePolicy>
+DuplicateString(ThreadSafeContext *cx, const char16_t *s);
 
 /*
  * Convert a non-string value to a string, returning null after reporting an
@@ -195,7 +154,7 @@ ToString(JSContext *cx, JS::HandleValue v)
 
 /*
  * This function implements E-262-3 section 9.8, toString. Convert the given
- * value to a string of jschars appended to the given buffer. On error, the
+ * value to a string of characters appended to the given buffer. On error, the
  * passed buffer may have partial results appended.
  */
 inline bool
@@ -256,10 +215,14 @@ StringEqualsAscii(JSLinearString *str, const char *asciiBytes);
 
 /* Return true if the string contains a pattern anywhere inside it. */
 extern bool
-StringHasPattern(JSLinearString *text, const jschar *pat, uint32_t patlen);
+StringHasPattern(JSLinearString *text, const char16_t *pat, uint32_t patlen);
 
 extern int
 StringFindPattern(JSLinearString *text, JSLinearString *pat, size_t start);
+
+template <typename CharT>
+extern bool
+HasRegExpMetaChars(const CharT *chars, size_t length);
 
 extern bool
 StringHasRegExpMetaChars(JSLinearString *str);
@@ -287,27 +250,27 @@ EqualChars(const Char1 *s1, const Char2 *s2, size_t len)
 }
 
 /*
- * Inflate bytes in ASCII encoding to jschars. Return null on error, otherwise
- * return the jschar that was malloc'ed. length is updated to the length of the
- * new string (in jschars). A null char is appended, but it is not included in
- * the length.
+ * Inflate bytes in ASCII encoding to char16_t code units. Return null on error,
+ * otherwise return the char16_t buffer that was malloc'ed. length is updated to
+ * the length of the new string (in char16_t code units). A null char is
+ * appended, but it is not included in the length.
  */
-extern jschar *
+extern char16_t *
 InflateString(ThreadSafeContext *cx, const char *bytes, size_t *length);
 
 /*
  * Inflate bytes to JS chars in an existing buffer. 'dst' must be large
- * enough for 'srclen' jschars. The buffer is NOT null-terminated.
+ * enough for 'srclen' char16_t code units. The buffer is NOT null-terminated.
  */
 inline void
-CopyAndInflateChars(jschar *dst, const char *src, size_t srclen)
+CopyAndInflateChars(char16_t *dst, const char *src, size_t srclen)
 {
     for (size_t i = 0; i < srclen; i++)
         dst[i] = (unsigned char) src[i];
 }
 
 inline void
-CopyAndInflateChars(jschar *dst, const JS::Latin1Char *src, size_t srclen)
+CopyAndInflateChars(char16_t *dst, const JS::Latin1Char *src, size_t srclen)
 {
     for (size_t i = 0; i < srclen; i++)
         dst[i] = src[i];

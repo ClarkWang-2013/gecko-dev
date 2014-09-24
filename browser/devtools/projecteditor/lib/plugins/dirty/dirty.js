@@ -22,9 +22,8 @@ var DirtyPlugin = Class({
 
     // Dont' force a refresh unless the dirty state has changed...
     let priv = this.priv(editor);
-    let clean = editor.editor.isClean();
+    let clean = editor.isClean()
     if (priv.isClean !== clean) {
-
       let resource = editor.shell.resource;
       emit(resource, "label-change", resource);
       priv.isClean = clean;
@@ -32,7 +31,12 @@ var DirtyPlugin = Class({
   },
 
   onAnnotate: function(resource, editor, elt) {
-    if (editor && editor.editor && !editor.editor.isClean()) {
+    // Only run on a TextEditor
+    if (!editor || !editor.editor) {
+      return;
+    }
+
+    if (!editor.isClean()) {
       elt.textContent = '*' + resource.displayName;
       return true;
     }

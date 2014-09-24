@@ -29,6 +29,7 @@
 #include "TextureGarbageBin.h"
 #include "gfx2DGlue.h"
 #include "gfxPrefs.h"
+#include "mozilla/IntegerPrintfMacros.h"
 
 #include "OGLShaderProgram.h" // for ShaderProgramType
 
@@ -63,85 +64,87 @@ uint32_t GLContext::sDebugMode = 0;
 // should match the order of GLExtensions, and be null-terminated.
 static const char *sExtensionNames[] = {
     "NO_EXTENSION",
-    "GL_EXT_framebuffer_object",
-    "GL_ARB_framebuffer_object",
-    "GL_ARB_texture_rectangle",
-    "GL_EXT_bgra",
-    "GL_EXT_texture_format_BGRA8888",
-    "GL_OES_depth24",
-    "GL_OES_depth32",
-    "GL_OES_stencil8",
-    "GL_OES_texture_npot",
-    "GL_IMG_texture_npot",
-    "GL_ARB_depth_texture",
-    "GL_OES_depth_texture",
-    "GL_OES_packed_depth_stencil",
-    "GL_IMG_read_format",
-    "GL_EXT_read_format_bgra",
-    "GL_APPLE_client_storage",
-    "GL_APPLE_texture_range",
-    "GL_ARB_texture_non_power_of_two",
-    "GL_ARB_pixel_buffer_object",
-    "GL_ARB_ES2_compatibility",
-    "GL_ARB_ES3_compatibility",
-    "GL_OES_texture_float",
-    "GL_OES_texture_float_linear",
-    "GL_ARB_texture_float",
-    "GL_OES_texture_half_float",
-    "GL_OES_texture_half_float_linear",
-    "GL_NV_half_float",
-    "GL_EXT_color_buffer_float",
-    "GL_EXT_color_buffer_half_float",
-    "GL_ARB_color_buffer_float",
-    "GL_EXT_unpack_subimage",
-    "GL_OES_standard_derivatives",
-    "GL_EXT_texture_filter_anisotropic",
-    "GL_EXT_texture_compression_s3tc",
-    "GL_EXT_texture_compression_dxt1",
+    "GL_AMD_compressed_ATC_texture",
+    "GL_ANGLE_depth_texture",
+    "GL_ANGLE_framebuffer_blit",
+    "GL_ANGLE_framebuffer_multisample",
+    "GL_ANGLE_instanced_arrays",
     "GL_ANGLE_texture_compression_dxt3",
     "GL_ANGLE_texture_compression_dxt5",
-    "GL_AMD_compressed_ATC_texture",
-    "GL_IMG_texture_compression_pvrtc",
-    "GL_EXT_framebuffer_blit",
-    "GL_ANGLE_framebuffer_blit",
-    "GL_EXT_framebuffer_multisample",
-    "GL_ANGLE_framebuffer_multisample",
-    "GL_OES_rgb8_rgba8",
-    "GL_ARB_robustness",
-    "GL_EXT_robustness",
-    "GL_ARB_sync",
-    "GL_OES_EGL_image",
-    "GL_OES_EGL_sync",
-    "GL_OES_EGL_image_external",
-    "GL_EXT_packed_depth_stencil",
-    "GL_OES_element_index_uint",
-    "GL_OES_vertex_array_object",
-    "GL_ARB_vertex_array_object",
+    "GL_APPLE_client_storage",
+    "GL_APPLE_texture_range",
     "GL_APPLE_vertex_array_object",
+    "GL_ARB_ES2_compatibility",
+    "GL_ARB_ES3_compatibility",
+    "GL_ARB_color_buffer_float",
+    "GL_ARB_depth_texture",
     "GL_ARB_draw_buffers",
-    "GL_EXT_draw_buffers",
-    "GL_EXT_gpu_shader4",
-    "GL_EXT_blend_minmax",
     "GL_ARB_draw_instanced",
-    "GL_EXT_draw_instanced",
-    "GL_NV_draw_instanced",
-    "GL_ARB_instanced_arrays",
-    "GL_NV_instanced_arrays",
-    "GL_ANGLE_instanced_arrays",
-    "GL_EXT_occlusion_query_boolean",
-    "GL_ARB_occlusion_query2",
-    "GL_EXT_transform_feedback",
-    "GL_NV_transform_feedback",
-    "GL_ANGLE_depth_texture",
-    "GL_EXT_sRGB",
-    "GL_EXT_texture_sRGB",
+    "GL_ARB_framebuffer_object",
     "GL_ARB_framebuffer_sRGB",
-    "GL_EXT_framebuffer_sRGB",
-    "GL_KHR_debug",
     "GL_ARB_half_float_pixel",
-    "GL_EXT_frag_depth",
-    "GL_OES_compressed_ETC1_RGB8_texture",
+    "GL_ARB_instanced_arrays",
+    "GL_ARB_occlusion_query2",
+    "GL_ARB_pixel_buffer_object",
+    "GL_ARB_robustness",
+    "GL_ARB_sync",
+    "GL_ARB_texture_float",
+    "GL_ARB_texture_non_power_of_two",
+    "GL_ARB_texture_rectangle",
+    "GL_ARB_vertex_array_object",
+    "GL_EXT_bgra",
+    "GL_EXT_blend_minmax",
+    "GL_EXT_color_buffer_float",
+    "GL_EXT_color_buffer_half_float",
+    "GL_EXT_draw_buffers",
+    "GL_EXT_draw_instanced",
     "GL_EXT_draw_range_elements",
+    "GL_EXT_frag_depth",
+    "GL_EXT_framebuffer_blit",
+    "GL_EXT_framebuffer_multisample",
+    "GL_EXT_framebuffer_object",
+    "GL_EXT_framebuffer_sRGB",
+    "GL_EXT_gpu_shader4",
+    "GL_EXT_occlusion_query_boolean",
+    "GL_EXT_packed_depth_stencil",
+    "GL_EXT_read_format_bgra",
+    "GL_EXT_robustness",
+    "GL_EXT_sRGB",
+    "GL_EXT_shader_texture_lod",
+    "GL_EXT_texture_compression_dxt1",
+    "GL_EXT_texture_compression_s3tc",
+    "GL_EXT_texture_filter_anisotropic",
+    "GL_EXT_texture_format_BGRA8888",
+    "GL_EXT_texture_sRGB",
+    "GL_EXT_transform_feedback",
+    "GL_EXT_unpack_subimage",
+    "GL_IMG_read_format",
+    "GL_IMG_texture_compression_pvrtc",
+    "GL_IMG_texture_npot",
+    "GL_KHR_debug",
+    "GL_NV_draw_instanced",
+    "GL_NV_fence",
+    "GL_NV_half_float",
+    "GL_NV_instanced_arrays",
+    "GL_NV_transform_feedback",
+    "GL_OES_EGL_image",
+    "GL_OES_EGL_image_external",
+    "GL_OES_EGL_sync",
+    "GL_OES_compressed_ETC1_RGB8_texture",
+    "GL_OES_depth24",
+    "GL_OES_depth32",
+    "GL_OES_depth_texture",
+    "GL_OES_element_index_uint",
+    "GL_OES_packed_depth_stencil",
+    "GL_OES_rgb8_rgba8",
+    "GL_OES_standard_derivatives",
+    "GL_OES_stencil8",
+    "GL_OES_texture_float",
+    "GL_OES_texture_float_linear",
+    "GL_OES_texture_half_float",
+    "GL_OES_texture_half_float_linear",
+    "GL_OES_texture_npot",
+    "GL_OES_vertex_array_object",
     nullptr
 };
 
@@ -275,7 +278,7 @@ GLContext::GLContext(const SurfaceCaps& caps,
     mRenderer(GLRenderer::Other),
     mHasRobustness(false),
 #ifdef DEBUG
-    mGLError(LOCAL_GL_NO_ERROR),
+    mIsInLocalErrorCheck(false),
 #endif
     mSharedContext(sharedContext),
     mCaps(caps),
@@ -286,7 +289,8 @@ GLContext::GLContext(const SurfaceCaps& caps,
     mMaxTextureImageSize(0),
     mMaxRenderbufferSize(0),
     mNeedsTextureSizeChecks(false),
-    mWorkAroundDriverBugs(true)
+    mWorkAroundDriverBugs(true),
+    mHeavyGLCallsSinceLastFlush(false)
 {
     mOwningThreadId = PlatformThread::CurrentId();
 }
@@ -599,6 +603,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 "Android Emulator",
                 "Gallium 0.4 on llvmpipe",
                 "Intel HD Graphics 3000 OpenGL Engine",
+                "Microsoft Basic Render Driver"
         };
 
         mRenderer = GLRenderer::Other;
@@ -667,6 +672,12 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 MarkExtensionUnsupported(OES_EGL_sync);
             }
 
+            if (Renderer() == GLRenderer::MicrosoftBasicRenderDriver) {
+                // Bug 978966: on Microsoft's "Basic Render Driver" (software renderer)
+                // multisampling hardcodes blending with the default blendfunc, which breaks WebGL.
+                MarkUnsupported(GLFeature::framebuffer_multisample);
+            }
+
 #ifdef XP_MACOSX
             // The Mac Nvidia driver, for versions up to and including 10.8, don't seem
             // to properly support this.  See 814839
@@ -677,10 +688,6 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 MarkUnsupported(GLFeature::depth_texture);
             }
 #endif
-            // ANGLE's divisor support is busted. (see bug 916816)
-            if (IsANGLE()) {
-                MarkUnsupported(GLFeature::instanced_arrays);
-            }
         }
 
         NS_ASSERTION(!IsExtensionSupported(GLContext::ARB_pixel_buffer_object) ||
@@ -1005,6 +1012,23 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             }
         }
 
+        if (IsSupported(GLFeature::clear_buffers)) {
+            SymLoadStruct clearBuffersSymbols[] = {
+                { (PRFuncPtr*) &mSymbols.fClearBufferfi,  { "ClearBufferfi",  nullptr } },
+                { (PRFuncPtr*) &mSymbols.fClearBufferfv,  { "ClearBufferfv",  nullptr } },
+                { (PRFuncPtr*) &mSymbols.fClearBufferiv,  { "ClearBufferiv",  nullptr } },
+                { (PRFuncPtr*) &mSymbols.fClearBufferuiv, { "ClearBufferuiv", nullptr } },
+                END_SYMBOLS
+            };
+
+            if (!LoadSymbols(clearBuffersSymbols, trygl, prefix)) {
+                NS_ERROR("GL supports clear_buffers without supplying its functions.");
+
+                MarkUnsupported(GLFeature::clear_buffers);
+                ClearSymbols(clearBuffersSymbols);
+            }
+        }
+
         if (IsSupported(GLFeature::draw_buffers)) {
             SymLoadStruct coreSymbols[] = {
                 { (PRFuncPtr*) &mSymbols.fDrawBuffers, { "DrawBuffers", nullptr } },
@@ -1071,6 +1095,26 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             }
         }
 
+        if (IsExtensionSupported(NV_fence)) {
+            SymLoadStruct extSymbols[] = {
+                { (PRFuncPtr*) &mSymbols.fGenFences,    { "GenFencesNV",    nullptr } },
+                { (PRFuncPtr*) &mSymbols.fDeleteFences, { "DeleteFencesNV", nullptr } },
+                { (PRFuncPtr*) &mSymbols.fSetFence,     { "SetFenceNV",     nullptr } },
+                { (PRFuncPtr*) &mSymbols.fTestFence,    { "TestFenceNV",    nullptr } },
+                { (PRFuncPtr*) &mSymbols.fFinishFence,  { "FinishFenceNV",  nullptr } },
+                { (PRFuncPtr*) &mSymbols.fIsFence,      { "IsFenceNV",      nullptr } },
+                { (PRFuncPtr*) &mSymbols.fGetFenceiv,   { "GetFenceivNV",   nullptr } },
+                END_SYMBOLS
+            };
+
+            if (!LoadSymbols(&extSymbols[0], trygl, prefix)) {
+                NS_ERROR("GL supports NV_fence without supplying its functions.");
+
+                MarkExtensionUnsupported(NV_fence);
+                ClearSymbols(extSymbols);
+            }
+        }
+
         // Load developer symbols, don't fail if we can't find them.
         SymLoadStruct auxSymbols[] = {
                 { (PRFuncPtr*) &mSymbols.fGetTexImage, { "GetTexImage", nullptr } },
@@ -1087,6 +1131,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         raw_fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
         raw_fGetIntegerv(LOCAL_GL_MAX_CUBE_MAP_TEXTURE_SIZE, &mMaxCubeMapTextureSize);
         raw_fGetIntegerv(LOCAL_GL_MAX_RENDERBUFFER_SIZE, &mMaxRenderbufferSize);
+        raw_fGetIntegerv(LOCAL_GL_MAX_VIEWPORT_DIMS, mMaxViewportDims);
 
 #ifdef XP_MACOSX
         if (mWorkAroundDriverBugs) {
@@ -1102,8 +1147,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                     // See bug 879656.  8192 fails, 8191 works.
                     mMaxTextureSize = std::min(mMaxTextureSize, 8191);
                     mMaxRenderbufferSize = std::min(mMaxRenderbufferSize, 8191);
-                }
-                else {
+                } else {
                     // See bug 877949.
                     mMaxTextureSize = std::min(mMaxTextureSize, 4096);
                     mMaxRenderbufferSize = std::min(mMaxRenderbufferSize, 4096);
@@ -1246,7 +1290,7 @@ GLContext::DebugCallback(GLenum source,
         break;
     }
 
-    printf_stderr("[KHR_debug: 0x%x] ID %u: %s %s %s:\n    %s",
+    printf_stderr("[KHR_debug: 0x%" PRIxPTR "] ID %u: %s %s %s:\n    %s",
                   (uintptr_t)this,
                   id,
                   sourceStr.BeginReading(),
@@ -1669,22 +1713,15 @@ GLContext::PublishFrame()
 {
     MOZ_ASSERT(mScreen);
 
-    if (!mScreen->PublishFrame(OffscreenSize()))
-        return false;
-
-    return true;
+    return mScreen->PublishFrame(OffscreenSize());
 }
 
-SharedSurface_GL*
+SharedSurface*
 GLContext::RequestFrame()
 {
     MOZ_ASSERT(mScreen);
 
-    SharedSurface* ret = mScreen->Stream()->SwapConsumer();
-    if (!ret)
-        return nullptr;
-
-    return SharedSurface_GL::Cast(ret);
+    return mScreen->Stream()->SwapConsumer();
 }
 
 
@@ -2017,12 +2054,11 @@ GLContext::OffscreenSize() const
 bool
 GLContext::CreateScreenBufferImpl(const IntSize& size, const SurfaceCaps& caps)
 {
-    GLScreenBuffer* newScreen = GLScreenBuffer::Create(this, size, caps);
+    UniquePtr<GLScreenBuffer> newScreen = GLScreenBuffer::Create(this, size, caps);
     if (!newScreen)
         return false;
 
     if (!newScreen->Resize(size)) {
-        delete newScreen;
         return false;
     }
 
@@ -2032,7 +2068,7 @@ GLContext::CreateScreenBufferImpl(const IntSize& size, const SurfaceCaps& caps)
     // it falls out of scope.
     ScopedBindFramebuffer autoFB(this);
 
-    mScreen = newScreen;
+    mScreen = Move(newScreen);
 
     return true;
 }
@@ -2050,7 +2086,6 @@ GLContext::ResizeScreenBuffer(const IntSize& size)
 void
 GLContext::DestroyScreenBuffer()
 {
-    delete mScreen;
     mScreen = nullptr;
 }
 
@@ -2097,30 +2132,40 @@ GLBlitHelper*
 GLContext::BlitHelper()
 {
     if (!mBlitHelper) {
-        mBlitHelper = new GLBlitHelper(this);
+        mBlitHelper = MakeUnique<GLBlitHelper>(this);
     }
 
-    return mBlitHelper;
+    return mBlitHelper.get();
 }
 
 GLBlitTextureImageHelper*
 GLContext::BlitTextureImageHelper()
 {
     if (!mBlitTextureImageHelper) {
-        mBlitTextureImageHelper = new GLBlitTextureImageHelper(this);
+        mBlitTextureImageHelper = MakeUnique<GLBlitTextureImageHelper>(this);
     }
 
-    return mBlitTextureImageHelper;
+    return mBlitTextureImageHelper.get();
 }
 
 GLReadTexImageHelper*
 GLContext::ReadTexImageHelper()
 {
     if (!mReadTexImageHelper) {
-        mReadTexImageHelper = new GLReadTexImageHelper(this);
+        mReadTexImageHelper = MakeUnique<GLReadTexImageHelper>(this);
     }
 
-    return mReadTexImageHelper;
+    return mReadTexImageHelper.get();
+}
+
+void
+GLContext::FlushIfHeavyGLCallsSinceLastFlush()
+{
+    if (!mHeavyGLCallsSinceLastFlush) {
+        return;
+    }
+    MakeCurrent();
+    fFlush();
 }
 
 bool

@@ -122,12 +122,12 @@ SymbolObject::construct(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-// Stand-in for Symbol.prototype[@@toPrimitive], ES6 rev 25 (2014 May 22) 19.4.3.4
+// Stand-in for Symbol.prototype[@@toPrimitive], ES6 rev 26 (2014 Jul 18) 19.4.3.4
 bool
-SymbolObject::convert(JSContext *cx, HandleObject obj, JSType type, MutableHandleValue vp)
+SymbolObject::convert(JSContext *cx, HandleObject obj, JSType hint, MutableHandleValue vp)
 {
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SYMBOL_TO_PRIMITIVE);
-    return false;
+    vp.setSymbol(obj->as<SymbolObject>().unbox());
+    return true;
 }
 
 // ES6 rev 24 (2014 Apr 27) 19.4.2.2
@@ -185,7 +185,7 @@ IsSymbol(HandleValue v)
     return v.isSymbol() || (v.isObject() && v.toObject().is<SymbolObject>());
 }
 
-//ES6 rev 24 (2014 Apr 27) 19.4.3.2
+// ES6 rev 27 (2014 Aug 24) 19.4.3.2
 bool
 SymbolObject::toString_impl(JSContext *cx, CallArgs args)
 {
@@ -196,24 +196,8 @@ SymbolObject::toString_impl(JSContext *cx, CallArgs args)
                             ? thisv.toSymbol()
                             : thisv.toObject().as<SymbolObject>().unbox());
 
-    // steps 4-7
-    StringBuffer sb(cx);
-    if (!sb.append("Symbol("))
-        return false;
-    RootedString str(cx, sym->description());
-    if (str) {
-        if (!sb.append(str))
-            return false;
-    }
-    if (!sb.append(')'))
-        return false;
-
-    // step 8
-    str = sb.finishString();
-    if (!str)
-        return false;
-    args.rval().setString(str);
-    return true;
+    // step 4
+    return SymbolDescriptiveString(cx, sym, args.rval());
 }
 
 bool

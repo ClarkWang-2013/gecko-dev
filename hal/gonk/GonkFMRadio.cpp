@@ -27,6 +27,20 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+
+/* Bionic might not have the newer version of the v4l2 headers that
+ * define these controls, so we define them here if they're not found.
+ */
+#ifndef V4L2_CTRL_CLASS_FM_RX
+#define V4L2_CTRL_CLASS_FM_RX 0x00a10000
+#define V4L2_CID_FM_RX_CLASS_BASE (V4L2_CTRL_CLASS_FM_RX | 0x900)
+#define V4L2_CID_TUNE_DEEMPHASIS  (V4L2_CID_FM_RX_CLASS_BASE + 1)
+#define V4L2_DEEMPHASIS_DISABLED  0
+#define V4L2_DEEMPHASIS_50_uS     1
+#define V4L2_DEEMPHASIS_75_uS     2
+#define V4L2_CID_RDS_RECEPTION    (V4L2_CID_FM_RX_CLASS_BASE + 2)
+#endif
+
 namespace mozilla {
 namespace hal_impl {
 
@@ -318,6 +332,26 @@ EnableFMRadio(const hal::FMRadioSettings& aInfo)
     HAL_LOG(("Unable to adjust band limits"));
   }
 
+  int emphasis;
+  switch (aInfo.preEmphasis()) {
+  case 0:
+    emphasis = V4L2_DEEMPHASIS_DISABLED;
+    break;
+  case 50:
+    emphasis = V4L2_DEEMPHASIS_50_uS;
+    break;
+  case 75:
+    emphasis = V4L2_DEEMPHASIS_75_uS;
+    break;
+  default:
+    MOZ_CRASH("Invalid preemphasis setting");
+    break;
+  }
+  rc = setControl(V4L2_CID_TUNE_DEEMPHASIS, emphasis);
+  if (rc < 0) {
+    HAL_LOG(("Unable to configure deemphasis"));
+  }
+
   sRadioFD = fd.forget();
   sRadioEnabled = true;
 
@@ -368,20 +402,18 @@ FMRadioSeek(const hal::FMRadioSeekDirection& aDirection)
   if (sMsmFMMode && rc >= 0)
     return;
 
-  hal::FMRadioOperationInformation info;
-  info.operation() = hal::FM_RADIO_OPERATION_SEEK;
-  info.status() = rc < 0 ? hal::FM_RADIO_OPERATION_STATUS_FAIL :
-                           hal::FM_RADIO_OPERATION_STATUS_SUCCESS;
-  hal::NotifyFMRadioStatus(info);
+  NS_DispatchToMainThread(new RadioUpdate(hal::FM_RADIO_OPERATION_SEEK,
+                                          rc < 0 ?
+                                          hal::FM_RADIO_OPERATION_STATUS_FAIL :
+                                          hal::FM_RADIO_OPERATION_STATUS_SUCCESS));
 
   if (rc < 0) {
     HAL_LOG(("Could not initiate hardware seek"));
     return;
   }
 
-  info.operation() = hal::FM_RADIO_OPERATION_TUNE;
-  info.status() = hal::FM_RADIO_OPERATION_STATUS_SUCCESS;
-  hal::NotifyFMRadioStatus(info);
+  NS_DispatchToMainThread(new RadioUpdate(hal::FM_RADIO_OPERATION_TUNE,
+                                          hal::FM_RADIO_OPERATION_STATUS_SUCCESS));
 }
 
 void
@@ -416,11 +448,10 @@ SetFMRadioFrequency(const uint32_t frequency)
   if (sMsmFMMode && rc >= 0)
     return;
 
-  hal::FMRadioOperationInformation info;
-  info.operation() = hal::FM_RADIO_OPERATION_TUNE;
-  info.status() = rc < 0 ? hal::FM_RADIO_OPERATION_STATUS_FAIL :
-                           hal::FM_RADIO_OPERATION_STATUS_SUCCESS;
-  hal::NotifyFMRadioStatus(info);
+  NS_DispatchToMainThread(new RadioUpdate(hal::FM_RADIO_OPERATION_TUNE,
+                                          rc < 0 ?
+                                          hal::FM_RADIO_OPERATION_STATUS_FAIL :
+                                          hal::FM_RADIO_OPERATION_STATUS_SUCCESS));
 }
 
 uint32_t

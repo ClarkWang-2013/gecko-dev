@@ -66,11 +66,13 @@ public:
   // WebIDL
   void GetType(nsAString & aType);
   void SetType(const nsAString & aType, ErrorResult& rv);
-  void GetCrossOrigin(nsAString & aOrigin);
-  void SetCrossOrigin(const nsAString & aOrigin, ErrorResult& rv);
+  void GetCrossOrigin(nsAString & aCrossOrigin);
+  void SetCrossOrigin(const nsAString & aCrossOrigin, ErrorResult& aError);
   already_AddRefed<SVGAnimatedString> Href();
 
 protected:
+  ~SVGScriptElement();
+
   virtual StringAttributesInfo GetStringInfo() MOZ_OVERRIDE;
 
   enum { HREF };

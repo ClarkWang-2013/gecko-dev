@@ -21,7 +21,7 @@ class HTMLMapElement MOZ_FINAL : public nsGenericHTMLElement,
                                  public nsIDOMHTMLMapElement
 {
 public:
-  HTMLMapElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
+  explicit HTMLMapElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -44,6 +44,8 @@ public:
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 
 protected:
+  ~HTMLMapElement() {}
+
   nsRefPtr<nsContentList> mAreas;
 };
 

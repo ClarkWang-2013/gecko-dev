@@ -185,6 +185,7 @@ function whereToOpenLink( e, ignoreButton, ignoreAlt )
  *   referrerURI          (nsIURI)
  *   relatedToCurrent     (boolean)
  *   skipTabAnimation     (boolean)
+ *   allowPinnedTabHostChange (boolean)
  */
 function openUILinkIn(url, where, aAllowThirdPartyFixup, aPostData, aReferrerURI) {
   var params;
@@ -214,12 +215,13 @@ function openLinkIn(url, where, params) {
   var aCharset              = params.charset;
   var aReferrerURI          = params.referrerURI;
   var aRelatedToCurrent     = params.relatedToCurrent;
-  var aDisableMCB           = params.disableMCB;
+  var aAllowMixedContent    = params.allowMixedContent;
   var aInBackground         = params.inBackground;
   var aDisallowInheritPrincipal = params.disallowInheritPrincipal;
   var aInitiatingDoc        = params.initiatingDoc;
   var aIsPrivate            = params.private;
   var aSkipTabAnimation     = params.skipTabAnimation;
+  var aAllowPinnedTabHostChange = !!params.allowPinnedTabHostChange;
 
   if (where == "save") {
     if (!aInitiatingDoc) {
@@ -281,11 +283,19 @@ function openLinkIn(url, where, params) {
                          getBoolPref("browser.tabs.loadInBackground");
   }
 
-  if (where == "current" && w.gBrowser.selectedTab.pinned) {
+  let uriObj;
+  if (where == "current") {
     try {
-      let uriObj = Services.io.newURI(url, null, null);
-      if (!uriObj.schemeIs("javascript") &&
-          w.gBrowser.currentURI.host != uriObj.host) {
+      uriObj = Services.io.newURI(url, null, null);
+    } catch (e) {}
+  }
+
+  if (where == "current" && w.gBrowser.selectedTab.pinned &&
+      !aAllowPinnedTabHostChange) {
+    try {
+      // nsIURI.host can throw for non-nsStandardURL nsIURIs.
+      if (!uriObj || (!uriObj.schemeIs("javascript") &&
+                      w.gBrowser.currentURI.host != uriObj.host)) {
         where = "tab";
         loadInBackground = false;
       }
@@ -299,38 +309,54 @@ function openLinkIn(url, where, params) {
   // result in a new frontmost window (e.g. "javascript:window.open('');").
   w.focus();
 
+  let newTab;
+
   switch (where) {
   case "current":
     let flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
+
     if (aAllowThirdPartyFixup) {
       flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
       flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
     }
-    if (aDisallowInheritPrincipal)
+
+    // LOAD_FLAGS_DISALLOW_INHERIT_OWNER isn't supported for javascript URIs,
+    // i.e. it causes them not to load at all. Callers should strip
+    // "javascript:" from pasted strings to protect users from malicious URIs
+    // (see stripUnsafeProtocolOnPaste).
+    if (aDisallowInheritPrincipal && !(uriObj && uriObj.schemeIs("javascript")))
       flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_OWNER;
+
     w.gBrowser.loadURIWithFlags(url, flags, aReferrerURI, null, aPostData);
     break;
   case "tabshifted":
     loadInBackground = !loadInBackground;
     // fall through
   case "tab":
-    let browser = w.gBrowser;
-    browser.loadOneTab(url, {
-                       referrerURI: aReferrerURI,
-                       charset: aCharset,
-                       postData: aPostData,
-                       inBackground: loadInBackground,
-                       allowThirdPartyFixup: aAllowThirdPartyFixup,
-                       relatedToCurrent: aRelatedToCurrent,
-                       skipAnimation: aSkipTabAnimation,
-                       disableMCB: aDisableMCB});
+    newTab = w.gBrowser.loadOneTab(url, {
+      referrerURI: aReferrerURI,
+      charset: aCharset,
+      postData: aPostData,
+      inBackground: loadInBackground,
+      allowThirdPartyFixup: aAllowThirdPartyFixup,
+      relatedToCurrent: aRelatedToCurrent,
+      skipAnimation: aSkipTabAnimation,
+      allowMixedContent: aAllowMixedContent
+    });
     break;
   }
 
   w.gBrowser.selectedBrowser.focus();
 
-  if (!loadInBackground && w.isBlankPageURL(url))
+  if (!loadInBackground && w.isBlankPageURL(url)) {
+    if (newTab && gMultiProcessBrowser) {
+      // Remote browsers are switched to asynchronously, and we need to
+      // ensure that the location bar remains focused in that case rather
+      // than the content area being focused.
+      newTab._skipContentFocus = true;
+    }
     w.focusAndSelectUrlBar();
+  }
 }
 
 // Used as an onclick handler for UI elements with link-like behavior.

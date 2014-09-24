@@ -30,8 +30,8 @@ class CSSStyleSheet;
 
 struct nsAtomList {
 public:
-  nsAtomList(nsIAtom* aAtom);
-  nsAtomList(const nsString& aAtomValue);
+  explicit nsAtomList(nsIAtom* aAtom);
+  explicit nsAtomList(const nsString& aAtomValue);
   ~nsAtomList(void);
 
   /** Do a deep clone.  Should be used only on the first in the linked list. */
@@ -50,7 +50,7 @@ private:
 
 struct nsPseudoClassList {
 public:
-  nsPseudoClassList(nsCSSPseudoClasses::Type aType);
+  explicit nsPseudoClassList(nsCSSPseudoClasses::Type aType);
   nsPseudoClassList(nsCSSPseudoClasses::Type aType, const char16_t *aString);
   nsPseudoClassList(nsCSSPseudoClasses::Type aType, const int32_t *aIntPair);
   nsPseudoClassList(nsCSSPseudoClasses::Type aType,
@@ -239,6 +239,13 @@ struct nsCSSSelectorList {
   nsCSSSelector* AddSelector(char16_t aOperator);
 
   /**
+   * Point |mSelectors| to its |mNext|, and delete the first node in the old
+   * |mSelectors|.
+   * Should only be used on a list with more than one selector in it.
+   */
+  void RemoveRightmostSelector();
+
+  /**
    * Should be used only on the first in the list
    */
   void ToString(nsAString& aResult, mozilla::CSSStyleSheet* aSheet);
@@ -275,9 +282,9 @@ class DOMCSSStyleRule;
 
 class StyleRule;
 
-class ImportantRule : public nsIStyleRule {
+class ImportantRule MOZ_FINAL : public nsIStyleRule {
 public:
-  ImportantRule(Declaration *aDeclaration);
+  explicit ImportantRule(Declaration *aDeclaration);
 
   NS_DECL_ISUPPORTS
 
@@ -302,7 +309,8 @@ class StyleRule MOZ_FINAL : public Rule
 {
  public:
   StyleRule(nsCSSSelectorList* aSelector,
-            Declaration *aDeclaration);
+            Declaration *aDeclaration,
+            uint32_t aLineNumber, uint32_t aColumnNumber);
 private:
   // for |Clone|
   StyleRule(const StyleRule& aCopy);
@@ -316,12 +324,6 @@ public:
 
   // null for style attribute
   nsCSSSelectorList* Selector() { return mSelector; }
-
-  uint32_t GetLineNumber() const { return mLineNumber; }
-  uint32_t GetColumnNumber() const { return mColumnNumber; }
-  void SetLineNumberAndColumnNumber(uint32_t aLineNumber,
-                                    uint32_t aColumnNumber)
-  { mLineNumber = aLineNumber; mColumnNumber = aColumnNumber; }
 
   Declaration* GetDeclaration() const { return mDeclaration; }
 
@@ -376,10 +378,6 @@ private:
   Declaration*            mDeclaration;
   nsRefPtr<ImportantRule> mImportantRule; // initialized by RuleMatched
   nsRefPtr<DOMCSSStyleRule> mDOMRule;
-  // Keep the same type so that MSVC packs them.
-  uint32_t                mLineNumber;
-  uint32_t                mColumnNumber : 31;
-  uint32_t                mWasMatched : 1;
 
 private:
   StyleRule& operator=(const StyleRule& aCopy) MOZ_DELETE;

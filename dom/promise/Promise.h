@@ -14,6 +14,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/dom/ToJSValue.h"
+#include "mozilla/WeakPtr.h"
 #include "nsWrapperCache.h"
 #include "nsAutoPtr.h"
 #include "js/TypeDecls.h"
@@ -39,7 +40,7 @@ class PromiseReportRejectFeature : public workers::WorkerFeature
   Promise* mPromise;
 
 public:
-  PromiseReportRejectFeature(Promise* aPromise)
+  explicit PromiseReportRejectFeature(Promise* aPromise)
     : mPromise(aPromise)
   {
     MOZ_ASSERT(mPromise);
@@ -49,11 +50,11 @@ public:
   Notify(JSContext* aCx, workers::Status aStatus) MOZ_OVERRIDE;
 };
 
-class Promise MOZ_FINAL : public nsISupports,
-                          public nsWrapperCache
+class Promise : public nsISupports,
+                public nsWrapperCache,
+                public SupportsWeakPtr<Promise>
 {
   friend class NativePromiseCallback;
-  friend class PromiseResolverMixin;
   friend class PromiseResolverTask;
   friend class PromiseTask;
   friend class PromiseReportRejectFeature;
@@ -61,18 +62,20 @@ class Promise MOZ_FINAL : public nsISupports,
   friend class PromiseWorkerProxyRunnable;
   friend class RejectPromiseCallback;
   friend class ResolvePromiseCallback;
-  friend class ThenableResolverMixin;
-  friend class WorkerPromiseResolverTask;
-  friend class WorkerPromiseTask;
+  friend class ThenableResolverTask;
   friend class WrapperPromiseCallback;
-
-  ~Promise();
 
 public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(Promise)
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(Promise)
 
-  Promise(nsIGlobalObject* aGlobal);
+  // Promise creation tries to create a JS reflector for the Promise, so is
+  // fallible.  Furthermore, we don't want to do JS-wrapping on a 0-refcount
+  // object, so we addref before doing that and return the addrefed pointer
+  // here.
+  static already_AddRefed<Promise>
+  Create(nsIGlobalObject* aGlobal, ErrorResult& aRv);
 
   typedef void (Promise::*MaybeFunc)(JSContext* aCx,
                                      JS::Handle<JS::Value> aValue);
@@ -139,10 +142,10 @@ public:
 
   already_AddRefed<Promise>
   Then(JSContext* aCx, AnyCallback* aResolveCallback,
-       AnyCallback* aRejectCallback);
+       AnyCallback* aRejectCallback, ErrorResult& aRv);
 
   already_AddRefed<Promise>
-  Catch(JSContext* aCx, AnyCallback* aRejectCallback);
+  Catch(JSContext* aCx, AnyCallback* aRejectCallback, ErrorResult& aRv);
 
   static already_AddRefed<Promise>
   All(const GlobalObject& aGlobal,
@@ -153,6 +156,31 @@ public:
        const Sequence<JS::Value>& aIterable, ErrorResult& aRv);
 
   void AppendNativeHandler(PromiseNativeHandler* aRunnable);
+
+protected:
+  // Do NOT call this unless you're Promise::Create.  I wish we could enforce
+  // that from inside this class too, somehow.
+  explicit Promise(nsIGlobalObject* aGlobal);
+
+  virtual ~Promise();
+
+  // Queue an async task to current main or worker thread.
+  static void
+  DispatchToMainOrWorkerThread(nsIRunnable* aRunnable);
+
+  // Do JS-wrapping after Promise creation.
+  void CreateWrapper(ErrorResult& aRv);
+
+  // Create the JS resolving functions of resolve() and reject(). And provide
+  // references to the two functions by calling PromiseInit passed from Promise
+  // constructor.
+  void CallInitFunction(const GlobalObject& aGlobal, PromiseInit& aInit,
+                        ErrorResult& aRv);
+
+  bool IsPending()
+  {
+    return mResolvePending;
+  }
 
 private:
   friend class PromiseDebugging;
@@ -219,18 +247,11 @@ private:
                       JS::Handle<JS::Value> aValue,
                       PromiseTaskSync aSync = AsyncTask);
 
-  // Helper methods for using Promises from C++
-  JSObject* GetOrCreateWrapper(JSContext* aCx);
-
   template <typename T>
   void MaybeSomething(T& aArgument, MaybeFunc aFunc) {
     ThreadsafeAutoJSContext cx;
-
-    JSObject* wrapper = GetOrCreateWrapper(cx);
-    if (!wrapper) {
-      HandleException(cx);
-      return;
-    }
+    JSObject* wrapper = GetWrapper();
+    MOZ_ASSERT(wrapper); // We preserved it!
 
     JSAutoCompartment ac(cx, wrapper);
     JS::Rooted<JS::Value> val(cx);

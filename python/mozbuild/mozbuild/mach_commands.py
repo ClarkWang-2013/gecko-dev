@@ -285,6 +285,7 @@ class Build(MachCommandBase):
         warnings_path = self._get_state_filename('warnings.json')
         monitor = self._spawn(BuildMonitor)
         monitor.init(warnings_path)
+        ccache_start = monitor.ccache_stats()
 
         with BuildOutputManager(self.log_manager, monitor) as output:
             monitor.start()
@@ -369,9 +370,16 @@ class Build(MachCommandBase):
                 make_extra = self.mozconfig['make_extra'] or []
                 make_extra = dict(m.split('=', 1) for m in make_extra)
 
+                # For universal builds, we need to run the automation steps in
+                # the first architecture from MOZ_BUILD_PROJECTS
+                projects = make_extra.get('MOZ_BUILD_PROJECTS')
+                if projects:
+                    subdir = os.path.join(self.topobjdir, projects.split()[0])
+                else:
+                    subdir = self.topobjdir
                 moz_automation = os.getenv('MOZ_AUTOMATION') or make_extra.get('export MOZ_AUTOMATION', None)
                 if moz_automation and status == 0:
-                    status = self._run_make(target='automation/build',
+                    status = self._run_make(target='automation/build', directory=subdir,
                         line_handler=output.on_line, log=False, print_directory=False,
                         ensure_exit_code=False, num_jobs=jobs, silent=not verbose)
 
@@ -385,19 +393,60 @@ class Build(MachCommandBase):
         if high_finder:
             print(FINDER_SLOW_MESSAGE % finder_percent)
 
-        if monitor.elapsed > 300:
+        ccache_end = monitor.ccache_stats()
+
+        if ccache_start and ccache_end:
+            ccache_diff = ccache_end - ccache_start
+            if ccache_diff:
+                self.log(logging.INFO, 'ccache',
+                         {'msg': ccache_diff.hit_rate_message()}, "{msg}")
+
+        moz_nospam = os.environ.get('MOZ_NOSPAM')
+        if monitor.elapsed > 300 and not moz_nospam:
             # Display a notification when the build completes.
             # This could probably be uplifted into the mach core or at least
             # into a helper API. It is here as an experimentation to see how it
             # is received.
             try:
                 if sys.platform.startswith('darwin'):
-                    notifier = which.which('terminal-notifier')
+                    try:
+                        notifier = which.which('terminal-notifier')
+                    except which.WhichError:
+                        raise Exception('Install terminal-notifier to get '
+                            'a notification when the build finishes.')
                     self.run_process([notifier, '-title',
                         'Mozilla Build System', '-group', 'mozbuild',
                         '-message', 'Build complete'], ensure_exit_code=False)
-            except which.WhichError:
-                pass
+                elif sys.platform.startswith('linux'):
+                    try:
+                        import dbus
+                    except ImportError:
+                        raise Exception('Install the python dbus module to '
+                            'get a notification when the build finishes.')
+                    bus = dbus.SessionBus()
+                    notify = bus.get_object('org.freedesktop.Notifications',
+                                            '/org/freedesktop/Notifications')
+                    method = notify.get_dbus_method('Notify',
+                                                    'org.freedesktop.Notifications')
+                    method('Mozilla Build System', 0, '', 'Build complete', '', [], [], -1)
+                elif sys.platform.startswith('win'):
+                    from ctypes import Structure, windll, POINTER, sizeof
+                    from ctypes.wintypes import DWORD, HANDLE, WINFUNCTYPE, BOOL, UINT
+                    class FLASHWINDOW(Structure):
+                        _fields_ = [("cbSize", UINT),
+                                    ("hwnd", HANDLE),
+                                    ("dwFlags", DWORD),
+                                    ("uCount", UINT),
+                                    ("dwTimeout", DWORD)]
+                    FlashWindowExProto = WINFUNCTYPE(BOOL, POINTER(FLASHWINDOW))
+                    FlashWindowEx = FlashWindowExProto(("FlashWindowEx", windll.user32))
+                    FLASHW_CAPTION = 0x01
+                    FLASHW_TRAY = 0x02
+                    FLASHW_TIMERNOFG = 0x0C
+                    params = FLASHWINDOW(sizeof(FLASHWINDOW),
+                                        windll.kernel32.GetConsoleWindow(),
+                                        FLASHW_CAPTION | FLASHW_TRAY | FLASHW_TIMERNOFG, 3, 0)
+                    FlashWindowEx(params)
             except Exception as e:
                 self.log(logging.WARNING, 'notifier-failed', {'error':
                     e.message}, 'Notification center failed: {error}')
@@ -408,9 +457,9 @@ class Build(MachCommandBase):
         long_build = monitor.elapsed > 600
 
         if long_build:
-            print('We know it took a while, but your build finally finished successfully!')
+            output.on_line('We know it took a while, but your build finally finished successfully!')
         else:
-            print('Your build was successful!')
+            output.on_line('Your build was successful!')
 
         if monitor.have_resource_usage:
             excessive, swap_in, swap_out = monitor.have_excessive_swapping()
@@ -423,14 +472,19 @@ class Build(MachCommandBase):
         # Only for full builds because incremental builders likely don't
         # need to be burdened with this.
         if not what:
-            # Fennec doesn't have useful output from just building. We should
-            # arguably make the build action useful for Fennec. Another day...
-            if self.substs['MOZ_BUILD_APP'] != 'mobile/android':
-                print('To take your build for a test drive, run: |mach run|')
-            app = self.substs['MOZ_BUILD_APP']
-            if app in ('browser', 'mobile/android'):
-                print('For more information on what to do now, see '
-                    'https://developer.mozilla.org/docs/Developer_Guide/So_You_Just_Built_Firefox')
+            try:
+                # Fennec doesn't have useful output from just building. We should
+                # arguably make the build action useful for Fennec. Another day...
+                if self.substs['MOZ_BUILD_APP'] != 'mobile/android':
+                    print('To take your build for a test drive, run: |mach run|')
+                app = self.substs['MOZ_BUILD_APP']
+                if app in ('browser', 'mobile/android'):
+                    print('For more information on what to do now, see '
+                        'https://developer.mozilla.org/docs/Developer_Guide/So_You_Just_Built_Firefox')
+            except Exception:
+                # Ignore Exceptions in case we can't find config.status (such
+                # as when doing OSX Universal builds)
+                pass
 
         return status
 
@@ -583,7 +637,7 @@ class Warnings(MachCommandBase):
 @CommandProvider
 class GTestCommands(MachCommandBase):
     @Command('gtest', category='testing',
-        description='Run GTest unit tests.')
+        description='Run GTest unit tests (C++ tests).')
     @CommandArgument('gtest_filter', default=b"*", nargs='?', metavar='gtest_filter',
         help="test_filter is a ':'-separated list of wildcard patterns (called the positive patterns),"
              "optionally followed by a '-' and another ':'-separated pattern list (called the negative patterns).")
@@ -727,14 +781,12 @@ class RunProgram(MachCommandBase):
     @Command('run', category='post-build', allow_all_args=True,
         description='Run the compiled program.')
     @CommandArgument('params', default=None, nargs='...',
-        help='Command-line arguments to pass to the program.')
+        help='Command-line arguments to be passed through to the program. Not specifying a -profile or -P option will result in a temporary profile being used.')
     @CommandArgument('+remote', '+r', action='store_true',
         help='Do not pass the -no-remote argument by default.')
     @CommandArgument('+background', '+b', action='store_true',
         help='Do not pass the -foreground argument by default on Mac')
-    @CommandArgument('+profile', '+P', action='store_true',
-        help='Specifiy thr profile to use')
-    def run(self, params, remote, background, profile):
+    def run(self, params, remote, background):
         try:
             args = [self.get_binary_path('app')]
         except Exception as e:
@@ -764,7 +816,7 @@ class DebugProgram(MachCommandBase):
     @Command('debug', category='post-build', allow_all_args=True,
         description='Debug the compiled program.')
     @CommandArgument('params', default=None, nargs='...',
-        help='Command-line arguments to pass to the program.')
+        help='Command-line arguments to be passed through to the program. Not specifying a -profile or -P option will result in a temporary profile being used.')
     @CommandArgument('+remote', '+r', action='store_true',
         help='Do not pass the -no-remote argument by default')
     @CommandArgument('+background', '+b', action='store_true',
@@ -772,9 +824,7 @@ class DebugProgram(MachCommandBase):
     @CommandArgument('+debugger', default=None, type=str,
         help='Name of debugger to launch')
     @CommandArgument('+debugparams', default=None, metavar='params', type=str,
-        help='Command-line arguments to pass to GDB or LLDB itself; split as the Bourne shell would.')
-    @CommandArgument('+profile', '+P', action='store_true',
-        help='Specifiy thr profile to use')
+        help='Command-line arguments to pass to the debugger itself; split as the Bourne shell would.')
     # Bug 933807 introduced JS_DISABLE_SLOW_SCRIPT_SIGNALS to avoid clever
     # segfaults induced by the slow-script-detecting logic for Ion/Odin JITted
     # code.  If we don't pass this, the user will need to periodically type
@@ -782,27 +832,8 @@ class DebugProgram(MachCommandBase):
     # automatic resuming; see the bug.
     @CommandArgument('+slowscript', action='store_true',
         help='Do not set the JS_DISABLE_SLOW_SCRIPT_SIGNALS env variable; when not set, recoverable but misleading SIGSEGV instances may occur in Ion/Odin JIT code')
-    def debug(self, params, remote, background, profile, debugger, debugparams, slowscript):
-        import which
-        if debugger:
-            try:
-                debugger = which.which(debugger)
-            except Exception as e:
-                print("You don't have %s in your PATH" % (debugger))
-                print(e)
-                return 1
-        else:
-            try:
-                debugger = which.which('gdb')
-            except Exception:
-                try:
-                    debugger = which.which('lldb')
-                except Exception as e:
-                    print("You don't have gdb or lldb in your PATH")
-                    print(e)
-                    return 1
-        args = [debugger]
-        extra_env = { 'MOZ_CRASHREPORTER_DISABLE' : '1' }
+    def debug(self, params, remote, background, debugger, debugparams, slowscript):
+        # Parameters come from the CLI. We need to convert them before their use.
         if debugparams:
             import pymake.process
             argv, badchar = pymake.process.clinetoargv(debugparams, os.getcwd())
@@ -810,7 +841,22 @@ class DebugProgram(MachCommandBase):
                 print("The +debugparams you passed require a real shell to parse them.")
                 print("(We can't handle the %r character.)" % (badchar,))
                 return 1
-            args.extend(argv)
+            debugparams = argv;
+
+        import mozdebug
+
+        if not debugger:
+            # No debugger name was provided. Look for the default ones on current OS.
+            debugger = mozdebug.get_default_debugger_name(mozdebug.DebuggerSearch.KeepLooking)
+
+        self.debuggerInfo = mozdebug.get_debugger_info(debugger, debugparams)
+
+        # We could not find the information about the desired debugger.
+        if not self.debuggerInfo:
+            print("Could not find a suitable debugger in your PATH.")
+            return 1
+
+        extra_env = { 'MOZ_CRASHREPORTER_DISABLE' : '1' }
 
         binpath = None
 
@@ -822,17 +868,8 @@ class DebugProgram(MachCommandBase):
             print(e)
             return 1
 
-        # args added to separate the debugger and process arguments.
-        args_separator = {
-            'gdb': '--args',
-            'ddd': '--args',
-            'cgdb': '--args',
-            'lldb': '--'
-        }
-
-        debugger_name = os.path.basename(debugger)
-        if debugger_name in args_separator:
-            args.append(args_separator[debugger_name])
+        # Build the list of arguments to pass to run_process
+        args = [self.debuggerInfo.path] + self.debuggerInfo.args
         args.append(binpath)
 
         if not remote:
@@ -1008,24 +1045,25 @@ class MachDebug(MachCommandBase):
             # Replace ' with '"'"', so that shell quoting e.g.
             # a'b becomes 'a'"'"'b'.
             quote = lambda s: s.replace("'", """'"'"'""")
-            print('echo Adding configure options from %s' %
-                mozpath.normsep(self.mozconfig['path']), file=out)
-            if self.mozconfig['configure_args']:
+            if self.mozconfig['configure_args'] and \
+                    'COMM_BUILD' not in os.environ:
+                print('echo Adding configure options from %s' %
+                    mozpath.normsep(self.mozconfig['path']), file=out)
                 for arg in self.mozconfig['configure_args']:
                     quoted_arg = quote(arg)
                     print("echo '  %s'" % quoted_arg, file=out)
                     print("""set -- "$@" '%s'""" % quoted_arg, file=out)
-                for key, value in self.mozconfig['env']['added'].items():
-                    print("export %s='%s'" % (key, quote(value)), file=out)
-                for key, (old, value) in self.mozconfig['env']['modified'].items():
-                    print("export %s='%s'" % (key, quote(value)), file=out)
-                for key, value in self.mozconfig['vars']['added'].items():
-                    print("%s='%s'" % (key, quote(value)), file=out)
-                for key, (old, value) in self.mozconfig['vars']['modified'].items():
-                    print("%s='%s'" % (key, quote(value)), file=out)
-                for key in self.mozconfig['env']['removed'].keys() + \
-                        self.mozconfig['vars']['removed'].keys():
-                    print("unset %s" % key, file=out)
+            for key, value in self.mozconfig['env']['added'].items():
+                print("export %s='%s'" % (key, quote(value)), file=out)
+            for key, (old, value) in self.mozconfig['env']['modified'].items():
+                print("export %s='%s'" % (key, quote(value)), file=out)
+            for key, value in self.mozconfig['vars']['added'].items():
+                print("%s='%s'" % (key, quote(value)), file=out)
+            for key, (old, value) in self.mozconfig['vars']['modified'].items():
+                print("%s='%s'" % (key, quote(value)), file=out)
+            for key in self.mozconfig['env']['removed'].keys() + \
+                    self.mozconfig['vars']['removed'].keys():
+                print("unset %s" % key, file=out)
 
     def _environment_json(self, out, verbose):
         import json

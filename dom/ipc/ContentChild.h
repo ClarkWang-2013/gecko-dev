@@ -26,6 +26,7 @@ struct ResourceMapping;
 struct OverrideMapping;
 
 namespace mozilla {
+class RemoteSpellcheckEngineChild;
 
 namespace ipc {
 class OptionalURIParams;
@@ -117,6 +118,11 @@ public:
     AllocPImageBridgeChild(mozilla::ipc::Transport* aTransport,
                            base::ProcessId aOtherProcess) MOZ_OVERRIDE;
 
+#if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
+    // Cleans up any resources used by the process when sandboxed.
+    void CleanUpSandboxEnvironment();
+#endif
+
     virtual bool RecvSetProcessSandbox() MOZ_OVERRIDE;
 
     PBackgroundChild*
@@ -190,8 +196,22 @@ public:
     virtual bool RecvPTestShellConstructor(PTestShellChild*) MOZ_OVERRIDE;
     jsipc::JavaScriptChild *GetCPOWManager();
 
+    PMobileConnectionChild*
+    SendPMobileConnectionConstructor(PMobileConnectionChild* aActor,
+                                     const uint32_t& aClientId);
+    virtual PMobileConnectionChild*
+    AllocPMobileConnectionChild(const uint32_t& aClientId) MOZ_OVERRIDE;
+    virtual bool
+    DeallocPMobileConnectionChild(PMobileConnectionChild* aActor) MOZ_OVERRIDE;
+
     virtual PNeckoChild* AllocPNeckoChild() MOZ_OVERRIDE;
     virtual bool DeallocPNeckoChild(PNeckoChild*) MOZ_OVERRIDE;
+
+    virtual PScreenManagerChild*
+    AllocPScreenManagerChild(uint32_t* aNumberOfScreens,
+                             float* aSystemDefaultScale,
+                             bool* aSuccess) MOZ_OVERRIDE;
+    virtual bool DeallocPScreenManagerChild(PScreenManagerChild*) MOZ_OVERRIDE;
 
     virtual PExternalHelperAppChild *AllocPExternalHelperAppChild(
             const OptionalURIParams& uri,
@@ -233,10 +253,14 @@ public:
     virtual bool RecvRegisterChrome(const InfallibleTArray<ChromePackage>& packages,
                                     const InfallibleTArray<ResourceMapping>& resources,
                                     const InfallibleTArray<OverrideMapping>& overrides,
-                                    const nsCString& locale) MOZ_OVERRIDE;
+                                    const nsCString& locale,
+                                    const bool& reset) MOZ_OVERRIDE;
+    virtual bool RecvRegisterChromeItem(const ChromeRegistryItem& item) MOZ_OVERRIDE;
 
     virtual mozilla::jsipc::PJavaScriptChild* AllocPJavaScriptChild() MOZ_OVERRIDE;
     virtual bool DeallocPJavaScriptChild(mozilla::jsipc::PJavaScriptChild*) MOZ_OVERRIDE;
+    virtual PRemoteSpellcheckEngineChild* AllocPRemoteSpellcheckEngineChild() MOZ_OVERRIDE;
+    virtual bool DeallocPRemoteSpellcheckEngineChild(PRemoteSpellcheckEngineChild*) MOZ_OVERRIDE;
 
     virtual bool RecvSetOffline(const bool& offline) MOZ_OVERRIDE;
 
@@ -307,6 +331,9 @@ public:
     virtual bool RecvNotifyIdleObserver(const uint64_t& aObserver,
                                         const nsCString& aTopic,
                                         const nsString& aData) MOZ_OVERRIDE;
+
+    virtual bool RecvOnAppThemeChanged() MOZ_OVERRIDE;
+
 #ifdef ANDROID
     gfxIntSize GetScreenSize() { return mScreenSize; }
 #endif

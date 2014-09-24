@@ -191,7 +191,8 @@ public:
   // For ANPNativeWindow
   void* AcquireContentWindow();
 
-  mozilla::gl::SharedTextureHandle CreateSharedHandle();
+  EGLImage AsEGLImage();
+  nsSurfaceTexture* AsSurfaceTexture();
 
   // For ANPVideo
   class VideoInfo {
@@ -305,10 +306,6 @@ protected:
   virtual ~nsNPAPIPluginInstance();
 
   nsresult GetTagType(nsPluginTagType *result);
-  nsresult GetAttributes(uint16_t& n, const char*const*& names,
-                         const char*const*& values);
-  nsresult GetParameters(uint16_t& n, const char*const*& names,
-                         const char*const*& values);
   nsresult GetMode(int32_t *result);
 
   // check if this is a Java applet and affected by bug 750480
@@ -398,6 +395,12 @@ private:
   bool mHaveJavaC2PJSObjectQuirk;
 
   static uint32_t gInUnsafePluginCalls;
+
+  // The arrays can only be released when the plugin instance is destroyed,
+  // because the plugin, in in-process mode, might keep a reference to them.
+  uint32_t mCachedParamLength;
+  char **mCachedParamNames;
+  char **mCachedParamValues;
 };
 
 // On Android, we need to guard against plugin code leaking entries in the local

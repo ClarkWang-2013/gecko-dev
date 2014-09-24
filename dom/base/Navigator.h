@@ -36,6 +36,7 @@ struct MediaStreamConstraints;
 class WakeLock;
 class ArrayBufferViewOrBlobOrStringOrFormData;
 struct MobileIdOptions;
+class ServiceWorkerContainer;
 }
 }
 
@@ -104,16 +105,12 @@ class AudioChannelManager;
 #endif
 } // namespace system
 
-namespace workers {
-class ServiceWorkerContainer;
-} // namespace workers
-
-class Navigator : public nsIDOMNavigator
-                , public nsIMozNavigatorNetwork
-                , public nsWrapperCache
+class Navigator MOZ_FINAL : public nsIDOMNavigator
+                          , public nsIMozNavigatorNetwork
+                          , public nsWrapperCache
 {
 public:
-  Navigator(nsPIDOMWindow *aInnerWindow);
+  explicit Navigator(nsPIDOMWindow* aInnerWindow);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(Navigator,
@@ -161,13 +158,19 @@ public:
 
   static already_AddRefed<Promise> GetDataStores(nsPIDOMWindow* aWindow,
                                                  const nsAString& aName,
+                                                 const nsAString& aOwner,
                                                  ErrorResult& aRv);
 
-  already_AddRefed<Promise> GetDataStores(const nsAString &aName,
+  already_AddRefed<Promise> GetDataStores(const nsAString& aName,
+                                          const nsAString& aOwner,
                                           ErrorResult& aRv);
 
   // Feature Detection API
-  already_AddRefed<Promise> GetFeature(const nsAString &aName);
+  already_AddRefed<Promise> GetFeature(const nsAString& aName,
+                                       ErrorResult& aRv);
+
+  already_AddRefed<Promise> HasFeature(const nsAString &aName,
+                                       ErrorResult& aRv);
 
   bool Vibrate(uint32_t aDuration);
   bool Vibrate(const nsTArray<uint32_t>& aDuration);
@@ -256,7 +259,7 @@ public:
                               ErrorResult& aRv);
 #endif // MOZ_MEDIA_NAVIGATOR
 
-  already_AddRefed<workers::ServiceWorkerContainer> ServiceWorker();
+  already_AddRefed<ServiceWorkerContainer> ServiceWorker();
 
   bool DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObject,
                     JS::Handle<jsid> aId,
@@ -264,12 +267,11 @@ public:
   void GetOwnPropertyNames(JSContext* aCx, nsTArray<nsString>& aNames,
                            ErrorResult& aRv);
   void GetLanguages(nsTArray<nsString>& aLanguages);
-  void GetAcceptLanguages(nsTArray<nsString>& aLanguages);
+
+  static void GetAcceptLanguages(nsTArray<nsString>& aLanguages);
 
   // WebIDL helper methods
   static bool HasWakeLockSupport(JSContext* /* unused*/, JSObject* /*unused */);
-  static bool HasMobileMessageSupport(JSContext* /* unused */,
-                                      JSObject* aGlobal);
   static bool HasCameraSupport(JSContext* /* unused */,
                                JSObject* aGlobal);
   static bool HasWifiManagerSupport(JSContext* /* unused */,
@@ -277,9 +279,6 @@ public:
 #ifdef MOZ_NFC
   static bool HasNFCSupport(JSContext* /* unused */, JSObject* aGlobal);
 #endif // MOZ_NFC
-#ifdef MOZ_TIME_MANAGER
-  static bool HasTimeSupport(JSContext* /* unused */, JSObject* aGlobal);
-#endif // MOZ_TIME_MANAGER
 #ifdef MOZ_MEDIA_NAVIGATOR
   static bool HasUserMediaSupport(JSContext* /* unused */,
                                   JSObject* /* unused */);
@@ -290,10 +289,6 @@ public:
   static bool HasDataStoreSupport(nsIPrincipal* aPrincipal);
 
   static bool HasDataStoreSupport(JSContext* cx, JSObject* aGlobal);
-
-  static bool HasNetworkStatsSupport(JSContext* aCx, JSObject* aGlobal);
-
-  static bool HasFeatureDetectionSupport(JSContext* aCx, JSObject* aGlobal);
 
 #ifdef MOZ_B2G
   static bool HasMobileIdSupport(JSContext* aCx, JSObject* aGlobal);
@@ -343,7 +338,7 @@ private:
   nsCOMPtr<nsIDOMNavigatorSystemMessages> mMessagesManager;
   nsTArray<nsRefPtr<nsDOMDeviceStorage> > mDeviceStorageStores;
   nsRefPtr<time::TimeManager> mTimeManager;
-  nsRefPtr<workers::ServiceWorkerContainer> mServiceWorkerContainer;
+  nsRefPtr<ServiceWorkerContainer> mServiceWorkerContainer;
   nsCOMPtr<nsPIDOMWindow> mWindow;
 
   // Hashtable for saving cached objects newresolve created, so we don't create

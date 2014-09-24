@@ -63,6 +63,7 @@
 #include "DisplayItemClip.h"
 #include "ActiveLayerTracker.h"
 #include "CounterStyleManager.h"
+#include "FrameLayerBuilder.h"
 
 #include "AudioChannelService.h"
 #include "mozilla/dom/DataStoreService.h"
@@ -85,8 +86,8 @@
 #include "nsSynthVoiceRegistry.h"
 #endif
 
-#ifdef MOZ_MEDIA_PLUGINS
-#include "MediaPluginHost.h"
+#ifdef MOZ_ANDROID_OMX
+#include "AndroidMediaPluginHost.h"
 #endif
 
 #ifdef MOZ_WMF
@@ -101,7 +102,7 @@
 #include "FFmpegRuntimeLinker.h"
 #endif
 
-#include "AudioStream.h"
+#include "CubebUtils.h"
 #include "Latency.h"
 #include "WebAudioUtils.h"
 
@@ -215,7 +216,6 @@ nsLayoutStatics::Initialize()
 
   nsMathMLOperators::AddRefTable();
 
-  nsEditProperty::RegisterAtoms();
   nsTextServicesDocument::RegisterAtoms();
 
 #ifdef DEBUG
@@ -262,7 +262,7 @@ nsLayoutStatics::Initialize()
   }
 
   AsyncLatencyLogger::InitializeStatics();
-  AudioStream::InitLibrary();
+  CubebUtils::InitLibrary();
 
   nsContentSink::InitializeStatics();
   nsHtml5Module::InitializeStatics();
@@ -297,6 +297,8 @@ nsLayoutStatics::Initialize()
   CounterStyleManager::InitializeBuiltinCounterStyles();
 
   CameraPreferences::Initialize();
+
+  IMEStateManager::Init();
 
   return NS_OK;
 }
@@ -364,8 +366,8 @@ nsLayoutStatics::Shutdown()
   nsAutoCopyListener::Shutdown();
   FrameLayerBuilder::Shutdown();
 
-#ifdef MOZ_MEDIA_PLUGINS
-  MediaPluginHost::Shutdown();
+#ifdef MOZ_ANDROID_OMX
+  AndroidMediaPluginHost::Shutdown();
 #endif
 
 #ifdef MOZ_GSTREAMER
@@ -376,7 +378,7 @@ nsLayoutStatics::Shutdown()
   FFmpegRuntimeLinker::Unlink();
 #endif
 
-  AudioStream::ShutdownLibrary();
+  CubebUtils::ShutdownLibrary();
   AsyncLatencyLogger::ShutdownLogger();
   WebAudioUtils::Shutdown();
 

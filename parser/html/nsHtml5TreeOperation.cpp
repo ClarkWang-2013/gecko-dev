@@ -75,9 +75,7 @@ class MOZ_STACK_CLASS nsHtml5OtherDocUpdate {
 };
 
 nsHtml5TreeOperation::nsHtml5TreeOperation()
-#ifdef DEBUG
  : mOpCode(eTreeOpUninitialized)
-#endif
 {
   MOZ_COUNT_CTOR(nsHtml5TreeOperation);
 }
@@ -124,7 +122,6 @@ nsHtml5TreeOperation::AppendTextToTextNode(const char16_t* aBuffer,
 {
   NS_PRECONDITION(aTextNode, "Got null text node.");
   MOZ_ASSERT(aBuilder);
-  MOZ_ASSERT(aBuilder->GetDocument() == aTextNode->OwnerDoc());
   MOZ_ASSERT(aBuilder->IsInDocUpdate());
   uint32_t oldLength = aTextNode->TextLength();
   CharacterDataChangeInfo info = {
@@ -961,7 +958,7 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       return rv;
     }
     default: {
-      NS_NOTREACHED("Bogus tree op");
+      MOZ_CRASH("Bogus tree op");
     }
   }
   return NS_OK; // keep compiler happy

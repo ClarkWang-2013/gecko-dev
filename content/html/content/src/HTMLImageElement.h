@@ -28,7 +28,6 @@ class HTMLImageElement MOZ_FINAL : public nsGenericHTMLElement,
   friend class HTMLSourceElement;
 public:
   explicit HTMLImageElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~HTMLImageElement();
 
   static already_AddRefed<HTMLImageElement>
     Image(const GlobalObject& aGlobal,
@@ -143,9 +142,16 @@ public:
   {
     SetHTMLAttr(nsGkAtoms::srcset, aSrcset, aError);
   }
+  void GetCrossOrigin(nsAString& aResult)
+  {
+    // Null for both missing and invalid defaults is ok, since we
+    // always parse to an enum value, so we don't need an invalid
+    // default, and we _want_ the missing default to be null.
+    GetEnumAttr(nsGkAtoms::crossorigin, nullptr, aResult);
+  }
   void SetCrossOrigin(const nsAString& aCrossOrigin, ErrorResult& aError)
   {
-    SetHTMLAttr(nsGkAtoms::crossorigin, aCrossOrigin, aError);
+    SetOrRemoveNullableStringAttr(nsGkAtoms::crossorigin, aCrossOrigin, aError);
   }
   void SetUseMap(const nsAString& aUseMap, ErrorResult& aError)
   {
@@ -189,6 +195,8 @@ public:
   virtual void DestroyContent() MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLImageElement();
+
   // Resolve and load the current mResponsiveSelector (responsive mode) or src
   // attr image.
   nsresult LoadSelectedImage(bool aForce, bool aNotify);

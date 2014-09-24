@@ -9,7 +9,7 @@ interface nsIWifiTetheringCallback;
 /**
  * Information about networks that is exposed to network manager API consumers.
  */
-[scriptable, uuid(8f9ab9e0-72c1-4874-80c7-8143353b979f)]
+[scriptable, uuid(cb62ae03-6bda-43ff-9560-916d60203d33)]
 interface nsINetworkInterface : nsISupports
 {
   const long NETWORK_STATE_UNKNOWN = -1;
@@ -17,14 +17,12 @@ interface nsINetworkInterface : nsISupports
   const long NETWORK_STATE_CONNECTED = 1;
   const long NETWORK_STATE_DISCONNECTING = 2;
   const long NETWORK_STATE_DISCONNECTED = 3;
-  const long NETWORK_STATE_ENABLED = 4;
-  const long NETWORK_STATE_DISABLED = 5;
 
   /**
    * Current network state, one of the NETWORK_STATE_* constants.
    *
-   * When this changes, network interface implementations notify the
-   * 'network-interface-state-changed' observer notification.
+   * When this changes, network interface implementations notify with
+   * updateNetworkInterface() API.
    */
   readonly attribute long state;
 
@@ -36,7 +34,6 @@ interface nsINetworkInterface : nsISupports
   const long NETWORK_TYPE_WIFI_P2P    = 4;
   const long NETWORK_TYPE_MOBILE_IMS  = 5;
   const long NETWORK_TYPE_MOBILE_DUN  = 6;
-  const long NETWORK_TYPE_ETHERNET    = 7;
 
   /**
    * Network type. One of the NETWORK_TYPE_* constants.
@@ -100,7 +97,7 @@ interface nsINetworkInterface : nsISupports
 /**
  * Manage network interfaces.
  */
-[scriptable, uuid(1ba9346b-53b5-4660-9dc6-58f0b258d0a6)]
+[scriptable, uuid(19822018-2454-11e4-baa7-2b5894f0af6f)]
 interface nsINetworkManager : nsISupports
 {
   /**
@@ -115,6 +112,20 @@ interface nsINetworkManager : nsISupports
    *        Network interface to register.
    */
   void registerNetworkInterface(in nsINetworkInterface network);
+
+  /**
+   * Update the routes and DNSes according the state of the given network.
+   *
+   * Consumers will be notified with the 'network-connection-state-changed'
+   * observer notification.
+   *
+   * Throws an exception if the specified network interface object isn't
+   * registered.
+   *
+   * @param network
+   *        Network interface to update.
+   */
+  void updateNetworkInterface(in nsINetworkInterface network);
 
   /**
    * Unregister the given network interface from the network manager.
@@ -137,15 +148,6 @@ interface nsINetworkManager : nsISupports
    * non-mobile network types, sub-id is always 'device'.
    */
   readonly attribute jsval networkInterfaces;
-
-  /**
-   * Priority list of network types. An array of
-   * nsINetworkInterface::NETWORK_TYPE_* constants.
-   *
-   * The piror position of the type indicates the higher priority. The priority
-   * is used to determine route when there are multiple connected networks.
-   */
-  attribute jsval networkTypePriorityList;
 
   /**
    * The preferred network type. One of the
@@ -194,4 +196,34 @@ interface nsINetworkManager : nsISupports
                         in nsINetworkInterface networkInterface,
                         in jsval config,
                         in nsIWifiTetheringCallback callback);
+
+  /**
+   * Add host route to the specified network into routing table.
+   *
+   * @param network
+   *        The network interface where the host to be routed to.
+   * @param host
+   *        The host to be added.
+   *        The host will be resolved in advance if it's not an ip-address.
+   *
+   * @return a Promise
+   *         resolved if added; rejected, otherwise.
+   */
+  jsval addHostRoute(in nsINetworkInterface network,
+                     in DOMString host);
+
+  /**
+   * Remove host route to the specified network from routing table.
+   *
+   * @param network
+   *        The network interface where the routing to be removed from.
+   * @param host
+   *        The host routed to the network.
+   *        The host will be resolved in advance if it's not an ip-address.
+   *
+   * @return a Promise
+   *         resolved if removed; rejected, otherwise.
+   */
+  jsval removeHostRoute(in nsINetworkInterface network,
+                        in DOMString host);
 };

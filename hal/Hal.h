@@ -14,6 +14,7 @@
 #include "mozilla/Types.h"
 #include "nsTArray.h"
 #include "prlog.h"
+#include "mozilla/dom/MozPowerManagerBinding.h"
 #include "mozilla/dom/battery/Types.h"
 #include "mozilla/dom/network/Types.h"
 #include "mozilla/dom/power/Types.h"
@@ -48,6 +49,7 @@ class WindowIdentifier;
 
 extern PRLogModuleInfo *GetHalLog();
 #define HAL_LOG(msg) PR_LOG(mozilla::hal::GetHalLog(), PR_LOG_DEBUG, msg)
+#define HAL_ERR(msg) PR_LOG(mozilla::hal::GetHalLog(), PR_LOG_ERROR, msg)
 
 typedef Observer<int64_t> SystemClockChangeObserver;
 typedef Observer<SystemTimezoneChangeInformation> SystemTimezoneChangeObserver;
@@ -525,6 +527,8 @@ void DisableFMRadio();
 /**
  * Seek to an available FM radio station.
  *
+ * This can be called off main thread, but all calls must be completed
+ * before calling DisableFMRadio.
  */
 void FMRadioSeek(const hal::FMRadioSeekDirection& aDirection);
 
@@ -535,6 +539,9 @@ void GetFMRadioSettings(hal::FMRadioSettings* aInfo);
 
 /**
  * Set the FM radio's frequency.
+ *
+ * This can be called off main thread, but all calls must be completed
+ * before calling DisableFMRadio.
  */
 void SetFMRadioFrequency(const uint32_t frequency);
 
@@ -575,7 +582,7 @@ void StartForceQuitWatchdog(hal::ShutdownMode aMode, int32_t aTimeoutSecs);
 /**
  * Perform Factory Reset to wipe out all user data.
  */
-void FactoryReset();
+void FactoryReset(mozilla::dom::FactoryResetReason& aReason);
 
 /**
  * Start monitoring the status of gamepads attached to the system.

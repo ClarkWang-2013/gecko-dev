@@ -24,9 +24,8 @@ class HTMLSharedObjectElement MOZ_FINAL : public nsGenericHTMLElement
                                         , public nsIDOMHTMLEmbedElement
 {
 public:
-  HTMLSharedObjectElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
-                          mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
-  virtual ~HTMLSharedObjectElement();
+  explicit HTMLSharedObjectElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+                                   mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -189,6 +188,8 @@ public:
   }
 
 private:
+  virtual ~HTMLSharedObjectElement();
+
   /**
    * Calls LoadObject with the correct arguments to start the plugin load.
    */

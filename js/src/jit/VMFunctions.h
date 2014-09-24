@@ -289,6 +289,7 @@ template <class> struct TypeToDataType { /* Unexpected return type for a VMFunct
 template <> struct TypeToDataType<bool> { static const DataType result = Type_Bool; };
 template <> struct TypeToDataType<JSObject *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<DeclEnvObject *> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<ArrayObject *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSString *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSFlatString *> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<HandleObject> { static const DataType result = Type_Handle; };
@@ -379,6 +380,18 @@ template <> struct TypeToRootType<HandleShape> {
 };
 template <> struct TypeToRootType<HandleTypeObject> {
     static const uint32_t result = VMFunction::RootCell;
+};
+template <> struct TypeToRootType<HandleScript> {
+    static const uint32_t result = VMFunction::RootCell;
+};
+template <> struct TypeToRootType<Handle<StaticBlockObject *> > {
+    static const uint32_t result = VMFunction::RootObject;
+};
+template <> struct TypeToRootType<Handle<StaticWithObject *> > {
+    static const uint32_t result = VMFunction::RootCell;
+};
+template <class T> struct TypeToRootType<Handle<T> > {
+    // Fail for Handle types that aren't specialized above.
 };
 
 template <class> struct OutParamToDataType { static const DataType result = Type_Void; };
@@ -619,11 +632,8 @@ bool GreaterThanOrEqual(JSContext *cx, MutableHandleValue lhs, MutableHandleValu
 template<bool Equal>
 bool StringsEqual(JSContext *cx, HandleString left, HandleString right, bool *res);
 
-bool IteratorMore(JSContext *cx, HandleObject obj, bool *res);
-
 // Allocation functions for JSOP_NEWARRAY and JSOP_NEWOBJECT and parallel array inlining
 JSObject *NewInitParallelArray(JSContext *cx, HandleObject templateObj);
-JSObject *NewInitArray(JSContext *cx, uint32_t count, types::TypeObject *type);
 JSObject *NewInitObject(JSContext *cx, HandleObject templateObject);
 JSObject *NewInitObjectWithClassPrototype(JSContext *cx, HandleObject templateObject);
 
@@ -631,6 +641,7 @@ bool ArrayPopDense(JSContext *cx, HandleObject obj, MutableHandleValue rval);
 bool ArrayPushDense(JSContext *cx, HandleObject obj, HandleValue v, uint32_t *length);
 bool ArrayShiftDense(JSContext *cx, HandleObject obj, MutableHandleValue rval);
 JSObject *ArrayConcatDense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObject res);
+JSString *ArrayJoin(JSContext *cx, HandleObject array, HandleString sep);
 
 bool CharCodeAt(JSContext *cx, HandleString str, int32_t index, uint32_t *code);
 JSFlatString *StringFromCharCode(JSContext *cx, int32_t code);
@@ -714,6 +725,29 @@ void AssertValidValue(JSContext *cx, Value *v);
 #endif
 
 JSObject *TypedObjectProto(JSObject *obj);
+
+void MarkValueFromIon(JSRuntime *rt, Value *vp);
+void MarkShapeFromIon(JSRuntime *rt, Shape **shapep);
+void MarkTypeObjectFromIon(JSRuntime *rt, types::TypeObject **typep);
+
+// Helper for generatePreBarrier.
+inline void *
+IonMarkFunction(MIRType type)
+{
+    switch (type) {
+      case MIRType_Value:
+        return JS_FUNC_TO_DATA_PTR(void *, MarkValueFromIon);
+      case MIRType_Shape:
+        return JS_FUNC_TO_DATA_PTR(void *, MarkShapeFromIon);
+      case MIRType_TypeObject:
+        return JS_FUNC_TO_DATA_PTR(void *, MarkTypeObjectFromIon);
+      default: MOZ_CRASH();
+    }
+}
+
+bool ObjectIsCallable(JSObject *obj);
+
+bool ThrowUninitializedLexical(JSContext *cx);
 
 } // namespace jit
 } // namespace js

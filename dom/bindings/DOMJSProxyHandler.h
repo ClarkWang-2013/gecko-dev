@@ -24,21 +24,10 @@ enum {
 
 template<typename T> struct Prefable;
 
-// This variable exists solely to provide a unique address for use as an identifier.
-extern const char HandlerFamily;
-inline const void* ProxyFamily() { return &HandlerFamily; }
-
-inline bool IsDOMProxy(JSObject *obj)
-{
-    const js::Class* clasp = js::GetObjectClass(obj);
-    return clasp->isProxy() &&
-           js::GetProxyHandler(obj)->family() == ProxyFamily();
-}
-
 class BaseDOMProxyHandler : public js::BaseProxyHandler
 {
 public:
-  BaseDOMProxyHandler(const void* aProxyFamily, bool aHasPrototype = false)
+  explicit MOZ_CONSTEXPR BaseDOMProxyHandler(const void* aProxyFamily, bool aHasPrototype = false)
     : js::BaseProxyHandler(aProxyFamily, aHasPrototype)
   {}
 
@@ -49,6 +38,9 @@ public:
   bool getPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> proxy,
                              JS::Handle<jsid> id,
                              JS::MutableHandle<JSPropertyDescriptor> desc) const MOZ_OVERRIDE;
+  bool getOwnPropertyDescriptor(JSContext* cx, JS::Handle<JSObject*> proxy,
+                                JS::Handle<jsid> id,
+                                JS::MutableHandle<JSPropertyDescriptor> desc) const MOZ_OVERRIDE;
 
   bool watch(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
              JS::Handle<JSObject*> callable) const MOZ_OVERRIDE;
@@ -70,15 +62,24 @@ protected:
   virtual bool ownPropNames(JSContext* cx, JS::Handle<JSObject*> proxy,
                             unsigned flags,
                             JS::AutoIdVector& props) const = 0;
+
+  // Hook for subclasses to allow set() to ignore named props while other things
+  // that look at property descriptors see them.  This is intentionally not
+  // named getOwnPropertyDescriptor to avoid subclasses that override it hiding
+  // our public getOwnPropertyDescriptor.
+  virtual bool getOwnPropDescriptor(JSContext* cx,
+                                    JS::Handle<JSObject*> proxy,
+                                    JS::Handle<jsid> id,
+                                    bool ignoreNamedProps,
+                                    JS::MutableHandle<JSPropertyDescriptor> desc) const = 0;
 };
 
 class DOMProxyHandler : public BaseDOMProxyHandler
 {
 public:
-  DOMProxyHandler()
-    : BaseDOMProxyHandler(ProxyFamily())
-  {
-  }
+  MOZ_CONSTEXPR DOMProxyHandler()
+    : BaseDOMProxyHandler(&family)
+  {}
 
   bool preventExtensions(JSContext *cx, JS::Handle<JSObject*> proxy) const MOZ_OVERRIDE;
   bool defineProperty(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
@@ -108,28 +109,22 @@ public:
   virtual bool setCustom(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
                          JS::MutableHandle<JS::Value> vp, bool *done) const;
 
-  static JSObject* GetExpandoObject(JSObject* obj)
-  {
-    MOZ_ASSERT(IsDOMProxy(obj), "expected a DOM proxy object");
-    JS::Value v = js::GetProxyExtra(obj, JSPROXYSLOT_EXPANDO);
-    if (v.isObject()) {
-      return &v.toObject();
-    }
+  static JSObject* GetExpandoObject(JSObject* obj);
 
-    if (v.isUndefined()) {
-      return nullptr;
-    }
-
-    js::ExpandoAndGeneration* expandoAndGeneration =
-      static_cast<js::ExpandoAndGeneration*>(v.toPrivate());
-    v = expandoAndGeneration->expando;
-    return v.isUndefined() ? nullptr : &v.toObject();
-  }
   /* GetAndClearExpandoObject does not DROP or clear the preserving wrapper flag. */
   static JSObject* GetAndClearExpandoObject(JSObject* obj);
   static JSObject* EnsureExpandoObject(JSContext* cx,
                                        JS::Handle<JSObject*> obj);
+
+  static const char family;
 };
+
+inline bool IsDOMProxy(JSObject *obj)
+{
+    const js::Class* clasp = js::GetObjectClass(obj);
+    return clasp->isProxy() &&
+           js::GetProxyHandler(obj)->family() == &DOMProxyHandler::family;
+}
 
 inline const DOMProxyHandler*
 GetDOMProxyHandler(JSObject* obj)
@@ -155,7 +150,7 @@ GetArrayIndexFromId(JSContext* cx, JS::Handle<jsid> id)
   }
   if (MOZ_LIKELY(JSID_IS_ATOM(id))) {
     JSAtom* atom = JSID_TO_ATOM(id);
-    jschar s;
+    char16_t s;
     {
       JS::AutoCheckCannotGC nogc;
       if (js::AtomHasLatin1Chars(atom)) {

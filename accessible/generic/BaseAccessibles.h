@@ -39,6 +39,7 @@ public:
   virtual bool RemoveChild(Accessible* aChild) MOZ_OVERRIDE MOZ_FINAL;
 
 protected:
+  virtual ~LeafAccessible() {}
 
   // Accessible
   virtual void CacheChildren();
@@ -59,24 +60,24 @@ public:
 
   NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIAccessible
-  NS_IMETHOD GetActionName(uint8_t aIndex, nsAString& aName);
-  NS_IMETHOD DoAction(uint8_t index);
-  NS_IMETHOD TakeFocus();
-
   // Accessible
-  virtual void Shutdown();
-  virtual void Value(nsString& aValue);
-  virtual uint64_t NativeLinkState() const;
+  virtual void Shutdown() MOZ_OVERRIDE;
+  virtual void Value(nsString& aValue) MOZ_OVERRIDE;
+  virtual uint64_t NativeLinkState() const MOZ_OVERRIDE;
+  virtual void TakeFocus() MOZ_OVERRIDE;
 
   // ActionAccessible
-  virtual uint8_t ActionCount();
+  virtual uint8_t ActionCount() MOZ_OVERRIDE;
+  virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) MOZ_OVERRIDE;
+  virtual bool DoAction(uint8_t index) MOZ_OVERRIDE;
   virtual KeyBinding AccessKey() const;
 
   // HyperLinkAccessible
   virtual already_AddRefed<nsIURI> AnchorURIAt(uint32_t aAnchorIndex);
 
 protected:
+  virtual ~LinkableAccessible() {}
+
   // Accessible
   virtual void BindToParent(Accessible* aParent, uint32_t aIndexInParent);
   virtual void UnbindFromParent();
@@ -97,14 +98,15 @@ class EnumRoleAccessible : public AccessibleWrap
 public:
   EnumRoleAccessible(nsIContent* aContent, DocAccessible* aDoc, 
                      a11y::role aRole);
-  virtual ~EnumRoleAccessible() { }
 
   NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
 
 protected:
+  virtual ~EnumRoleAccessible() { }
+
   a11y::role mRole;
 };
 

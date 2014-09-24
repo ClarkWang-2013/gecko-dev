@@ -388,6 +388,13 @@ Predictor::GetParallelSpeculativeConnectLimit(
   return NS_OK;
 }
 
+NS_IMETHODIMP
+Predictor::GetIsFromPredictor(bool *isFromPredictor)
+{
+  *isFromPredictor = true;
+  return NS_OK;
+}
+
 // Predictor::nsIInterfaceRequestor
 
 NS_IMETHODIMP
@@ -796,7 +803,7 @@ Predictor::EnsureInitStorage()
 class PredictorThreadShutdownRunner : public nsRunnable
 {
 public:
-  PredictorThreadShutdownRunner(nsIThread *ioThread)
+  explicit PredictorThreadShutdownRunner(nsIThread *ioThread)
     :mIOThread(ioThread)
   { }
 

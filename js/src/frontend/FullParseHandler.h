@@ -90,6 +90,11 @@ class FullParseHandler
         return new_<NameNode>(PNK_NAME, JSOP_NAME, name, blockid, pos);
     }
 
+    ParseNode *newComputedName(ParseNode *expr, uint32_t begin, uint32_t end) {
+        TokenPos pos(begin, end);
+        return new_<UnaryNode>(PNK_COMPUTED_NAME, JSOP_NOP, pos, expr);
+    }
+
     Definition *newPlaceholder(JSAtom *atom, uint32_t blockid, const TokenPos &pos) {
         Definition *dn =
             (Definition *) new_<NameNode>(PNK_NAME, JSOP_NOP, atom, blockid, pos);
@@ -120,11 +125,40 @@ class FullParseHandler
         return new_<NullaryNode>(PNK_STRING, JSOP_NOP, pos, atom);
     }
 
-#ifdef JS_HAS_TEMPLATE_STRINGS
     ParseNode *newTemplateStringLiteral(JSAtom *atom, const TokenPos &pos) {
         return new_<NullaryNode>(PNK_TEMPLATE_STRING, JSOP_NOP, pos, atom);
     }
-#endif
+
+    ParseNode *newCallSiteObject(uint32_t begin, unsigned blockidGen) {
+        ParseNode *callSite = new_<CallSiteNode>(begin);
+        if (!callSite)
+            return null();
+
+        Node propExpr = newArrayLiteral(getPosition(callSite).begin, blockidGen);
+        if (!propExpr)
+            return null();
+
+        if (!addArrayElement(callSite, propExpr))
+            return null();
+
+        return callSite;
+    }
+
+    bool addToCallSiteObject(ParseNode *callSiteObj, ParseNode *rawNode, ParseNode *cookedNode) {
+        MOZ_ASSERT(callSiteObj->isKind(PNK_CALLSITEOBJ));
+
+        if (!addArrayElement(callSiteObj, cookedNode))
+            return false;
+        if (!addArrayElement(callSiteObj->pn_head, rawNode))
+            return false;
+
+        /*
+         * We don't know when the last noSubstTemplate will come in, and we
+         * don't want to deal with this outside this method
+         */
+        setEndPosition(callSiteObj, callSiteObj->pn_head);
+        return true;
+    }
 
     ParseNode *newThisLiteral(const TokenPos &pos) {
         return new_<ThisLiteral>(pos);
@@ -252,6 +286,18 @@ class FullParseHandler
         return literal;
     }
 
+    bool addPrototypeMutation(ParseNode *literal, uint32_t begin, ParseNode *expr) {
+        // Object literals with mutated [[Prototype]] are non-constant so that
+        // singleton objects will have Object.prototype as their [[Prototype]].
+        setListFlag(literal, PNX_NONCONST);
+
+        ParseNode *mutation = newUnary(PNK_MUTATEPROTO, JSOP_NOP, begin, expr);
+        if (!mutation)
+            return false;
+        literal->append(mutation);
+        return true;
+    }
+
     bool addPropertyDefinition(ParseNode *literal, ParseNode *name, ParseNode *expr,
                                bool isShorthand = false) {
         JS_ASSERT(literal->isArity(PN_LIST));
@@ -265,7 +311,7 @@ class FullParseHandler
         return true;
     }
 
-    bool addAccessorPropertyDefinition(ParseNode *literal, ParseNode *name, ParseNode *fn, JSOp op)
+    bool addMethodDefinition(ParseNode *literal, ParseNode *name, ParseNode *fn, JSOp op)
     {
         JS_ASSERT(literal->isArity(PN_LIST));
         literal->pn_xflags |= PNX_NONCONST;
@@ -551,6 +597,9 @@ class FullParseHandler
     static Definition::Kind getDefinitionKind(Definition *dn) {
         return dn->kind();
     }
+    static bool isPlaceholderDefinition(Definition *dn) {
+        return dn->isPlaceholder();
+    }
     void linkUseToDef(ParseNode *pn, Definition *dn)
     {
         JS_ASSERT(!pn->isUsed());
@@ -577,6 +626,13 @@ class FullParseHandler
     }
     bool dependencyCovered(ParseNode *pn, unsigned blockid, bool functionScope) {
         return pn->pn_blockid >= blockid;
+    }
+    void markMaybeUninitializedLexicalUseInSwitch(ParseNode *pn, Definition *dn,
+                                                  uint16_t firstDominatingLexicalSlot)
+    {
+        MOZ_ASSERT(pn->isUsed());
+        if (dn->isLet() && dn->pn_cookie.slot() < firstDominatingLexicalSlot)
+            pn->pn_dflags |= PND_LET;
     }
 
     static uintptr_t definitionToBits(Definition *dn) {
@@ -665,11 +721,14 @@ FullParseHandler::finishInitializerAssignment(ParseNode *pn, ParseNode *init, JS
         pn->pn_expr = init;
     }
 
-    pn->setOp((pn->pn_dflags & PND_BOUND)
-              ? JSOP_SETLOCAL
-              : (op == JSOP_DEFCONST)
-              ? JSOP_SETCONST
-              : JSOP_SETNAME);
+    if (op == JSOP_INITLEXICAL)
+        pn->setOp(op);
+    else if (pn->pn_dflags & PND_BOUND)
+        pn->setOp(JSOP_SETLOCAL);
+    else if (op == JSOP_DEFCONST)
+        pn->setOp(JSOP_SETCONST);
+    else
+        pn->setOp(JSOP_SETNAME);
 
     pn->markAsAssigned();
 

@@ -20,11 +20,10 @@ class HTMLSharedListElement MOZ_FINAL : public nsGenericHTMLElement,
                                         public nsIDOMHTMLUListElement
 {
 public:
-  HTMLSharedListElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLSharedListElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLSharedListElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -77,6 +76,8 @@ public:
   }
 
 protected:
+  virtual ~HTMLSharedListElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

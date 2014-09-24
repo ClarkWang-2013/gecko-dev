@@ -8,6 +8,7 @@ EXPORTS += [
     'HTMLPropertiesCollection.h',
     'nsGenericHTMLElement.h',
     'nsHTMLDNSPrefetch.h',
+    'nsTextEditorState.h',
 ]
 
 EXPORTS.mozilla.dom += [
@@ -72,6 +73,7 @@ EXPORTS.mozilla.dom += [
     'HTMLTrackElement.h',
     'HTMLUnknownElement.h',
     'MediaError.h',
+    'RadioNodeList.h',
     'TextTrackManager.h',
     'TimeRanges.h',
     'UndoManager.h',
@@ -154,6 +156,7 @@ UNIFIED_SOURCES += [
     'nsIConstraintValidation.cpp',
     'nsRadioVisitor.cpp',
     'nsTextEditorState.cpp',
+    'RadioNodeList.cpp',
     'TextTrackManager.cpp',
     'TimeRanges.cpp',
     'UndoManager.cpp',
@@ -166,17 +169,16 @@ MSVC_ENABLE_PGO = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
-FINAL_LIBRARY = 'gklayout'
+FINAL_LIBRARY = 'xul'
 LOCAL_INCLUDES += [
     '/content/base/src',
-    '/content/canvas/src',
     '/content/html/document/src',
     '/content/media/',
     '/content/xul/content/src',
     '/dom/base',
+    '/dom/canvas',
     '/dom/xbl',
-    '/editor/libeditor/base',
-    '/editor/libeditor/text',
+    '/editor/libeditor',
     '/editor/txmgr',
     '/layout/forms',
     '/layout/generic',

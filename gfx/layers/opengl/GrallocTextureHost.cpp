@@ -259,6 +259,11 @@ GrallocTextureSourceOGL::SetCompositableBackendSpecificData(CompositableBackendS
 
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
   gl()->fBindTexture(textureTarget, tex);
+
+  // Setup texure parameters at the first binding.
+  gl()->fTexParameteri(textureTarget, LOCAL_GL_TEXTURE_WRAP_T, GetWrapMode());
+  gl()->fTexParameteri(textureTarget, LOCAL_GL_TEXTURE_WRAP_S, GetWrapMode());
+
   // create new EGLImage
   mEGLImage = EGLImageCreateFromNativeBuffer(gl(), mGraphicBuffer->getNativeBuffer());
   BindEGLImage();
@@ -316,7 +321,8 @@ GrallocTextureHostOGL::GrallocTextureHostOGL(TextureFlags aFlags,
 
 GrallocTextureHostOGL::~GrallocTextureHostOGL()
 {
-  mTextureSource = nullptr;
+  MOZ_ASSERT(!mTextureSource || (mFlags & TextureFlags::DEALLOCATE_CLIENT),
+             "Leaking our buffer");
 }
 
 void
@@ -378,7 +384,7 @@ GrallocTextureHostOGL::DeallocateSharedData()
       owner = handle.get_MagicGrallocBufferHandle().mRef.mOwner;
     }
 
-    SharedBufferManagerParent::GetInstance(owner)->DropGrallocBuffer(mGrallocHandle);
+    SharedBufferManagerParent::DropGrallocBuffer(owner, mGrallocHandle);
   }
 }
 

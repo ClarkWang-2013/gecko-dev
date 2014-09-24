@@ -27,6 +27,7 @@
 #include "nsWrapperCache.h"
 #include "nsHashKeys.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/dom/NameSpaceConstants.h"
 
 namespace mozilla {
 namespace dom {
@@ -116,8 +117,8 @@ protected:
 class nsSimpleContentList : public nsBaseContentList
 {
 public:
-  nsSimpleContentList(nsINode *aRoot) : nsBaseContentList(),
-                                        mRoot(aRoot)
+  explicit nsSimpleContentList(nsINode* aRoot) : nsBaseContentList(),
+                                                 mRoot(aRoot)
   {
   }
 
@@ -130,6 +131,9 @@ public:
     return mRoot;
   }
   virtual JSObject* WrapObject(JSContext *cx) MOZ_OVERRIDE;
+
+protected:
+  virtual ~nsSimpleContentList() {}
 
 private:
   // This has to be a strong reference, the root might go away before the list.
@@ -249,12 +253,13 @@ public:
                 nsIAtom* aMatchAtom = nullptr,
                 int32_t aMatchNameSpaceId = kNameSpaceID_None,
                 bool aFuncMayDependOnAttr = true);
-  virtual ~nsContentList();
 
   // nsWrapperCache
   using nsWrapperCache::GetWrapperPreserveColor;
   virtual JSObject* WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 protected:
+  virtual ~nsContentList();
+
   virtual JSObject* GetWrapperPreserveColorInternal() MOZ_OVERRIDE
   {
     return nsWrapperCache::GetWrapperPreserveColor();

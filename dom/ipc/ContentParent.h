@@ -36,6 +36,7 @@ class nsIMemoryReporter;
 class ParentIdleListener;
 
 namespace mozilla {
+class PRemoteSpellcheckEngineParent;
 
 namespace ipc {
 class OptionalURIParams;
@@ -62,12 +63,13 @@ class ClonedMessageData;
 class MemoryReport;
 class TabContext;
 class PFileDescriptorSetParent;
+class ContentBridgeParent;
 
-class ContentParent : public PContentParent
-                    , public nsIContentParent
-                    , public nsIObserver
-                    , public nsIDOMGeoPositionCallback
-                    , public mozilla::LinkedListElement<ContentParent>
+class ContentParent MOZ_FINAL : public PContentParent
+                              , public nsIContentParent
+                              , public nsIObserver
+                              , public nsIDOMGeoPositionCallback
+                              , public mozilla::LinkedListElement<ContentParent>
 {
     typedef mozilla::ipc::GeckoChildProcessHost GeckoChildProcessHost;
     typedef mozilla::ipc::OptionalURIParams OptionalURIParams;
@@ -76,6 +78,11 @@ class ContentParent : public PContentParent
     typedef mozilla::dom::ClonedMessageData ClonedMessageData;
 
 public:
+#ifdef MOZ_NUWA_PROCESS
+    static bool IsNuwaReady() {
+        return sNuwaReady;
+    }
+#endif
     virtual bool IsContentParent() MOZ_OVERRIDE { return true; }
     /**
      * Start up the content-process machinery.  This might include
@@ -93,13 +100,18 @@ public:
     static void JoinAllSubprocesses();
 
     static bool PreallocatedProcessReady();
-    static void RunAfterPreallocatedProcessReady(nsIRunnable* aRequest);
 
+    /**
+     * Get or create a content process for:
+     * 1. browser iframe
+     * 2. remote xul <browser>
+     * 3. normal iframe
+     */
     static already_AddRefed<ContentParent>
-    GetNewOrUsed(bool aForBrowserElement = false,
-                 hal::ProcessPriority aPriority =
-                   hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-                 ContentParent* aOpener = nullptr);
+    GetNewOrUsedBrowserProcess(bool aForBrowserElement = false,
+                               hal::ProcessPriority aPriority =
+                               hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
+                               ContentParent* aOpener = nullptr);
 
     /**
      * Create a subprocess suitable for use as a preallocated app process.
@@ -148,6 +160,7 @@ public:
     virtual bool CheckManifestURL(const nsAString& aManifestURL) MOZ_OVERRIDE;
     virtual bool CheckAppHasPermission(const nsAString& aPermission) MOZ_OVERRIDE;
     virtual bool CheckAppHasStatus(unsigned short aStatus) MOZ_OVERRIDE;
+    virtual bool KillChild() MOZ_OVERRIDE;
 
     /** Notify that a tab is beginning its destruction sequence. */
     void NotifyTabDestroying(PBrowserParent* aTab);
@@ -230,6 +243,12 @@ public:
         return PContentParent::RecvPNeckoConstructor(aActor);
     }
 
+    virtual PScreenManagerParent*
+    AllocPScreenManagerParent(uint32_t* aNumberOfScreens,
+                              float* aSystemDefaultScale,
+                              bool* aSuccess) MOZ_OVERRIDE;
+    virtual bool DeallocPScreenManagerParent(PScreenManagerParent* aActor) MOZ_OVERRIDE;
+
     virtual PHalParent* AllocPHalParent() MOZ_OVERRIDE;
     virtual bool RecvPHalConstructor(PHalParent* aActor) MOZ_OVERRIDE {
         return PContentParent::RecvPHalConstructor(aActor);
@@ -246,6 +265,7 @@ public:
     RecvPJavaScriptConstructor(PJavaScriptParent* aActor) MOZ_OVERRIDE {
         return PContentParent::RecvPJavaScriptConstructor(aActor);
     }
+    virtual PRemoteSpellcheckEngineParent* AllocPRemoteSpellcheckEngineParent() MOZ_OVERRIDE;
 
     virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
                                            const nsString& aPageURL,
@@ -266,7 +286,6 @@ protected:
     void OnNuwaForkTimeout();
 
     bool ShouldContinueFromReplyTimeout() MOZ_OVERRIDE;
-    bool ShouldSandboxContentProcesses();
 
 private:
     static nsDataHashtable<nsStringHashKey, ContentParent*> *sAppContentParents;
@@ -279,12 +298,17 @@ private:
 
     // Take the preallocated process and transform it into a "real" app process,
     // for the specified manifest URL.  If there is no preallocated process (or
-    // if it's dead), this returns false.
+    // if it's dead), create a new one and set aTookPreAllocated to false.
     static already_AddRefed<ContentParent>
-    MaybeTakePreallocatedAppProcess(const nsAString& aAppManifestURL,
-                                    hal::ProcessPriority aInitialPriority);
+    GetNewOrPreallocatedAppProcess(mozIApplication* aApp,
+                                   hal::ProcessPriority aInitialPriority,
+                                   ContentParent* aOpener,
+                                   /*out*/ bool* aTookPreAllocated = nullptr);
 
     static hal::ProcessPriority GetInitialProcessPriority(Element* aFrameElement);
+
+    static ContentBridgeParent* CreateContentBridgeParent(const TabContext& aContext,
+                                                          const hal::ProcessPriority& aPriority);
 
     // Hide the raw constructor methods since we don't want client code
     // using them.
@@ -339,11 +363,12 @@ private:
 
     // Transform a pre-allocated app process into a "real" app
     // process, for the specified manifest URL.
-    void TransformPreallocatedIntoApp(const nsAString& aAppManifestURL);
+    void TransformPreallocatedIntoApp(ContentParent* aOpener,
+                                      const nsAString& aAppManifestURL);
 
     // Transform a pre-allocated app process into a browser process. If this
     // returns false, the child process has died.
-    void TransformPreallocatedIntoBrowser();
+    void TransformPreallocatedIntoBrowser(ContentParent* aOpener);
 
     /**
      * Mark this ContentParent as dead for the purposes of Get*().
@@ -389,6 +414,7 @@ private:
 
     virtual bool DeallocPJavaScriptParent(mozilla::jsipc::PJavaScriptParent*) MOZ_OVERRIDE;
 
+    virtual bool DeallocPRemoteSpellcheckEngineParent(PRemoteSpellcheckEngineParent*) MOZ_OVERRIDE;
     virtual PBrowserParent* AllocPBrowserParent(const IPCTabContext& aContext,
                                                 const uint32_t& aChromeFlags,
                                                 const uint64_t& aId,
@@ -414,6 +440,9 @@ private:
     virtual bool RecvGetRandomValues(const uint32_t& length,
                                      InfallibleTArray<uint8_t>* randomValues) MOZ_OVERRIDE;
 
+    virtual bool RecvIsSecureURI(const uint32_t& type, const URIParams& uri,
+                                 const uint32_t& flags, bool* isSecureURI);
+
     virtual bool DeallocPHalParent(PHalParent*) MOZ_OVERRIDE;
 
     virtual bool DeallocPIndexedDBParent(PIndexedDBParent* aActor) MOZ_OVERRIDE;
@@ -434,6 +463,9 @@ private:
 
     virtual PTestShellParent* AllocPTestShellParent() MOZ_OVERRIDE;
     virtual bool DeallocPTestShellParent(PTestShellParent* shell) MOZ_OVERRIDE;
+
+    virtual PMobileConnectionParent* AllocPMobileConnectionParent(const uint32_t& aClientId) MOZ_OVERRIDE;
+    virtual bool DeallocPMobileConnectionParent(PMobileConnectionParent* aActor) MOZ_OVERRIDE;
 
     virtual bool DeallocPNeckoParent(PNeckoParent* necko) MOZ_OVERRIDE;
 
@@ -507,6 +539,7 @@ private:
                                            const nsString& aText, const bool& aTextClickable,
                                            const nsString& aCookie, const nsString& aName,
                                            const nsString& aBidi, const nsString& aLang,
+                                           const nsString& aData,
                                            const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
 
     virtual bool RecvCloseAlert(const nsString& aName,
@@ -568,10 +601,11 @@ private:
     virtual bool RecvAudioChannelChangeDefVolChannel(const int32_t& aChannel,
                                                      const bool& aHidden) MOZ_OVERRIDE;
     virtual bool RecvGetSystemMemory(const uint64_t& getterId) MOZ_OVERRIDE;
-    virtual bool RecvBroadcastVolume(const nsString& aVolumeName) MOZ_OVERRIDE;
+    virtual bool RecvGetVolumes(InfallibleTArray<VolumeInfo>* aResult) MOZ_OVERRIDE;
 
     virtual bool RecvDataStoreGetStores(
                        const nsString& aName,
+                       const nsString& aOwner,
                        const IPC::Principal& aPrincipal,
                        InfallibleTArray<DataStoreSetting>* aValue) MOZ_OVERRIDE;
 
@@ -675,6 +709,10 @@ private:
     // Dup of child's X socket, used to scope its resources to this
     // object instead of the child process's lifetime.
     ScopedClose mChildXSocketFdDup;
+#endif
+
+#ifdef MOZ_NUWA_PROCESS
+    static bool sNuwaReady;
 #endif
 };
 

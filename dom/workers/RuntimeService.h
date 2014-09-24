@@ -78,7 +78,7 @@ private:
     WorkerPrivate* mWorkerPrivate;
     SharedWorkerInfo* mSharedWorkerInfo;
 
-    MatchSharedWorkerInfo(WorkerPrivate* aWorkerPrivate)
+    explicit MatchSharedWorkerInfo(WorkerPrivate* aWorkerPrivate)
     : mWorkerPrivate(aWorkerPrivate), mSharedWorkerInfo(nullptr)
     { }
   };
@@ -108,6 +108,7 @@ public:
     nsString mAppVersion;
     nsString mPlatform;
     nsString mUserAgent;
+    nsTArray<nsString> mLanguages;
   };
 
 private:
@@ -193,19 +194,17 @@ public:
   }
 
   static void
-  SetDefaultRuntimeAndContextOptions(
-                                    const JS::RuntimeOptions& aRuntimeOptions,
-                                    const JS::ContextOptions& aContentCxOptions,
-                                    const JS::ContextOptions& aChromeCxOptions)
+  SetDefaultRuntimeOptions(const JS::RuntimeOptions& aRuntimeOptions)
   {
     AssertIsOnMainThread();
     sDefaultJSSettings.runtimeOptions = aRuntimeOptions;
-    sDefaultJSSettings.content.contextOptions = aContentCxOptions;
-    sDefaultJSSettings.chrome.contextOptions = aChromeCxOptions;
   }
 
   void
-  UpdateAllWorkerRuntimeAndContextOptions();
+  UpdateAllWorkerRuntimeOptions();
+
+  void
+  UpdateAllWorkerLanguages(const nsTArray<nsString>& aLanguages);
 
   void
   UpdateAllWorkerPreference(WorkerPreference aPref, bool aValue);

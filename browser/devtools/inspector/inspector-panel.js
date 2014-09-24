@@ -219,7 +219,9 @@ InspectorPanel.prototype = {
       }
 
       rootNode = aRootNode;
-      return walker.querySelector(rootNode, this.selectionCssSelector);
+      if (this.selectionCssSelector) {
+        return walker.querySelector(rootNode, this.selectionCssSelector);
+      }
     }).then(front => {
       if (hasNavigated()) {
         return promise.reject("navigated; resolution of _defaultNode aborted");
@@ -367,7 +369,7 @@ InspectorPanel.prototype = {
    * Will store the current target url along with it to allow pre-selection at
    * reload
    */
-  set selectionCssSelector(cssSelector) {
+  set selectionCssSelector(cssSelector = null) {
     this._selectionCssSelector = {
       selector: cssSelector,
       url: this._target.url
@@ -677,6 +679,7 @@ InspectorPanel.prototype = {
     this._markupBox.setAttribute("collapsed", true);
     this._markupBox.appendChild(this._markupFrame);
     this._markupFrame.setAttribute("src", "chrome://browser/content/devtools/markup-view.xhtml");
+    this._markupFrame.setAttribute("aria-label", this.strings.GetStringFromName("inspector.panelLabel.markupView"))
   },
 
   _onMarkupFrameLoad: function InspectorPanel__onMarkupFrameLoad() {
@@ -731,6 +734,19 @@ InspectorPanel.prototype = {
       let hierarchical = aPseudo == ":hover" || aPseudo == ":active";
       return this.walker.addPseudoClassLock(node, aPseudo, {parents: hierarchical});
     }
+  },
+
+  /**
+   * Show DOM properties
+   */
+  showDOMProperties: function InspectorPanel_showDOMProperties() {
+    this._toolbox.openSplitConsole().then(() => {
+      let panel = this._toolbox.getPanel("webconsole");
+      let jsterm = panel.hud.jsterm;
+
+      jsterm.execute("inspect($0)");
+      jsterm.focusInput();
+    });
   },
 
   /**

@@ -29,7 +29,7 @@ class HTMLSharedElement MOZ_FINAL : public nsGenericHTMLElement,
                                     public nsIDOMHTMLHtmlElement
 {
 public:
-  HTMLSharedElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLSharedElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
     if (mNodeInfo->Equals(nsGkAtoms::head) ||
@@ -37,7 +37,6 @@ public:
       SetHasWeirdParserInsertionMode();
     }
   }
-  virtual ~HTMLSharedElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -178,6 +177,8 @@ public:
   }
 
 protected:
+  virtual ~HTMLSharedElement();
+
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 };
 

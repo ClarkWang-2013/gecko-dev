@@ -13,6 +13,8 @@
 #include "nsPrincipal.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Preferences.h"
+#include "nsIAddonInterposition.h"
+#include "nsIXULRuntime.h"
 
 #include "mozilla/dom/BindingUtils.h"
 
@@ -24,19 +26,38 @@ using namespace JS;
 
 XPCWrappedNativeScope* XPCWrappedNativeScope::gScopes = nullptr;
 XPCWrappedNativeScope* XPCWrappedNativeScope::gDyingScopes = nullptr;
+XPCWrappedNativeScope::InterpositionMap* XPCWrappedNativeScope::gInterpositionMap = nullptr;
+
+NS_IMPL_ISUPPORTS(XPCWrappedNativeScope::ClearInterpositionsObserver, nsIObserver)
+
+NS_IMETHODIMP
+XPCWrappedNativeScope::ClearInterpositionsObserver::Observe(nsISupports *subject,
+                                                            const char *topic,
+                                                            const char16_t *data)
+{
+    MOZ_ASSERT(strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0);
+
+    // The interposition map holds strong references to interpositions, which
+    // may themselves be involved in cycles. We need to drop these strong
+    // references before the cycle collector shuts down. Otherwise we'll
+    // leak. This observer always runs before CC shutdown.
+    if (gInterpositionMap)
+        delete gInterpositionMap;
+
+    nsContentUtils::UnregisterShutdownObserver(this);
+    return NS_OK;
+}
 
 static bool
 RemoteXULForbidsXBLScope(nsIPrincipal *aPrincipal, HandleObject aGlobal)
 {
   MOZ_ASSERT(aPrincipal);
 
-  // The SafeJSContext is lazily created, and tends to be created at really
-  // weird times, at least for xpcshell (often very early in startup or late
-  // in shutdown). Its scope isn't system principal, so if we proceeded we'd
-  // end up calling into AllowXULXBLForPrincipal, which depends on all kinds
-  // of persistent storage and permission machinery that may or not be running.
-  // We know the answer to the question here, so just short-circuit.
-  if (JS_GetClass(aGlobal) == &SafeJSContextGlobalClass)
+  // Certain singleton sandoxes are created very early in startup - too early
+  // to call into AllowXULXBLForPrincipal. We never create XBL scopes for
+  // sandboxes anway, and certainly not for these singleton scopes. So we just
+  // short-circuit here.
+  if (IsSandbox(aGlobal))
       return false;
 
   // AllowXULXBLForPrincipal will return true for system principal, but we
@@ -55,8 +76,8 @@ RemoteXULForbidsXBLScope(nsIPrincipal *aPrincipal, HandleObject aGlobal)
 
 XPCWrappedNativeScope::XPCWrappedNativeScope(JSContext *cx,
                                              JS::HandleObject aGlobal)
-      : mWrappedNativeMap(Native2WrappedNativeMap::newMap(XPC_NATIVE_MAP_SIZE)),
-        mWrappedNativeProtoMap(ClassInfo2WrappedNativeProtoMap::newMap(XPC_NATIVE_PROTO_MAP_SIZE)),
+      : mWrappedNativeMap(Native2WrappedNativeMap::newMap(XPC_NATIVE_MAP_LENGTH)),
+        mWrappedNativeProtoMap(ClassInfo2WrappedNativeProtoMap::newMap(XPC_NATIVE_PROTO_MAP_LENGTH)),
         mComponents(nullptr),
         mNext(nullptr),
         mGlobalJSObject(aGlobal),
@@ -100,12 +121,18 @@ XPCWrappedNativeScope::XPCWrappedNativeScope(JSContext *cx,
     mUseContentXBLScope = mAllowContentXBLScope;
     if (mUseContentXBLScope) {
       const js::Class *clasp = js::GetObjectClass(mGlobalJSObject);
-      mUseContentXBLScope = !strcmp(clasp->name, "Window") ||
-                            !strcmp(clasp->name, "ChromeWindow") ||
-                            !strcmp(clasp->name, "ModalContentWindow");
+      mUseContentXBLScope = !strcmp(clasp->name, "Window");
     }
     if (mUseContentXBLScope) {
       mUseContentXBLScope = principal && !nsContentUtils::IsSystemPrincipal(principal);
+    }
+
+    JSAddonId *addonId = JS::AddonIdOfObject(aGlobal);
+    if (gInterpositionMap) {
+        if (InterpositionMap::Ptr p = gInterpositionMap->lookup(addonId)) {
+            MOZ_RELEASE_ASSERT(nsContentUtils::IsSystemPrincipal(principal));
+            mInterposition = p->value();
+        }
     }
 }
 
@@ -153,11 +180,6 @@ XPCWrappedNativeScope::GetComponentsJSObject(JS::MutableHandleObject obj)
 void
 XPCWrappedNativeScope::ForcePrivilegedComponents()
 {
-    // This may only be called on unprivileged scopes during automation where
-    // we allow insecure things.
-    MOZ_RELEASE_ASSERT(Preferences::GetBool("security.turn_off_all_security_so_"
-                                            "that_viruses_can_take_over_this_"
-                                            "computer"));
     nsCOMPtr<nsIXPCComponents> c = do_QueryInterface(mComponents);
     if (!c)
         mComponents = new nsXPCComponents(this);
@@ -186,7 +208,7 @@ CompartmentPerAddon()
 
     if (!initialized) {
         pref = Preferences::GetBool("dom.compartment_per_addon", false) ||
-               Preferences::GetBool("browser.tabs.remote.autostart", false);
+               BrowserTabsRemoteAutostart();
         initialized = true;
     }
 
@@ -214,12 +236,15 @@ XPCWrappedNativeScope::EnsureContentXBLScope(JSContext *cx)
     // sandboxPrototype so that the XBL scope can access all the DOM objects
     // it's accustomed to accessing.
     //
-    // NB: One would think that wantXrays wouldn't make a difference here.
-    // However, wantXrays lives a secret double life, and one of its other
-    // hobbies is to waive Xray on the returned sandbox when set to false.
-    // So make sure to keep this set to true, here.
+    // In general wantXrays shouldn't matter much here, but there are weird
+    // cases when adopting bound content between same-origin globals where a
+    // <destructor> in one content XBL scope sees anonymous content in another
+    // content XBL scope. When that happens, we hit LookupBindingMember for an
+    // anonymous element that lives in a content XBL scope, which isn't a tested
+    // or audited codepath. So let's avoid hitting that case by opting out of
+    // same-origin Xrays.
     SandboxOptions options;
-    options.wantXrays = true;
+    options.wantXrays = false;
     options.wantComponents = true;
     options.proto = global;
     options.sameZoneAs = global;
@@ -582,6 +607,8 @@ XPCWrappedNativeScope::KillDyingScopes()
     XPCWrappedNativeScope* cur = gDyingScopes;
     while (cur) {
         XPCWrappedNativeScope* next = cur->mNext;
+        if (cur->mGlobalJSObject)
+            CompartmentPrivate::Get(cur->mGlobalJSObject)->scope = nullptr;
         delete cur;
         cur = next;
     }
@@ -687,6 +714,31 @@ XPCWrappedNativeScope::SetExpandoChain(JSContext *cx, HandleObject target,
     if (!mXrayExpandos.initialized() && !mXrayExpandos.init(cx))
         return false;
     return mXrayExpandos.put(cx, target, chain);
+}
+
+/* static */ bool
+XPCWrappedNativeScope::SetAddonInterposition(JSAddonId *addonId,
+                                             nsIAddonInterposition *interp)
+{
+    if (!gInterpositionMap) {
+        gInterpositionMap = new InterpositionMap();
+        gInterpositionMap->init();
+
+        // Make sure to clear the map at shutdown.
+        nsContentUtils::RegisterShutdownObserver(new ClearInterpositionsObserver());
+    }
+    if (interp) {
+        return gInterpositionMap->put(addonId, interp);
+    } else {
+        gInterpositionMap->remove(addonId);
+        return true;
+    }
+}
+
+nsCOMPtr<nsIAddonInterposition>
+XPCWrappedNativeScope::GetInterposition()
+{
+    return mInterposition;
 }
 
 /***************************************************************************/

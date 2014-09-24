@@ -144,6 +144,7 @@ pref("browser.download.manager.openDelay", 0);
 pref("browser.download.manager.focusWhenStarting", false);
 pref("browser.download.manager.flashCount", 2);
 pref("browser.download.manager.displayedHistoryDays", 7);
+pref("browser.download.manager.addToRecentDocs", true);
 
 /* download helper */
 pref("browser.helperApps.deleteTempFileOnExit", false);
@@ -216,7 +217,7 @@ pref("extensions.compatability.locales.buildid", "0");
 /* blocklist preferences */
 pref("extensions.blocklist.enabled", true);
 pref("extensions.blocklist.interval", 86400);
-pref("extensions.blocklist.url", "https://addons.mozilla.org/blocklist/3/%APP_ID%/%APP_VERSION%/%PRODUCT%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%PING_COUNT%/%TOTAL_PING_COUNT%/%DAYS_SINCE_LAST_PING%/");
+pref("extensions.blocklist.url", "https://blocklist.addons.mozilla.org/blocklist/3/%APP_ID%/%APP_VERSION%/%PRODUCT%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%PING_COUNT%/%TOTAL_PING_COUNT%/%DAYS_SINCE_LAST_PING%/");
 pref("extensions.blocklist.detailsURL", "https://www.mozilla.com/%LOCALE%/blocklist/");
 
 /* block popups by default, and notify the user about blocked popups */
@@ -230,6 +231,7 @@ pref("dom.disable_window_print", true);
 pref("dom.disable_window_find", true);
 
 pref("keyword.enabled", true);
+pref("browser.fixup.domainwhitelist.localhost", true);
 
 pref("accessibility.typeaheadfind", false);
 pref("accessibility.typeaheadfind.timeout", 5000);
@@ -280,11 +282,7 @@ pref("browser.search.official", true);
 #endif
 
 // Control media casting feature
-#ifdef RELEASE_BUILD
-pref("browser.casting.enabled", false);
-#else
 pref("browser.casting.enabled", true);
-#endif
 
 // Enable sparse localization by setting a few package locale overrides
 pref("chrome.override_package.global", "browser");
@@ -428,6 +426,12 @@ pref("javascript.options.mem.gc_low_frequency_heap_growth", 120);
 pref("javascript.options.mem.high_water_mark", 16);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 3);
 pref("javascript.options.mem.gc_decommit_threshold_mb", 1);
+#ifdef JSGC_GENERATIONAL
+pref("javascript.options.mem.gc_min_empty_chunk_count", 1);
+#else
+pref("javascript.options.mem.gc_min_empty_chunk_count", 0);
+#endif
+pref("javascript.options.mem.gc_max_empty_chunk_count", 2);
 #else
 pref("javascript.options.mem.high_water_mark", 32);
 #endif
@@ -437,6 +441,9 @@ pref("dom.max_script_run_time", 20);
 
 // JS error console
 pref("devtools.errorconsole.enabled", false);
+// Absolute path to the devtools unix domain socket file used
+// to communicate with a usb cable via adb forward.
+pref("devtools.debugger.unix-domain-socket", "/data/data/@ANDROID_PACKAGE_NAME@/firefox-debugger-socket");
 
 pref("font.size.inflation.minTwips", 120);
 
@@ -473,7 +480,7 @@ pref("plugin.default.state", 1);
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
 // Used to submit data to input from about:feedback
-pref("app.feedback.postURL", "https://input.mozilla.org/%LOCALE%/feedback");
+pref("app.feedback.postURL", "https://input.mozilla.org/api/v1/feedback/");
 pref("app.privacyURL", "https://www.mozilla.org/privacy/firefox/");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
@@ -498,6 +505,9 @@ pref("security.warn_viewing_mixed", false); // Warning is disabled.  See Bug 616
 
 // Block insecure active content on https pages
 pref("security.mixed_content.block_active_content", true);
+
+// Enable pinning
+pref("security.cert_pinning.enforcement_level", 1);
 
 // Override some named colors to avoid inverse OS themes
 pref("ui.-moz-dialog", "#efebe7");
@@ -543,7 +553,7 @@ pref("app.update.enabled", false);
 pref("app.update.channel", "@MOZ_UPDATE_CHANNEL@");
 
 // If you are looking for app.update.url, we no longer use it.
-// See mobile/android/base/UpdateServiceHelper.java.in
+// See mobile/android/base/updater/UpdateServiceHelper.java
 #endif
 
 // replace newlines with spaces on paste into single-line text boxes
@@ -557,6 +567,9 @@ pref("ui.dragThresholdY", 25);
 pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.enabled", true);
 pref("layers.async-video.enabled", true);
+#ifdef MOZ_ANDROID_APZ
+pref("layers.async-pan-zoom.enabled", true);
+#endif
 pref("layers.progressive-paint", true);
 pref("layers.low-precision-buffer", true);
 pref("layers.low-precision-resolution", "0.25");
@@ -623,6 +636,9 @@ pref("urlclassifier.alternate_error_page", "blocked");
 
 // The number of random entries to send with a gethash request.
 pref("urlclassifier.gethashnoise", 4);
+
+// Gethash timeout for Safebrowsing.
+pref("urlclassifier.gethash.timeout_ms", 5000);
 
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
@@ -826,6 +842,7 @@ pref("browser.snippets.statsUrl", "https://snippets-stats.mozilla.org/mobile");
 // These prefs require a restart to take effect.
 pref("browser.snippets.enabled", true);
 pref("browser.snippets.syncPromo.enabled", true);
+pref("browser.snippets.firstrunHomepage.enabled", true);
 
 // The URL of the APK factory from which we obtain APKs for webapps.
 pref("browser.webapps.apkFactoryUrl", "https://controller.apk.firefox.com/application.apk");
@@ -858,3 +875,6 @@ pref("home.sync.updateMode", 0);
 
 // How frequently to check if we should sync home provider data.
 pref("home.sync.checkIntervalSecs", 3600);
+
+// Enable device storage API
+pref("device.storage.enabled", true);

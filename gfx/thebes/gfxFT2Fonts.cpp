@@ -23,6 +23,7 @@
 #include "gfxFT2FontBase.h"
 #include "gfxFT2Utils.h"
 #include "gfxFT2FontList.h"
+#include "gfxTextRun.h"
 #include <locale.h>
 #include "nsGkAtoms.h"
 #include "nsTArray.h"
@@ -162,7 +163,7 @@ gfxFT2Font::gfxFT2Font(cairo_scaled_font_t *aCairoFont,
                        const gfxFontStyle *aFontStyle,
                        bool aNeedsBold)
     : gfxFT2FontBase(aCairoFont, aFontEntry, aFontStyle)
-    , mCharGlyphCache(64)
+    , mCharGlyphCache(32)
 {
     NS_ASSERTION(mFontEntry, "Unable to find font entry for font.  Something is whack.");
     mApplySyntheticBold = aNeedsBold;

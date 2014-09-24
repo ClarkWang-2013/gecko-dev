@@ -22,8 +22,7 @@ class HTMLSourceElement MOZ_FINAL : public nsGenericHTMLElement,
                                     public nsIDOMHTMLSourceElement
 {
 public:
-  HTMLSourceElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~HTMLSourceElement();
+  explicit HTMLSourceElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -92,17 +91,9 @@ public:
     SetHTMLAttr(nsGkAtoms::media, aMedia, rv);
   }
 
-  void GetKeySystem(nsString& aKeySystem) const
-  {
-    GetHTMLAttr(nsGkAtoms::keysystem, aKeySystem);
-  }
-
-  void SetKeySystem(const nsAString& aKeySystem)
-  {
-    SetHTMLAttr(nsGkAtoms::keysystem, aKeySystem);
-  }
-
 protected:
+  virtual ~HTMLSourceElement();
+
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 
 protected:

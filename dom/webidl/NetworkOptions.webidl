@@ -3,7 +3,7 @@
 * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
-* This dictionary holds the parameters sent to the network worker.
+* This dictionnary holds the parameters sent to the network worker.
 */
 dictionary NetworkCommandOptions
 {
@@ -19,9 +19,7 @@ dictionary NetworkCommandOptions
   sequence<DOMString> dnses;          // for "setDNS", "setDefaultRouteAndDNS".
   DOMString oldIfname;                // for "setDefaultRouteAndDNS".
   DOMString gateway;                  // for "addSecondaryRoute", "removeSecondaryRoute".
-  sequence<DOMString> gateways;       // for "setDefaultRouteAndDNS", "removeDefaultRoute",
-                                      //     "addHostRoute", "removeHostRoute".
-  sequence<DOMString> hostnames;      // for "addHostRoute", "removeHostRoute".
+  sequence<DOMString> gateways;       // for "setDefaultRouteAndDNS", "removeDefaultRoute".
   DOMString mode;                     // for "setWifiOperationMode".
   boolean report;                     // for "setWifiOperationMode".
   boolean isAsync;                    // for "setWifiOperationMode".
@@ -42,9 +40,6 @@ dictionary NetworkCommandOptions
   DOMString usbEndIp;                 // for "setWifiTethering".
   DOMString dns1;                     // for "setWifiTethering".
   DOMString dns2;                     // for "setWifiTethering".
-  float rxBytes;                      // for "getNetworkInterfaceStats".
-  float txBytes;                      // for "getNetworkInterfaceStats".
-  DOMString date;                     // for "getNetworkInterfaceStats".
   long threshold;                     // for "setNetworkInterfaceAlarm",
                                       //     "enableNetworkInterfaceAlarm".
   DOMString startIp;                  // for "setDhcpServer".
@@ -55,7 +50,6 @@ dictionary NetworkCommandOptions
   DOMString preExternalIfname;        // for "updateUpStream".
   DOMString curInternalIfname;        // for "updateUpStream".
   DOMString curExternalIfname;        // for "updateUpStream".
-  boolean isBlocking;                 // for "runDhcp".
 };
 
 /**
@@ -73,27 +67,10 @@ dictionary NetworkResultOptions
   DOMString resultReason = "";        // for all commands.
   boolean error = false;              // for all commands.
 
-  float rxBytes = -1;                 // for "getNetworkInterfaceStats".
-  float txBytes = -1;                 // for "getNetworkInterfaceStats".
-  DOMString date = "";                // for "getNetworkInterfaceStats".
   boolean enable = false;             // for "setWifiTethering", "setUSBTethering"
                                       //     "enableUsbRndis".
   boolean result = false;             // for "enableUsbRndis".
   boolean success = false;            // for "setDhcpServer".
   DOMString curExternalIfname = "";   // for "updateUpStream".
   DOMString curInternalIfname = "";   // for "updateUpStream".
-
-  DOMString ipAddr = "";              // for "runDhcp", "getInterfaceConfig".
-  DOMString gateway = "";             // for "runDhcp".
-  DOMString dns1 = "";                // for "runDhcp".
-  DOMString dns2 = "";                // for "runDhcp".
-  DOMString server = "";              // for "runDhcp".
-  short lease = 0;                    // for "runDhcp".
-  DOMString vendorInfo = "";          // for "runDhcp".
-  short maskLength = 0;               // for "runDhcp".
-
-  DOMString flag = "down";            // for "getInterfaceConfig".
-  DOMString macAddr = "";             // for "getInterfaceConfig".
-
-  sequence<DOMString> interfaceList;  // for "getInterfaceList".
 };

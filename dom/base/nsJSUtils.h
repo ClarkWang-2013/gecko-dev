@@ -32,10 +32,6 @@ public:
 
   static nsIScriptContext *GetStaticScriptContext(JSObject* aObj);
 
-  static nsIScriptGlobalObject *GetDynamicScriptGlobal(JSContext *aContext);
-
-  static nsIScriptContext *GetDynamicScriptContext(JSContext *aContext);
-
   /**
    * Retrieve the inner window ID based on the given JSContext.
    *
@@ -124,7 +120,7 @@ class MOZ_STACK_CLASS AutoDontReportUncaught {
   bool mWasSet;
 
 public:
-  AutoDontReportUncaught(JSContext* aContext) : mContext(aContext) {
+  explicit AutoDontReportUncaught(JSContext* aContext) : mContext(aContext) {
     MOZ_ASSERT(aContext);
     mWasSet = JS::ContextOptionsRef(mContext).dontReportUncaught();
     if (!mWasSet) {
@@ -145,16 +141,21 @@ AssignJSString(JSContext *cx, T &dest, JSString *s)
   size_t len = js::GetStringLength(s);
   static_assert(js::MaxStringLength < (1 << 28),
                 "Shouldn't overflow here or in SetCapacity");
-  if (MOZ_UNLIKELY(!dest.SetCapacity(len + 1, mozilla::fallible_t()))) {
+  if (MOZ_UNLIKELY(!dest.SetLength(len, mozilla::fallible_t()))) {
     JS_ReportOutOfMemory(cx);
     return false;
   }
-  if (MOZ_UNLIKELY(!js::CopyStringChars(cx, dest.BeginWriting(), s, len))) {
-    return false;
-  }
-  dest.BeginWriting()[len] = '\0';
+  return js::CopyStringChars(cx, dest.BeginWriting(), s, len);
+}
+
+inline void
+AssignJSFlatString(nsAString &dest, JSFlatString *s)
+{
+  size_t len = js::GetFlatStringLength(s);
+  static_assert(js::MaxStringLength < (1 << 28),
+                "Shouldn't overflow here or in SetCapacity");
   dest.SetLength(len);
-  return true;
+  js::CopyFlatStringChars(dest.BeginWriting(), s, len);
 }
 
 class nsAutoJSString : public nsAutoString

@@ -102,7 +102,7 @@ js_GetVariableBytecodeLength(jsbytecode *pc)
         return 1 + 3 * JUMP_OFFSET_LEN + ncases * JUMP_OFFSET_LEN;
       }
       default:
-        MOZ_ASSUME_UNREACHABLE("Unexpected op");
+        MOZ_CRASH("Unexpected op");
     }
 }
 
@@ -209,32 +209,30 @@ PCCounts::countName(JSOp op, size_t which)
             return countElementNames[which - ACCESS_LIMIT];
         if (propertyOp(op))
             return countPropertyNames[which - ACCESS_LIMIT];
-        MOZ_ASSUME_UNREACHABLE("bad op");
+        MOZ_CRASH("bad op");
     }
 
     if (arithOp(op))
         return countArithNames[which - BASE_LIMIT];
 
-    MOZ_ASSUME_UNREACHABLE("bad op");
+    MOZ_CRASH("bad op");
 }
 
-#ifdef JS_ION
 void
 js::DumpIonScriptCounts(Sprinter *sp, jit::IonScriptCounts *ionCounts)
 {
     Sprint(sp, "IonScript [%lu blocks]:\n", ionCounts->numBlocks());
     for (size_t i = 0; i < ionCounts->numBlocks(); i++) {
         const jit::IonBlockCounts &block = ionCounts->block(i);
-        if (block.hitCount() < 10)
-            continue;
         Sprint(sp, "BB #%lu [%05u]", block.id(), block.offset());
+        if (block.description())
+            Sprint(sp, " [inlined %s]", block.description());
         for (size_t j = 0; j < block.numSuccessors(); j++)
             Sprint(sp, " -> #%lu", block.successor(j));
         Sprint(sp, " :: %llu hits\n", block.hitCount());
         Sprint(sp, "%s\n", block.code());
     }
 }
-#endif
 
 void
 js_DumpPCCounts(JSContext *cx, HandleScript script, js::Sprinter *sp)
@@ -270,14 +268,12 @@ js_DumpPCCounts(JSContext *cx, HandleScript script, js::Sprinter *sp)
     }
 #endif
 
-#ifdef JS_ION
     jit::IonScriptCounts *ionCounts = script->getIonCounts();
 
     while (ionCounts) {
         DumpIonScriptCounts(sp, ionCounts);
         ionCounts = ionCounts->previous();
     }
-#endif
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -796,7 +792,7 @@ js_DumpScriptDepth(JSContext *cx, JSScript *scriptArg, jsbytecode *pc)
 }
 
 static char *
-QuoteString(Sprinter *sp, JSString *str, jschar quote);
+QuoteString(Sprinter *sp, JSString *str, char16_t quote);
 
 static bool
 ToDisassemblySource(JSContext *cx, HandleValue v, JSAutoByteString *bytes)
@@ -872,7 +868,6 @@ ToDisassemblySource(JSContext *cx, HandleValue v, JSAutoByteString *bytes)
             JSString *source = obj.as<RegExpObject>().toString(cx);
             if (!source)
                 return false;
-            JS::Anchor<JSString *> anchor(source);
             return bytes->encodeLatin1(cx, source);
         }
     }
@@ -1294,7 +1289,7 @@ const char js_EscapeMap[] = {
 
 template <typename CharT>
 static char *
-QuoteString(Sprinter *sp, const CharT *s, size_t length, jschar quote)
+QuoteString(Sprinter *sp, const CharT *s, size_t length, char16_t quote)
 {
     /* Sample off first for later return value pointer computation. */
     ptrdiff_t offset = sp->getOffset();
@@ -1307,7 +1302,7 @@ QuoteString(Sprinter *sp, const CharT *s, size_t length, jschar quote)
     /* Loop control variables: end points at end of string sentinel. */
     for (const CharT *t = s; t < end; s = ++t) {
         /* Move t forward from s past un-quote-worthy characters. */
-        jschar c = *t;
+        char16_t c = *t;
         while (c < 127 && isprint(c) && c != quote && c != '\\' && c != '\t') {
             c = *++t;
             if (t == end)
@@ -1359,7 +1354,7 @@ QuoteString(Sprinter *sp, const CharT *s, size_t length, jschar quote)
 }
 
 static char *
-QuoteString(Sprinter *sp, JSString *str, jschar quote)
+QuoteString(Sprinter *sp, JSString *str, char16_t quote)
 {
     JSLinearString *linear = str->ensureLinear(sp->context);
     if (!linear)
@@ -1372,7 +1367,7 @@ QuoteString(Sprinter *sp, JSString *str, jschar quote)
 }
 
 JSString *
-js_QuoteString(ExclusiveContext *cx, JSString *str, jschar quote)
+js_QuoteString(ExclusiveContext *cx, JSString *str, char16_t quote)
 {
     Sprinter sprinter(cx);
     if (!sprinter.init())
@@ -1561,7 +1556,8 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
       case JSOP_NEWARRAY:
         return write("[]");
       case JSOP_REGEXP:
-      case JSOP_OBJECT: {
+      case JSOP_OBJECT:
+      case JSOP_NEWARRAY_COPYONWRITE: {
         JSObject *obj = (op == JSOP_REGEXP)
                         ? script->getRegExp(GET_UINT32_INDEX(pc))
                         : script->getObject(GET_UINT32_INDEX(pc));
@@ -1639,7 +1635,7 @@ JSAtom *
 ExpressionDecompiler::getLocal(uint32_t local, jsbytecode *pc)
 {
     JS_ASSERT(local < script->nfixed());
-    if (local < script->nfixedvars()) {
+    if (local < script->nbodyfixed()) {
         JS_ASSERT(fun);
         uint32_t slot = local + fun->nargs();
         JS_ASSERT(slot < script->bindings.count());
@@ -2086,7 +2082,7 @@ js::GetPCCountScriptSummary(JSContext *cx, size_t index)
 
     /*
      * OOM on buffer appends here will not be caught immediately, but since
-     * StringBuffer uses a ContextAllocPolicy will trigger an exception on the
+     * StringBuffer uses a TempAllocPolicy will trigger an exception on the
      * context if they occur, which we'll catch before returning.
      */
     StringBuffer buf(cx);
@@ -2138,11 +2134,11 @@ js::GetPCCountScriptSummary(JSContext *cx, size_t index)
                 else if (PCCounts::propertyOp(op))
                     propertyTotals[j - PCCounts::ACCESS_LIMIT] += value;
                 else
-                    MOZ_ASSUME_UNREACHABLE("Bad opcode");
+                    MOZ_CRASH("Bad opcode");
             } else if (PCCounts::arithOp(op)) {
                 arithTotals[j - PCCounts::BASE_LIMIT] += value;
             } else {
-                MOZ_ASSUME_UNREACHABLE("Bad opcode");
+                MOZ_CRASH("Bad opcode");
             }
         }
     }

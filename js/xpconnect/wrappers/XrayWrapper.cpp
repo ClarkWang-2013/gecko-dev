@@ -10,6 +10,7 @@
 
 #include "nsIContent.h"
 #include "nsIControllers.h"
+#include "nsIScriptError.h"
 #include "mozilla/dom/Element.h"
 #include "nsContentUtils.h"
 
@@ -39,33 +40,45 @@ namespace xpc {
 
 using namespace XrayUtils;
 
+#define Between(x, a, b) (a <= x && x <= b)
+
+static_assert(JSProto_URIError - JSProto_Error == 7, "New prototype added in error object range");
+#define AssertErrorObjectKeyInBounds(key) \
+    static_assert(Between(key, JSProto_Error, JSProto_URIError), "We depend on jsprototypes.h ordering here");
+MOZ_FOR_EACH(AssertErrorObjectKeyInBounds, (),
+             (JSProto_Error, JSProto_InternalError, JSProto_EvalError, JSProto_RangeError,
+              JSProto_ReferenceError, JSProto_SyntaxError, JSProto_TypeError, JSProto_URIError));
+
+static_assert(JSProto_Uint8ClampedArray - JSProto_Int8Array == 8, "New prototype added in typed array range");
+#define AssertTypedArrayKeyInBounds(key) \
+    static_assert(Between(key, JSProto_Int8Array, JSProto_Uint8ClampedArray), "We depend on jsprototypes.h ordering here");
+MOZ_FOR_EACH(AssertTypedArrayKeyInBounds, (),
+             (JSProto_Int8Array, JSProto_Uint8Array, JSProto_Int16Array, JSProto_Uint16Array,
+              JSProto_Int32Array, JSProto_Uint32Array, JSProto_Float32Array, JSProto_Float64Array, JSProto_Uint8ClampedArray));
+
+#undef Between
+
+inline bool
+IsErrorObjectKey(JSProtoKey key)
+{
+    return key >= JSProto_Error && key <= JSProto_URIError;
+}
+
 inline bool
 IsTypedArrayKey(JSProtoKey key)
 {
-#ifdef DEBUG
-    bool isTypedArraySlow = key == JSProto_Int8Array ||
-                            key == JSProto_Uint8Array ||
-                            key == JSProto_Int16Array ||
-                            key == JSProto_Uint16Array ||
-                            key == JSProto_Int32Array ||
-                            key == JSProto_Uint32Array ||
-                            key == JSProto_Float32Array ||
-                            key == JSProto_Float64Array ||
-                            key == JSProto_Uint8ClampedArray;
-#endif
-    bool isTypedArray = key >= JSProto_Int8Array &&
-                        key <= JSProto_Uint8ClampedArray;
-    MOZ_ASSERT(isTypedArray == isTypedArraySlow, "Somebody reordered jsprototypes.h!");
-    static_assert(JSProto_Uint8ClampedArray - JSProto_Int8Array == 8,
-                  "New prototype added in typed array range");
-    return isTypedArray;
+    return key >= JSProto_Int8Array && key <= JSProto_Uint8ClampedArray;
 }
+
+bool SilentFailure(JSContext *cx, JS::HandleId id, const char *reason);
 
 // Whitelist for the standard ES classes we can Xray to.
 static bool
 IsJSXraySupported(JSProtoKey key)
 {
     if (IsTypedArrayKey(key))
+        return true;
+    if (IsErrorObjectKey(key))
         return true;
     switch (key) {
       case JSProto_Date:
@@ -93,7 +106,14 @@ GetXrayType(JSObject *obj)
     if (IsJSXraySupported(standardProto))
         return XrayForJSObject;
 
-    return NotXray;
+    // Modulo a few exceptions, everything else counts as an XrayWrapper to an
+    // opaque object, which means that more-privileged code sees nothing from
+    // the underlying object. This is very important for security. In some cases
+    // though, we need to make an exception for compatibility.
+    if (IsSandbox(obj))
+        return NotXray;
+
+    return XrayForOpaqueObject;
 }
 
 JSObject *
@@ -106,346 +126,32 @@ XrayAwareCalleeGlobal(JSObject *fun)
   return js::GetGlobalForObjectCrossCompartment(scope);
 }
 
-const uint32_t JSSLOT_RESOLVING = 0;
-ResolvingId::ResolvingId(JSContext *cx, HandleObject wrapper, HandleId id)
-  : mId(id),
-    mHolder(cx, getHolderObject(wrapper)),
-    mPrev(getResolvingId(mHolder)),
-    mXrayShadowing(false)
-{
-    js::SetReservedSlot(mHolder, JSSLOT_RESOLVING, js::PrivateValue(this));
-}
-
-ResolvingId::~ResolvingId()
-{
-    MOZ_ASSERT(getResolvingId(mHolder) == this, "unbalanced ResolvingIds");
-    js::SetReservedSlot(mHolder, JSSLOT_RESOLVING, js::PrivateValue(mPrev));
-}
-
-bool
-ResolvingId::isXrayShadowing(jsid id)
-{
-    if (!mXrayShadowing)
-        return false;
-
-    return mId == id;
-}
-
-bool
-ResolvingId::isResolving(jsid id)
-{
-    for (ResolvingId *cur = this; cur; cur = cur->mPrev) {
-        if (cur->mId == id)
-            return true;
-    }
-
-    return false;
-}
-
-ResolvingId *
-ResolvingId::getResolvingId(JSObject *holder)
-{
-    MOZ_ASSERT(strcmp(JS_GetClass(holder)->name, "NativePropertyHolder") == 0);
-    return (ResolvingId *)js::GetReservedSlot(holder, JSSLOT_RESOLVING).toPrivate();
-}
-
 JSObject *
-ResolvingId::getHolderObject(JSObject *wrapper)
+XrayTraits::getExpandoChain(HandleObject obj)
 {
-    return &js::GetProxyExtra(wrapper, 0).toObject();
+    return ObjectScope(obj)->GetExpandoChain(obj);
 }
 
-ResolvingId *
-ResolvingId::getResolvingIdFromWrapper(JSObject *wrapper)
+bool
+XrayTraits::setExpandoChain(JSContext *cx, HandleObject obj, HandleObject chain)
 {
-    return getResolvingId(getHolderObject(wrapper));
+    return ObjectScope(obj)->SetExpandoChain(cx, obj, chain);
 }
 
-class MOZ_STACK_CLASS ResolvingIdDummy
+// static
+XPCWrappedNative *
+XPCWrappedNativeXrayTraits::getWN(JSObject *wrapper)
 {
-public:
-    ResolvingIdDummy(JSContext *cx, HandleObject wrapper, HandleId id)
-    {
-    }
-};
-
-class XrayTraits
-{
-public:
-    XrayTraits() {}
-
-    static JSObject* getTargetObject(JSObject *wrapper) {
-        return js::UncheckedUnwrap(wrapper, /* stopAtOuter = */ false);
-    }
-
-    virtual bool resolveNativeProperty(JSContext *cx, HandleObject wrapper,
-                                       HandleObject holder, HandleId id,
-                                       MutableHandle<JSPropertyDescriptor> desc) = 0;
-    // NB: resolveOwnProperty may decide whether or not to cache what it finds
-    // on the holder. If the result is not cached, the lookup will happen afresh
-    // for each access, which is the right thing for things like dynamic NodeList
-    // properties.
-    virtual bool resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper,
-                                    HandleObject wrapper, HandleObject holder,
-                                    HandleId id, MutableHandle<JSPropertyDescriptor> desc);
-
-    bool delete_(JSContext *cx, HandleObject wrapper, HandleId id, bool *bp) {
-        *bp = true;
-        return true;
-    }
-
-    virtual void preserveWrapper(JSObject *target) = 0;
-
-    static bool set(JSContext *cx, HandleObject wrapper, HandleObject receiver, HandleId id,
-                    bool strict, MutableHandleValue vp);
-
-    JSObject* getExpandoObject(JSContext *cx, HandleObject target,
-                               HandleObject consumer);
-    JSObject* ensureExpandoObject(JSContext *cx, HandleObject wrapper,
-                                  HandleObject target);
-
-    JSObject* getHolder(JSObject *wrapper);
-    JSObject* ensureHolder(JSContext *cx, HandleObject wrapper);
-    virtual JSObject* createHolder(JSContext *cx, JSObject *wrapper) = 0;
-
-    JSObject* getExpandoChain(HandleObject obj) {
-      return ObjectScope(obj)->GetExpandoChain(obj);
-    }
-
-    bool setExpandoChain(JSContext *cx, HandleObject obj, HandleObject chain) {
-      return ObjectScope(obj)->SetExpandoChain(cx, obj, chain);
-    }
-    bool cloneExpandoChain(JSContext *cx, HandleObject dst, HandleObject src);
-
-private:
-    bool expandoObjectMatchesConsumer(JSContext *cx, HandleObject expandoObject,
-                                      nsIPrincipal *consumerOrigin,
-                                      HandleObject exclusiveGlobal);
-    JSObject* getExpandoObjectInternal(JSContext *cx, HandleObject target,
-                                       nsIPrincipal *origin,
-                                       JSObject *exclusiveGlobal);
-    JSObject* attachExpandoObject(JSContext *cx, HandleObject target,
-                                  nsIPrincipal *origin,
-                                  HandleObject exclusiveGlobal);
-
-    XrayTraits(XrayTraits &) MOZ_DELETE;
-    const XrayTraits& operator=(XrayTraits &) MOZ_DELETE;
-};
-
-class XPCWrappedNativeXrayTraits : public XrayTraits
-{
-public:
-    enum {
-        HasPrototype = 0
-    };
-
-    static const XrayType Type = XrayForWrappedNative;
-
-    virtual bool resolveNativeProperty(JSContext *cx, HandleObject wrapper,
-                                       HandleObject holder, HandleId id,
-                                       MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE;
-    virtual bool resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper, HandleObject wrapper,
-                                    HandleObject holder, HandleId id,
-                                    MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE;
-    bool defineProperty(JSContext *cx, HandleObject wrapper, HandleId id,
-                        MutableHandle<JSPropertyDescriptor> desc,
-                        Handle<JSPropertyDescriptor> existingDesc, bool *defined);
-    virtual bool enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags,
-                                AutoIdVector &props);
-    static bool call(JSContext *cx, HandleObject wrapper,
-                     const JS::CallArgs &args, const js::Wrapper& baseInstance);
-    static bool construct(JSContext *cx, HandleObject wrapper,
-                          const JS::CallArgs &args, const js::Wrapper& baseInstance);
-
-    static bool isResolving(JSContext *cx, JSObject *holder, jsid id);
-
-    static bool resolveDOMCollectionProperty(JSContext *cx, HandleObject wrapper,
-                                             HandleObject holder, HandleId id,
-                                             MutableHandle<JSPropertyDescriptor> desc);
-
-    static XPCWrappedNative* getWN(JSObject *wrapper) {
-        return XPCWrappedNative::Get(getTargetObject(wrapper));
-    }
-
-    virtual void preserveWrapper(JSObject *target) MOZ_OVERRIDE;
-
-    typedef ResolvingId ResolvingIdImpl;
-
-    virtual JSObject* createHolder(JSContext *cx, JSObject *wrapper) MOZ_OVERRIDE;
-
-    static const JSClass HolderClass;
-    static XPCWrappedNativeXrayTraits singleton;
-};
+    return XPCWrappedNative::Get(getTargetObject(wrapper));
+}
 
 const JSClass XPCWrappedNativeXrayTraits::HolderClass = {
     "NativePropertyHolder", JSCLASS_HAS_RESERVED_SLOTS(2),
-    JS_PropertyStub, JS_DeletePropertyStub, holder_get, holder_set,
-    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub,
+    JS_StrictPropertyStub, JS_EnumerateStub, JS_ResolveStub,
+    JS_ConvertStub
 };
 
-class DOMXrayTraits : public XrayTraits
-{
-public:
-    enum {
-        HasPrototype = 0
-    };
-
-    static const XrayType Type = XrayForDOMObject;
-
-    virtual bool resolveNativeProperty(JSContext *cx, HandleObject wrapper,
-                                       HandleObject holder, HandleId id,
-                                       MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE;
-    virtual bool resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper, HandleObject wrapper,
-                                    HandleObject holder, HandleId id,
-                                    MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE;
-    bool defineProperty(JSContext *cx, HandleObject wrapper, HandleId id,
-                        MutableHandle<JSPropertyDescriptor> desc,
-                        Handle<JSPropertyDescriptor> existingDesc, bool *defined);
-    static bool set(JSContext *cx, HandleObject wrapper, HandleObject receiver, HandleId id,
-                    bool strict, MutableHandleValue vp);
-    virtual bool enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags,
-                                AutoIdVector &props);
-    static bool call(JSContext *cx, HandleObject wrapper,
-                     const JS::CallArgs &args, const js::Wrapper& baseInstance);
-    static bool construct(JSContext *cx, HandleObject wrapper,
-                          const JS::CallArgs &args, const js::Wrapper& baseInstance);
-
-    static bool isResolving(JSContext *cx, JSObject *holder, jsid id)
-    {
-        return false;
-    }
-
-    typedef ResolvingIdDummy ResolvingIdImpl;
-
-    virtual void preserveWrapper(JSObject *target) MOZ_OVERRIDE;
-
-    virtual JSObject* createHolder(JSContext *cx, JSObject *wrapper) MOZ_OVERRIDE;
-
-    static DOMXrayTraits singleton;
-};
-
-class JSXrayTraits : public XrayTraits
-{
-public:
-    enum {
-        HasPrototype = 1
-    };
-    static const XrayType Type = XrayForJSObject;
-
-    virtual bool resolveNativeProperty(JSContext *cx, HandleObject wrapper,
-                                       HandleObject holder, HandleId id,
-                                       MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE
-    {
-        MOZ_ASSUME_UNREACHABLE("resolveNativeProperty hook should never be called with HasPrototype = 1");
-    }
-
-    virtual bool resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper, HandleObject wrapper,
-                                    HandleObject holder, HandleId id,
-                                    MutableHandle<JSPropertyDescriptor> desc) MOZ_OVERRIDE;
-
-    bool delete_(JSContext *cx, HandleObject wrapper, HandleId id, bool *bp);
-
-    bool defineProperty(JSContext *cx, HandleObject wrapper, HandleId id,
-                        MutableHandle<JSPropertyDescriptor> desc,
-                        Handle<JSPropertyDescriptor> existingDesc, bool *defined);
-
-    virtual bool enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags,
-                                AutoIdVector &props);
-
-    static bool call(JSContext *cx, HandleObject wrapper,
-                     const JS::CallArgs &args, const js::Wrapper& baseInstance)
-    {
-        JSXrayTraits &self = JSXrayTraits::singleton;
-        RootedObject holder(cx, self.ensureHolder(cx, wrapper));
-        if (self.getProtoKey(holder) == JSProto_Function)
-            return baseInstance.call(cx, wrapper, args);
-
-        RootedValue v(cx, ObjectValue(*wrapper));
-        js_ReportIsNotFunction(cx, v);
-        return false;
-    }
-
-    static bool construct(JSContext *cx, HandleObject wrapper,
-                          const JS::CallArgs &args, const js::Wrapper& baseInstance)
-    {
-        JSXrayTraits &self = JSXrayTraits::singleton;
-        RootedObject holder(cx, self.ensureHolder(cx, wrapper));
-        if (self.getProtoKey(holder) == JSProto_Function)
-            return baseInstance.construct(cx, wrapper, args);
-
-        RootedValue v(cx, ObjectValue(*wrapper));
-        js_ReportIsNotFunction(cx, v);
-        return false;
-    }
-
-    static bool isResolving(JSContext *cx, JSObject *holder, jsid id)
-    {
-        return false;
-    }
-
-    typedef ResolvingIdDummy ResolvingIdImpl;
-
-    bool getPrototypeOf(JSContext *cx, JS::HandleObject wrapper,
-                               JS::HandleObject target,
-                               JS::MutableHandleObject protop)
-    {
-        RootedObject holder(cx, ensureHolder(cx, wrapper));
-        JSProtoKey key = getProtoKey(holder);
-        if (isPrototype(holder)) {
-            JSProtoKey parentKey = js::ParentKeyForStandardClass(key);
-            if (parentKey == JSProto_Null) {
-                protop.set(nullptr);
-                return true;
-            }
-            key = parentKey;
-        }
-
-        {
-            JSAutoCompartment ac(cx, target);
-            if (!JS_GetClassPrototype(cx, key, protop))
-                return false;
-        }
-        return JS_WrapObject(cx, protop);
-    }
-
-    virtual void preserveWrapper(JSObject *target) MOZ_OVERRIDE {
-        // In the case of pure JS objects, there is no underlying object, and
-        // the target is the canonical representation of state. If it gets
-        // collected, then expandos and such should be collected too. So there's
-        // nothing to do here.
-    }
-
-    enum {
-        SLOT_PROTOKEY = 0,
-        SLOT_ISPROTOTYPE,
-        SLOT_CONSTRUCTOR_FOR,
-        SLOT_COUNT
-    };
-    virtual JSObject* createHolder(JSContext *cx, JSObject *wrapper) MOZ_OVERRIDE;
-
-    static JSProtoKey getProtoKey(JSObject *holder) {
-        int32_t key = js::GetReservedSlot(holder, SLOT_PROTOKEY).toInt32();
-        return static_cast<JSProtoKey>(key);
-    }
-
-    static bool isPrototype(JSObject *holder) {
-        return js::GetReservedSlot(holder, SLOT_ISPROTOTYPE).toBoolean();
-    }
-
-    static JSProtoKey constructorFor(JSObject *holder) {
-        int32_t key = js::GetReservedSlot(holder, SLOT_CONSTRUCTOR_FOR).toInt32();
-        return static_cast<JSProtoKey>(key);
-    }
-
-    static bool getOwnPropertyFromTargetIfSafe(JSContext *cx,
-                                               HandleObject target,
-                                               HandleObject wrapper,
-                                               HandleId id,
-                                               MutableHandle<JSPropertyDescriptor> desc);
-
-    static const JSClass HolderClass;
-    static JSXrayTraits singleton;
-};
 
 const JSClass JSXrayTraits::HolderClass = {
     "JSXrayHolder", JSCLASS_HAS_RESERVED_SLOTS(SLOT_COUNT),
@@ -454,20 +160,84 @@ const JSClass JSXrayTraits::HolderClass = {
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
-inline bool
+bool
+OpaqueXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper, HandleObject wrapper,
+                                     HandleObject holder, HandleId id,
+                                     MutableHandle<JSPropertyDescriptor> desc)
+{
+    bool ok = XrayTraits::resolveOwnProperty(cx, jsWrapper, wrapper, holder, id, desc);
+    if (!ok || desc.object())
+        return ok;
+
+    return SilentFailure(cx, id, "object is not safely Xrayable");
+}
+
+bool
 SilentFailure(JSContext *cx, HandleId id, const char *reason)
 {
-#ifdef DEBUG
-    nsAutoJSString name;
-    if (!name.init(cx, id))
+    CompartmentPrivate *priv = CompartmentPrivate::Get(CurrentGlobalOrNull(cx));
+    bool alreadyWarnedOnce = priv->warnedAboutXrays;
+    priv->warnedAboutXrays = true;
+
+    // The browser console warning is only emitted for the first violation,
+    // whereas the (debug-only) NS_WARNING is emitted for each violation.
+#ifndef DEBUG
+    if (alreadyWarnedOnce)
+        return true;
+#endif
+
+    nsAutoJSString propertyName;
+    if (!propertyName.init(cx, id))
         return false;
     AutoFilename filename;
     unsigned line = 0;
     DescribeScriptedCaller(cx, &filename, &line);
-    NS_WARNING(nsPrintfCString("Denied access to property |%s| on Xrayed Object: %s (@%s:%u)",
-                               NS_LossyConvertUTF16toASCII(name).get(), reason,
+
+    // Warn to the terminal for the logs.
+    NS_WARNING(nsPrintfCString("Silently denied access to property |%s|: %s (@%s:%u)",
+                               NS_LossyConvertUTF16toASCII(propertyName).get(), reason,
                                filename.get(), line).get());
-#endif
+
+    // If this isn't the first warning on this topic for this global, we've
+    // already bailed out in opt builds. Now that the NS_WARNING is done, bail
+    // out in debug builds as well.
+    if (alreadyWarnedOnce)
+        return true;
+
+    //
+    // Log a message to the console service.
+    //
+
+    // Grab the pieces.
+    nsCOMPtr<nsIConsoleService> consoleService = do_GetService(NS_CONSOLESERVICE_CONTRACTID);
+    NS_ENSURE_TRUE(consoleService, true);
+    nsCOMPtr<nsIScriptError> errorObject = do_CreateInstance(NS_SCRIPTERROR_CONTRACTID);
+    NS_ENSURE_TRUE(errorObject, true);
+
+    // Compute the current window id if any.
+    uint64_t windowId = 0;
+    nsGlobalWindow *win = WindowGlobalOrNull(CurrentGlobalOrNull(cx));
+    if (win)
+      windowId = win->WindowID();
+
+    nsPrintfCString errorMessage("XrayWrapper denied access to property %s (reason: %s). "
+                                 "See https://developer.mozilla.org/en-US/docs/Xray_vision "
+                                 "for more information. Note that only the first denied "
+                                 "property access from a given global object will be reported.",
+                                 NS_LossyConvertUTF16toASCII(propertyName).get(),
+                                 reason);
+    nsString filenameStr(NS_ConvertASCIItoUTF16(filename.get()));
+    nsresult rv = errorObject->InitWithWindowID(NS_ConvertASCIItoUTF16(errorMessage),
+                                                filenameStr,
+                                                EmptyString(),
+                                                line, 0,
+                                                nsIScriptError::warningFlag,
+                                                "XPConnect",
+                                                windowId);
+    NS_ENSURE_SUCCESS(rv, true);
+    rv = consoleService->LogMessage(errorObject);
+    NS_ENSURE_SUCCESS(rv, true);
+
     return true;
 }
 
@@ -493,8 +263,10 @@ bool JSXrayTraits::getOwnPropertyFromTargetIfSafe(JSContext *cx,
         return true;
 
     // Disallow accessor properties.
-    if (desc.hasGetterOrSetter())
-        return SilentFailure(cx, id, "Property has accessor");
+    if (desc.hasGetterOrSetter()) {
+        JSAutoCompartment ac(cx, wrapper);
+        return SilentFailure(cx, id, "property has accessor");
+    }
 
     // Apply extra scrutiny to objects.
     if (desc.value().isObject()) {
@@ -502,16 +274,23 @@ bool JSXrayTraits::getOwnPropertyFromTargetIfSafe(JSContext *cx,
         JSAutoCompartment ac(cx, propObj);
 
         // Disallow non-subsumed objects.
-        if (!AccessCheck::subsumes(target, propObj))
-            return SilentFailure(cx, id, "Value not same-origin with target");
+        if (!AccessCheck::subsumes(target, propObj)) {
+            JSAutoCompartment ac(cx, wrapper);
+            return SilentFailure(cx, id, "value not same-origin with target");
+        }
 
         // Disallow non-Xrayable objects.
-        if (GetXrayType(propObj) == NotXray)
-            return SilentFailure(cx, id, "Value not Xrayable");
+        XrayType xrayType = GetXrayType(propObj);
+        if (xrayType == NotXray || xrayType == XrayForOpaqueObject) {
+            JSAutoCompartment ac(cx, wrapper);
+            return SilentFailure(cx, id, "value not Xrayable");
+        }
 
         // Disallow callables.
-        if (JS_ObjectIsCallable(cx, propObj))
-            return SilentFailure(cx, id, "Value is callable");
+        if (JS_ObjectIsCallable(cx, propObj)) {
+            JSAutoCompartment ac(cx, wrapper);
+            return SilentFailure(cx, id, "value is callable");
+        }
     }
 
     // Disallow any property that shadows something on its (Xrayed)
@@ -525,7 +304,7 @@ bool JSXrayTraits::getOwnPropertyFromTargetIfSafe(JSContext *cx,
         return false;
     }
     if (foundOnProto)
-        return SilentFailure(cx, id, "Value shadows a property on the standard prototype");
+        return SilentFailure(cx, id, "value shadows a property on the standard prototype");
 
     // We made it! Assign over the descriptor, and don't forget to wrap.
     outDesc.assign(desc.get());
@@ -545,8 +324,8 @@ JSXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper,
         return ok;
 
     RootedObject target(cx, getTargetObject(wrapper));
+    JSProtoKey key = getProtoKey(holder);
     if (!isPrototype(holder)) {
-        JSProtoKey key = getProtoKey(holder);
         // For Object and Array instances, we expose some properties from the
         // underlying object, but only after filtering them carefully.
         //
@@ -597,6 +376,33 @@ JSXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper,
                     return true;
                 }
             }
+        } else if (IsErrorObjectKey(key)) {
+            // The useful state of error objects is (unfortunately) represented
+            // as own data properties per-spec. This means that we can't have a
+            // a clean representation of the data (free from tampering) without
+            // doubling the slots of Error objects, which isn't great. So we
+            // forward these properties to the underlying object and then just
+            // censor any values with the wrong type. This limits the ability
+            // of content to do anything all that confusing.
+            bool isErrorIntProperty =
+                id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_LINENUMBER) ||
+                id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_COLUMNNUMBER);
+            bool isErrorStringProperty =
+                id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_FILENAME) ||
+                id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_STACK) ||
+                id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_MESSAGE);
+            if (isErrorIntProperty || isErrorStringProperty) {
+                RootedObject waiver(cx, wrapper);
+                if (!WrapperFactory::WaiveXrayAndWrap(cx, &waiver))
+                    return false;
+                if (!JS_GetOwnPropertyDescriptorById(cx, waiver, id, desc))
+                    return false;
+                bool valueMatchesType = (isErrorIntProperty && desc.value().isInt32()) ||
+                                        (isErrorStringProperty && desc.value().isString());
+                if (desc.hasGetterOrSetter() || !valueMatchesType)
+                    FillPropertyDescriptor(desc, nullptr, 0, UndefinedValue());
+                return true;
+            }
         }
 
         // The rest of this function applies only to prototypes.
@@ -638,13 +444,22 @@ JSXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper,
         return true;
     }
 
+    // Handle the 'name' property for error prototypes.
+    if (IsErrorObjectKey(key) && id == GetRTIdByIndex(cx, XPCJSRuntime::IDX_NAME)) {
+        RootedId className(cx);
+        ProtoKeyToId(cx, key, &className);
+        FillPropertyDescriptor(desc, wrapper, 0, UndefinedValue());
+        return JS_IdToValue(cx, className, desc.value());
+    }
+
     // Bail out for dependent classes, since all the rest of the properties we'll
     // resolve here will live on the parent prototype.
     if (js::StandardClassIsDependent(protoKey))
         return true;
 
-    // Compute the property name we're looking for. We'll handle indexed
-    // properties when we start supporting arrays.
+    // Compute the property name we're looking for. Indexed array properties
+    // are handled above. We'll handle well-known symbols when we start
+    // supporting Symbol.iterator in bug 918828.
     if (!JSID_IS_STRING(id))
         return true;
     Rooted<JSFlatString*> str(cx, JSID_TO_FLAT_STRING(id));
@@ -821,8 +636,8 @@ JSXrayTraits::enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags
     if (!holder)
         return false;
 
+    JSProtoKey key = getProtoKey(holder);
     if (!isPrototype(holder)) {
-        JSProtoKey key = getProtoKey(holder);
         // For Object and Array instances, we expose some properties from the underlying
         // object, but only after filtering them carefully.
         if (key == JSProto_Object || key == JSProto_Array) {
@@ -864,6 +679,15 @@ JSXrayTraits::enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags
                 if (!props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_PROTOTYPE)))
                     return false;
             }
+        } else if (IsErrorObjectKey(key)) {
+            if (!props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_FILENAME)) ||
+                !props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_LINENUMBER)) ||
+                !props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_COLUMNNUMBER)) ||
+                !props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_STACK)) ||
+                !props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_MESSAGE)))
+            {
+                return false;
+            }
         }
 
         // The rest of this function applies only to prototypes.
@@ -877,6 +701,10 @@ JSXrayTraits::enumerateNames(JSContext *cx, HandleObject wrapper, unsigned flags
 
     // Add the 'constructor' property.
     if (!props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_CONSTRUCTOR)))
+        return false;
+
+    // For Error protoypes, add the 'name' property.
+    if (IsErrorObjectKey(key) && !props.append(GetRTIdByIndex(cx, XPCJSRuntime::IDX_NAME)))
         return false;
 
     // Bail out for dependent classes, since all the rest of the properties we'll
@@ -949,6 +777,7 @@ JSXrayTraits::createHolder(JSContext *cx, JSObject *wrapper)
 XPCWrappedNativeXrayTraits XPCWrappedNativeXrayTraits::singleton;
 DOMXrayTraits DOMXrayTraits::singleton;
 JSXrayTraits JSXrayTraits::singleton;
+OpaqueXrayTraits OpaqueXrayTraits::singleton;
 
 XrayTraits*
 GetXrayTraits(JSObject *obj)
@@ -960,6 +789,8 @@ GetXrayTraits(JSObject *obj)
         return &XPCWrappedNativeXrayTraits::singleton;
       case XrayForJSObject:
         return &JSXrayTraits::singleton;
+      case XrayForOpaqueObject:
+        return &OpaqueXrayTraits::singleton;
       default:
         return nullptr;
     }
@@ -1201,16 +1032,6 @@ XrayTraits::ensureHolder(JSContext *cx, HandleObject wrapper)
     return holder;
 }
 
-bool
-XPCWrappedNativeXrayTraits::isResolving(JSContext *cx, JSObject *holder,
-                                        jsid id)
-{
-    ResolvingId *cur = ResolvingId::getResolvingId(holder);
-    if (!cur)
-        return false;
-    return cur->isResolving(id);
-}
-
 namespace XrayUtils {
 
 bool
@@ -1219,135 +1040,6 @@ IsXPCWNHolderClass(const JSClass *clasp)
   return clasp == &XPCWrappedNativeXrayTraits::HolderClass;
 }
 
-}
-
-
-// Some DOM objects have shared properties that don't have an explicit
-// getter/setter and rely on the class getter/setter. We install a
-// class getter/setter on the holder object to trigger them.
-bool
-holder_get(JSContext *cx, HandleObject wrapper, HandleId id, MutableHandleValue vp)
-{
-    // JSClass::getProperty is wacky enough that it's hard to be sure someone
-    // can't inherit this getter by prototyping a random object to an
-    // XrayWrapper. Be safe.
-    NS_ENSURE_TRUE(WrapperFactory::IsXrayWrapper(wrapper), true);
-    JSObject *holder = GetHolder(wrapper);
-
-    XPCWrappedNative *wn = XPCWrappedNativeXrayTraits::getWN(wrapper);
-    if (NATIVE_HAS_FLAG(wn, WantGetProperty)) {
-        JSAutoCompartment ac(cx, holder);
-        bool retval = true;
-        nsresult rv = wn->GetScriptableCallback()->GetProperty(wn, cx, wrapper,
-                                                               id, vp.address(), &retval);
-        if (NS_FAILED(rv) || !retval) {
-            if (retval)
-                XPCThrower::Throw(rv, cx);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool
-holder_set(JSContext *cx, HandleObject wrapper, HandleId id, bool strict, MutableHandleValue vp)
-{
-    // JSClass::setProperty is wacky enough that it's hard to be sure someone
-    // can't inherit this getter by prototyping a random object to an
-    // XrayWrapper. Be safe.
-    NS_ENSURE_TRUE(WrapperFactory::IsXrayWrapper(wrapper), true);
-    JSObject *holder = GetHolder(wrapper);
-    if (XPCWrappedNativeXrayTraits::isResolving(cx, holder, id)) {
-        return true;
-    }
-
-    XPCWrappedNative *wn = XPCWrappedNativeXrayTraits::getWN(wrapper);
-    if (NATIVE_HAS_FLAG(wn, WantSetProperty)) {
-        JSAutoCompartment ac(cx, holder);
-        bool retval = true;
-        nsresult rv = wn->GetScriptableCallback()->SetProperty(wn, cx, wrapper,
-                                                               id, vp.address(), &retval);
-        if (NS_FAILED(rv) || !retval) {
-            if (retval)
-                XPCThrower::Throw(rv, cx);
-            return false;
-        }
-    }
-    return true;
-}
-
-class AutoSetWrapperNotShadowing
-{
-public:
-    AutoSetWrapperNotShadowing(ResolvingId *resolvingId MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        MOZ_ASSERT(resolvingId);
-        mResolvingId = resolvingId;
-        mResolvingId->mXrayShadowing = true;
-    }
-
-    ~AutoSetWrapperNotShadowing()
-    {
-        mResolvingId->mXrayShadowing = false;
-    }
-
-private:
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-    ResolvingId *mResolvingId;
-};
-
-// This is called after the resolveNativeProperty could not find any property
-// with the given id. At this point we can check for DOM specific collections
-// like document["formName"] because we already know that it is not shadowing
-// any native property.
-bool
-XPCWrappedNativeXrayTraits::resolveDOMCollectionProperty(JSContext *cx, HandleObject wrapper,
-                                                         HandleObject holder, HandleId id,
-                                                         MutableHandle<JSPropertyDescriptor> desc)
-{
-    // If we are not currently resolving this id and resolveNative is called
-    // we don't do anything. (see defineProperty in case of shadowing is forbidden).
-    ResolvingId *rid = ResolvingId::getResolvingId(holder);
-    if (!rid || rid->mId != id)
-        return true;
-
-    XPCWrappedNative *wn = getWN(wrapper);
-    if (!wn) {
-        // This should NEVER happen, but let's be extra careful here
-        // because of the reported crashes (Bug 832091).
-        XPCThrower::Throw(NS_ERROR_UNEXPECTED, cx);
-        return false;
-    }
-    if (!NATIVE_HAS_FLAG(wn, WantNewResolve))
-        return true;
-
-    ResolvingId *resolvingId = ResolvingId::getResolvingIdFromWrapper(wrapper);
-    if (!resolvingId) {
-        // This should NEVER happen, but let's be extra careful here
-        // becaue of the reported crashes (Bug 832091).
-        XPCThrower::Throw(NS_ERROR_UNEXPECTED, cx);
-        return false;
-    }
-
-    // Setting the current ResolvingId in non-shadowing mode. So for this id
-    // Xray won't ignore DOM specific collection properties temporarily.
-    AutoSetWrapperNotShadowing asw(resolvingId);
-
-    bool retval = true;
-    RootedObject pobj(cx);
-    nsresult rv = wn->GetScriptableInfo()->GetCallback()->NewResolve(wn, cx, wrapper, id,
-                                                                     pobj.address(), &retval);
-    if (NS_FAILED(rv)) {
-        if (retval)
-            XPCThrower::Throw(rv, cx);
-        return false;
-    }
-
-    if (pobj && !JS_GetPropertyDescriptorById(cx, holder, id, desc))
-        return false;
-
-    return true;
 }
 
 static nsGlobalWindow*
@@ -1398,15 +1090,10 @@ XPCWrappedNativeXrayTraits::resolveNativeProperty(JSContext *cx, HandleObject wr
     RootedObject target(cx, getTargetObject(wrapper));
     XPCCallContext ccx(JS_CALLER, cx, target, NullPtr(), id);
 
-    // There are no native numeric properties, so we can shortcut here. We will
-    // not find the property. However we want to support non shadowing dom
-    // specific collection properties like window.frames, so we still have to
-    // check for those.
-    if (!JSID_IS_STRING(id)) {
-        /* Not found */
-        return resolveDOMCollectionProperty(cx, wrapper, holder, id, desc);
-    }
-
+    // There are no native numeric (or symbol-keyed) properties, so we can
+    // shortcut here. We will not find the property.
+    if (!JSID_IS_STRING(id))
+        return true;
 
     // The |controllers| property is accessible as a [ChromeOnly] property on
     // Window.WebIDL, and [noscript] in XPIDL. Chrome needs to see this over
@@ -1460,14 +1147,11 @@ XPCWrappedNativeXrayTraits::resolveNativeProperty(JSContext *cx, HandleObject wr
     XPCWrappedNative *wn = getWN(wrapper);
 
     if (ccx.GetWrapper() != wn || !wn->IsValid()) {
-        // Something is wrong. If the wrapper is not even valid let's not risk
-        // calling resolveDOMCollectionProperty.
         return true;
-    } else if (!(iface = ccx.GetInterface()) ||
-               !(member = ccx.GetMember())) {
-        /* Not found */
-        return resolveDOMCollectionProperty(cx, wrapper, holder, id, desc);
     }
+
+    if (!(iface = ccx.GetInterface()) || !(member = ccx.GetMember()))
+        return true;
 
     desc.object().set(holder);
     desc.setAttributes(JSPROP_ENUMERATE);
@@ -1655,45 +1339,6 @@ XPCWrappedNativeXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsW
     // in the wrapper's compartment here, not the wrappee.
     MOZ_ASSERT(js::IsObjectInContextCompartment(wrapper, cx));
 
-    bool hasProp;
-    if (!JS_HasPropertyById(cx, holder, id, &hasProp)) {
-        return false;
-    }
-    if (!hasProp) {
-        XPCWrappedNative *wn = getWN(wrapper);
-
-        // Run the resolve hook of the wrapped native.
-        if (!NATIVE_HAS_FLAG(wn, WantNewResolve)) {
-            return true;
-        }
-
-        bool retval = true;
-        RootedObject pobj(cx);
-        nsIXPCScriptable *callback = wn->GetScriptableInfo()->GetCallback();
-        nsresult rv = callback->NewResolve(wn, cx, wrapper, id, pobj.address(),
-                                           &retval);
-        if (NS_FAILED(rv)) {
-            if (retval)
-                XPCThrower::Throw(rv, cx);
-            return false;
-        }
-
-        MOZ_ASSERT(!pobj || (JS_HasPropertyById(cx, holder, id, &hasProp) &&
-                             hasProp), "id got defined somewhere else?");
-    }
-
-    // resolveOwnProperty must return a non-empty |desc| if and only if an |own|
-    // property was found on the object. However, given how the NewResolve setup
-    // works, we can't run the resolve hook if the holder already has a property
-    // of the same name. So if there was a pre-existing property on the holder,
-    // we have to use it. But we have no way of knowing if it corresponded to an
-    // |own| or non-|own| property, since both get cached on the holder and the
-    // |own|-ness information is lost.
-    //
-    // So we just over-zealously call things |own| here. This can cause us to
-    // return non-|own| properties from Object.getOwnPropertyDescriptor if
-    // lookups are performed in a certain order, but we can probably live with
-    // that until XPCWN Xrays go away with the new DOM bindings.
     return JS_GetPropertyDescriptorById(cx, holder, id, desc);
 }
 
@@ -1704,18 +1349,6 @@ XPCWrappedNativeXrayTraits::defineProperty(JSContext *cx, HandleObject wrapper, 
 {
     *defined = false;
     RootedObject holder(cx, singleton.ensureHolder(cx, wrapper));
-    if (isResolving(cx, holder, id)) {
-        if (!desc.hasAttributes(JSPROP_GETTER | JSPROP_SETTER)) {
-            if (!desc.getter())
-                desc.setGetter(holder_get);
-            if (!desc.setter())
-                desc.setSetter(holder_set);
-        }
-
-        *defined = true;
-        return JS_DefinePropertyById(cx, holder, id, desc.value(), desc.attributes(),
-                                     desc.getter(), desc.setter());
-    }
 
     // Check for an indexed property on a Window.  If that's happening, do
     // nothing but claim we defined it so it won't get added as an expando.
@@ -1741,16 +1374,18 @@ XPCWrappedNativeXrayTraits::enumerateNames(JSContext *cx, HandleObject wrapper, 
             return false;
     }
 
-    // Go through the properties we got and enumerate all native ones.
+    // Go through the properties we found on the underlying object and see if
+    // they appear on the XrayWrapper. If it throws (which may happen if the
+    // wrapper is a SecurityWrapper), just clear the exception and move on.
+    MOZ_ASSERT(!JS_IsExceptionPending(cx));
     if (!props.reserve(wnProps.length()))
         return false;
     for (size_t n = 0; n < wnProps.length(); ++n) {
         RootedId id(cx, wnProps[n]);
         bool hasProp;
-        if (!JS_HasPropertyById(cx, wrapper, id, &hasProp))
-            return false;
-        if (hasProp)
+        if (JS_HasPropertyById(cx, wrapper, id, &hasProp) && hasProp)
             props.infallibleAppend(id);
+        JS_ClearPendingException(cx);
     }
     return true;
 }
@@ -1759,13 +1394,7 @@ JSObject *
 XPCWrappedNativeXrayTraits::createHolder(JSContext *cx, JSObject *wrapper)
 {
     RootedObject global(cx, JS_GetGlobalForObject(cx, wrapper));
-    JSObject *holder = JS_NewObjectWithGivenProto(cx, &HolderClass, JS::NullPtr(),
-                                                  global);
-    if (!holder)
-        return nullptr;
-
-    js::SetReservedSlot(holder, JSSLOT_RESOLVING, PrivateValue(nullptr));
-    return holder;
+    return JS_NewObjectWithGivenProto(cx, &HolderClass, JS::NullPtr(), global);
 }
 
 bool
@@ -1773,7 +1402,7 @@ XPCWrappedNativeXrayTraits::call(JSContext *cx, HandleObject wrapper,
                                  const JS::CallArgs &args,
                                  const js::Wrapper& baseInstance)
 {
-    // Run the resolve hook of the wrapped native.
+    // Run the call hook of the wrapped native.
     XPCWrappedNative *wn = getWN(wrapper);
     if (NATIVE_HAS_FLAG(wn, WantCall)) {
         XPCCallContext ccx(JS_CALLER, cx, wrapper, NullPtr(), JSID_VOIDHANDLE, args.length(),
@@ -1799,7 +1428,7 @@ XPCWrappedNativeXrayTraits::construct(JSContext *cx, HandleObject wrapper,
                                       const JS::CallArgs &args,
                                       const js::Wrapper& baseInstance)
 {
-    // Run the resolve hook of the wrapped native.
+    // Run the construct hook of the wrapped native.
     XPCWrappedNative *wn = getWN(wrapper);
     if (NATIVE_HAS_FLAG(wn, WantConstruct)) {
         XPCCallContext ccx(JS_CALLER, cx, wrapper, NullPtr(), JSID_VOIDHANDLE, args.length(),
@@ -1825,8 +1454,9 @@ DOMXrayTraits::resolveNativeProperty(JSContext *cx, HandleObject wrapper,
                                      HandleObject holder, HandleId id,
                                      MutableHandle<JSPropertyDescriptor> desc)
 {
+    bool unused;
     RootedObject obj(cx, getTargetObject(wrapper));
-    if (!XrayResolveNativeProperty(cx, wrapper, obj, id, desc))
+    if (!XrayResolveNativeProperty(cx, wrapper, obj, id, desc, unused))
         return false;
 
     MOZ_ASSERT(!desc.object() || desc.object() == wrapper, "What did we resolve this on?");
@@ -1867,13 +1497,26 @@ DOMXrayTraits::resolveOwnProperty(JSContext *cx, const Wrapper &jsWrapper, Handl
         }
     }
 
+    if (!JS_GetPropertyDescriptorById(cx, holder, id, desc))
+        return false;
+    if (desc.object()) {
+        desc.object().set(wrapper);
+        return true;
+    }
+
     RootedObject obj(cx, getTargetObject(wrapper));
-    if (!XrayResolveOwnProperty(cx, wrapper, obj, id, desc))
+    bool cacheOnHolder;
+    if (!XrayResolveOwnProperty(cx, wrapper, obj, id, desc, cacheOnHolder))
         return false;
 
     MOZ_ASSERT(!desc.object() || desc.object() == wrapper, "What did we resolve this on?");
 
-    return true;
+    if (!desc.object() || !cacheOnHolder)
+        return true;
+
+    return JS_DefinePropertyById(cx, holder, id, desc.value(), desc.attributes(),
+                                 desc.getter(), desc.setter()) &&
+           JS_GetPropertyDescriptorById(cx, holder, id, desc);
 }
 
 bool
@@ -1890,9 +1533,6 @@ DOMXrayTraits::defineProperty(JSContext *cx, HandleObject wrapper, HandleId id,
             return true;
         }
     }
-
-    if (!existingDesc.object())
-        return true;
 
     JS::Rooted<JSObject*> obj(cx, getTargetObject(wrapper));
     return XrayDefineProperty(cx, wrapper, obj, id, desc, defined);
@@ -1998,17 +1638,6 @@ DOMXrayTraits::createHolder(JSContext *cx, JSObject *wrapper)
     return JS_NewObjectWithGivenProto(cx, nullptr, JS::NullPtr(), global);
 }
 
-template <typename Base, typename Traits>
-XrayWrapper<Base, Traits>::XrayWrapper(unsigned flags)
-  : Base(flags | WrapperFactory::IS_XRAY_WRAPPER_FLAG, /* hasPrototype = */ Traits::HasPrototype)
-{
-}
-
-template <typename Base, typename Traits>
-XrayWrapper<Base, Traits>::~XrayWrapper()
-{
-}
-
 namespace XrayUtils {
 
 JSObject *
@@ -2020,19 +1649,6 @@ GetNativePropertiesObject(JSContext *cx, JSObject *wrapper)
     JSObject *holder = GetHolder(wrapper);
     MOZ_ASSERT(holder, "uninitialized wrapper being used?");
     return holder;
-}
-
-bool
-IsXrayResolving(JSContext *cx, HandleObject wrapper, HandleId id)
-{
-    if (!WrapperFactory::IsXrayWrapper(wrapper) ||
-        GetXrayType(wrapper) != XrayForWrappedNative)
-    {
-        return false;
-    }
-    JSObject *holder =
-      XPCWrappedNativeXrayTraits::singleton.ensureHolder(cx, wrapper);
-    return XPCWrappedNativeXrayTraits::isResolving(cx, holder, id);
 }
 
 bool
@@ -2048,9 +1664,6 @@ HasNativeProperty(JSContext *cx, HandleObject wrapper, HandleId id, bool *hasPro
     const Wrapper *handler = Wrapper::wrapperHandler(wrapper);
 
     // Try resolveOwnProperty.
-    Maybe<ResolvingId> resolvingId;
-    if (traits == &XPCWrappedNativeXrayTraits::singleton)
-        resolvingId.construct(cx, wrapper, id);
     if (!traits->resolveOwnProperty(cx, *handler, wrapper, holder, id, &desc))
         return false;
     if (desc.object()) {
@@ -2100,11 +1713,11 @@ XrayToString(JSContext *cx, unsigned argc, Value *vp)
 
     RootedObject obj(cx, XrayTraits::getTargetObject(wrapper));
 
+    if (UseDOMXray(obj))
+        return NativeToString(cx, wrapper, obj, args.rval());
+
     static const char start[] = "[object XrayWrapper ";
     static const char end[] = "]";
-    if (UseDOMXray(obj))
-        return NativeToString(cx, wrapper, obj, start, end, args.rval());
-
     nsAutoString result;
     result.AppendASCII(start);
 
@@ -2194,14 +1807,9 @@ XrayWrapper<Base, Traits>::getPropertyDescriptor(JSContext *cx, HandleObject wra
                                                  JS::MutableHandle<JSPropertyDescriptor> desc)
                                                  const
 {
-    assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET);
+    assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET |
+                                         BaseProxyHandler::GET_PROPERTY_DESCRIPTOR);
     RootedObject holder(cx, Traits::singleton.ensureHolder(cx, wrapper));
-    if (Traits::isResolving(cx, holder, id)) {
-        desc.object().set(nullptr);
-        return true;
-    }
-
-    typename Traits::ResolvingIdImpl resolving(cx, wrapper, id);
 
     if (!holder)
         return false;
@@ -2326,17 +1934,9 @@ XrayWrapper<Base, Traits>::getOwnPropertyDescriptor(JSContext *cx, HandleObject 
                                                     JS::MutableHandle<JSPropertyDescriptor> desc)
                                                     const
 {
-    assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET);
+    assertEnteredPolicy(cx, wrapper, id, BaseProxyHandler::GET | BaseProxyHandler::SET |
+                                         BaseProxyHandler::GET_PROPERTY_DESCRIPTOR);
     RootedObject holder(cx, Traits::singleton.ensureHolder(cx, wrapper));
-    if (Traits::isResolving(cx, holder, id)) {
-        desc.object().set(nullptr);
-        return true;
-    }
-
-    typename Traits::ResolvingIdImpl resolving(cx, wrapper, id);
-
-    // NB: Nothing we do here acts on the wrapped native itself, so we don't
-    // enter our policy.
 
     if (!Traits::singleton.resolveOwnProperty(cx, *this, wrapper, holder, id, desc))
         return false;
@@ -2501,10 +2101,6 @@ XrayWrapper<Base, Traits>::enumerate(JSContext *cx, HandleObject wrapper, unsign
                                      AutoIdVector &props) const
 {
     assertEnteredPolicy(cx, wrapper, JSID_VOID, BaseProxyHandler::ENUMERATE);
-    if (!AccessCheck::wrapperSubsumes(wrapper)) {
-        JS_ReportError(cx, "Not allowed to enumerate cross origin objects");
-        return false;
-    }
 
     // Enumerate expando properties first. Note that the expando object lives
     // in the target compartment.
@@ -2606,6 +2202,13 @@ XrayWrapper<Base, Traits>::construct(JSContext *cx, HandleObject wrapper, const 
 }
 
 template <typename Base, typename Traits>
+const char *
+XrayWrapper<Base, Traits>::className(JSContext *cx, HandleObject wrapper) const
+{
+    return Traits::className(cx, wrapper, Base::singleton);
+}
+
+template <typename Base, typename Traits>
 bool
 XrayWrapper<Base, Traits>::defaultValue(JSContext *cx, HandleObject wrapper,
                                         JSType hint, MutableHandleValue vp) const
@@ -2700,6 +2303,10 @@ template class SecurityXrayDOM;
 template<>
 const PermissiveXrayJS PermissiveXrayJS::singleton(0);
 template class PermissiveXrayJS;
+
+template<>
+const PermissiveXrayOpaque PermissiveXrayOpaque::singleton(0);
+template class PermissiveXrayOpaque;
 
 template<>
 const SCSecurityXrayXPCWN SCSecurityXrayXPCWN::singleton(0);

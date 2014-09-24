@@ -10,7 +10,7 @@
 #include "gfxPlatformFontList.h"
 
 using namespace mozilla;
-using mozilla::services::GetObserverService;
+using services::GetObserverService;
 
 void
 FontInfoData::Load()
@@ -29,9 +29,9 @@ FontInfoData::Load()
 class FontInfoLoadCompleteEvent : public nsRunnable {
     virtual ~FontInfoLoadCompleteEvent() {}
 
-    NS_DECL_THREADSAFE_ISUPPORTS
+    NS_DECL_ISUPPORTS_INHERITED
 
-    FontInfoLoadCompleteEvent(FontInfoData *aFontInfo) :
+    explicit FontInfoLoadCompleteEvent(FontInfoData *aFontInfo) :
         mFontInfo(aFontInfo)
     {}
 
@@ -43,9 +43,9 @@ class FontInfoLoadCompleteEvent : public nsRunnable {
 class AsyncFontInfoLoader : public nsRunnable {
     virtual ~AsyncFontInfoLoader() {}
 
-    NS_DECL_THREADSAFE_ISUPPORTS
+    NS_DECL_ISUPPORTS_INHERITED
 
-    AsyncFontInfoLoader(FontInfoData *aFontInfo) :
+    explicit AsyncFontInfoLoader(FontInfoData *aFontInfo) :
         mFontInfo(aFontInfo)
     {
         mCompleteEvent = new FontInfoLoadCompleteEvent(aFontInfo);
@@ -70,7 +70,7 @@ FontInfoLoadCompleteEvent::Run()
     return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS(FontInfoLoadCompleteEvent, nsIRunnable);
+NS_IMPL_ISUPPORTS_INHERITED0(FontInfoLoadCompleteEvent, nsRunnable);
 
 // runs on separate thread
 nsresult
@@ -86,7 +86,7 @@ AsyncFontInfoLoader::Run()
     return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS(AsyncFontInfoLoader, nsIRunnable);
+NS_IMPL_ISUPPORTS_INHERITED0(AsyncFontInfoLoader, nsRunnable);
 
 NS_IMPL_ISUPPORTS(gfxFontInfoLoader::ShutdownObserver, nsIObserver)
 
@@ -211,6 +211,7 @@ gfxFontInfoLoader::LoadFontInfoTimerFire()
 gfxFontInfoLoader::~gfxFontInfoLoader()
 {
     RemoveShutdownObserver();
+    MOZ_COUNT_DTOR(gfxFontInfoLoader);
 }
 
 void

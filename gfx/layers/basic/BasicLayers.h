@@ -41,17 +41,22 @@ class ReadbackProcessor;
  * context (with appropriate clipping and Push/PopGroups performed
  * between layers).
  */
-class BasicLayerManager :
+class BasicLayerManager MOZ_FINAL :
     public LayerManager
 {
 public:
+  enum BasicLayerManagerType {
+    BLM_WIDGET,
+    BLM_OFFSCREEN,
+    BLM_INACTIVE
+  };
   /**
    * Construct a BasicLayerManager which will have no default
    * target context. SetDefaultTarget or BeginTransactionWithTarget
    * must be called for any rendering to happen. ThebesLayers will not
    * be retained.
    */
-  BasicLayerManager();
+  explicit BasicLayerManager(BasicLayerManagerType aType);
   /**
    * Construct a BasicLayerManager which will have no default
    * target context. SetDefaultTarget or BeginTransactionWithTarget
@@ -67,9 +72,12 @@ public:
    * must ensure that the widget outlives the layer manager or call
    * ClearWidget before the widget dies.
    */
-  BasicLayerManager(nsIWidget* aWidget);
+  explicit BasicLayerManager(nsIWidget* aWidget);
+
+protected:
   virtual ~BasicLayerManager();
 
+public:
   /**
    * Set the default target context that will be used when BeginTransaction
    * is called. This can only be called outside a transaction.
@@ -89,6 +97,7 @@ public:
   void ClearRetainerWidget() { mWidget = nullptr; }
 
   virtual bool IsWidgetLayerManager() { return mWidget != nullptr; }
+  virtual bool IsInactiveLayerManager() { return mType == BLM_INACTIVE; }
 
   virtual void BeginTransaction();
   virtual void BeginTransactionWithTarget(gfxContext* aTarget);
@@ -96,7 +105,7 @@ public:
   virtual void EndTransaction(DrawThebesLayerCallback aCallback,
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT);
-  virtual bool AreComponentAlphaLayersEnabled() { return !IsWidgetLayerManager(); }
+  virtual bool ShouldAvoidComponentAlphaLayers() { return IsWidgetLayerManager(); }
 
   void AbortTransaction();
 
@@ -183,6 +192,7 @@ protected:
   nsRefPtr<ImageFactory> mFactory;
 
   BufferMode mDoubleBuffering;
+  BasicLayerManagerType mType;
   bool mUsingDefaultTarget;
   bool mTransactionIncomplete;
   bool mCompositorMightResample;

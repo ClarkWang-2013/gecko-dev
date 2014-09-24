@@ -122,7 +122,7 @@ public class Distribution {
     private final String prefsBranch;
 
     private volatile int state = STATE_UNKNOWN;
-    private File distributionDir = null;
+    private File distributionDir;
 
     private final Queue<Runnable> onDistributionReady = new ConcurrentLinkedQueue<Runnable>();
 
@@ -181,7 +181,7 @@ public class Distribution {
         }
     }
 
-    private static void init(final Distribution distribution) {
+    private static Distribution init(final Distribution distribution) {
         // Read/write preferences and files on the background thread.
         ThreadUtils.postToBackgroundThread(new Runnable() {
             @Override
@@ -192,6 +192,8 @@ public class Distribution {
                 }
             }
         });
+
+        return distribution;
     }
 
     /**
@@ -201,8 +203,8 @@ public class Distribution {
      * @param packagePath where to look for the distribution directory.
      */
     @RobocopTarget
-    public static void init(final Context context, final String packagePath, final String prefsPath) {
-        init(new Distribution(context, packagePath, prefsPath));
+    public static Distribution init(final Context context, final String packagePath, final String prefsPath) {
+        return init(new Distribution(context, packagePath, prefsPath));
     }
 
     /**
@@ -210,8 +212,8 @@ public class Distribution {
      * package path. Reuses the existing Distribution if one exists.
      */
     @RobocopTarget
-    public static void init(final Context context) {
-        Distribution.init(Distribution.getInstance(context));
+    public static Distribution init(final Context context) {
+        return init(Distribution.getInstance(context));
     }
 
     /**
@@ -369,7 +371,7 @@ public class Distribution {
                 checkSystemDistribution();
 
         this.state = distributionSet ? STATE_SET : STATE_NONE;
-        settings.edit().putInt(keyName, this.state).commit();
+        settings.edit().putInt(keyName, this.state).apply();
 
         runReadyQueue();
         return distributionSet;

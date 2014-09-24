@@ -8,29 +8,64 @@ let {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
+  "resource://gre/modules/BrowserUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ContentLinkHandler",
   "resource:///modules/ContentLinkHandler.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "LoginManagerContent",
   "resource://gre/modules/LoginManagerContent.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "InsecurePasswordUtils",
   "resource://gre/modules/InsecurePasswordUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PluginContent",
+  "resource:///modules/PluginContent.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "UITour",
   "resource:///modules/UITour.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "FormSubmitObserver",
+  "resource:///modules/FormSubmitObserver.jsm");
 
-// Creates a new nsIURI object.
-function makeURI(uri, originCharset, baseURI) {
-  return Services.io.newURI(uri, originCharset, baseURI);
-}
+// TabChildGlobal
+var global = this;
+
+// Load the form validation popup handler
+var formSubmitObserver = new FormSubmitObserver(content, this);
 
 addMessageListener("Browser:HideSessionRestoreButton", function (message) {
   // Hide session restore button on about:home
   let doc = content.document;
   let container;
   if (doc.documentURI.toLowerCase() == "about:home" &&
-      (container = doc.getElementById("sessionRestoreContainer"))){
+      (container = doc.getElementById("sessionRestoreContainer"))) {
     container.hidden = true;
+  }
+});
+
+addMessageListener("Browser:Reload", function(message) {
+  /* First, we'll try to use the session history object to reload so
+   * that framesets are handled properly. If we're in a special
+   * window (such as view-source) that has no session history, fall
+   * back on using the web navigation's reload method.
+   */
+
+  let webNav = docShell.QueryInterface(Ci.nsIWebNavigation);
+  try {
+    let sh = webNav.sessionHistory;
+    if (sh)
+      webNav = sh.QueryInterface(Ci.nsIWebNavigation);
+  } catch (e) {
+  }
+
+  let reloadFlags = message.data.flags;
+  let handlingUserInput;
+  try {
+    handlingUserInput = content.QueryInterface(Ci.nsIInterfaceRequestor)
+                               .getInterface(Ci.nsIDOMWindowUtils)
+                               .setHandlingUserInput(message.data.handlingUserInput);
+    webNav.reload(reloadFlags);
+  } catch (e) {
+  } finally {
+    handlingUserInput.destruct();
   }
 });
 
@@ -47,7 +82,23 @@ addEventListener("blur", function(event) {
 
 if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
   addEventListener("contextmenu", function (event) {
-    sendAsyncMessage("contextmenu", {}, { event: event });
+    let defaultPrevented = event.defaultPrevented;
+    if (!Services.prefs.getBoolPref("dom.event.contextmenu.enabled")) {
+      let plugin = null;
+      try {
+        plugin = event.target.QueryInterface(Ci.nsIObjectLoadingContent);
+      } catch (e) {}
+      if (plugin && plugin.displayedType == Ci.nsIObjectLoadingContent.TYPE_PLUGIN) {
+        // Don't open a context menu for plugins.
+        return;
+      }
+
+      defaultPrevented = false;
+    }
+
+    if (!defaultPrevented) {
+      sendSyncMessage("contextmenu", {}, { event: event });
+    }
   }, false);
 } else {
   addEventListener("mozUITour", function(event) {
@@ -62,30 +113,49 @@ if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
 
 let AboutHomeListener = {
   init: function(chromeGlobal) {
-    chromeGlobal.addEventListener('AboutHomeLoad', () => this.onPageLoad(), false, true);
+    chromeGlobal.addEventListener('AboutHomeLoad', this, false, true);
+  },
+
+  get isAboutHome() {
+    return content.document.documentURI.toLowerCase() == "about:home";
   },
 
   handleEvent: function(aEvent) {
+    if (!this.isAboutHome) {
+      return;
+    }
     switch (aEvent.type) {
       case "AboutHomeLoad":
         this.onPageLoad();
+        break;
+      case "AboutHomeSearchEvent":
+        this.onSearch(aEvent);
+        break;
+      case "click":
+        this.onClick(aEvent);
+        break;
+      case "pagehide":
+        this.onPageHide(aEvent);
         break;
     }
   },
 
   receiveMessage: function(aMessage) {
+    if (!this.isAboutHome) {
+      return;
+    }
     switch (aMessage.name) {
       case "AboutHome:Update":
         this.onUpdate(aMessage.data);
+        break;
+      case "AboutHome:FocusInput":
+        this.onFocusInput();
         break;
     }
   },
 
   onUpdate: function(aData) {
     let doc = content.document;
-    if (doc.documentURI.toLowerCase() != "about:home")
-      return;
-
     if (aData.showRestoreLastSession && !PrivateBrowsingUtils.isWindowPrivate(content))
       doc.getElementById("launcher").setAttribute("session", "true");
 
@@ -102,24 +172,15 @@ let AboutHomeListener = {
 
   onPageLoad: function() {
     let doc = content.document;
-    if (doc.documentURI.toLowerCase() != "about:home" ||
-        doc.documentElement.hasAttribute("hasBrowserHandlers")) {
+    if (doc.documentElement.hasAttribute("hasBrowserHandlers")) {
       return;
     }
 
     doc.documentElement.setAttribute("hasBrowserHandlers", "true");
-    let self = this;
-    addMessageListener("AboutHome:Update", self);
-    addEventListener("click", this.onClick, true);
-    addEventListener("pagehide", function onPageHide(event) {
-      if (event.target.defaultView.frameElement)
-        return;
-      removeMessageListener("AboutHome:Update", self);
-      removeEventListener("click", self.onClick, true);
-      removeEventListener("pagehide", onPageHide, true);
-      if (event.target.documentElement)
-        event.target.documentElement.removeAttribute("hasBrowserHandlers");
-    }, true);
+    addMessageListener("AboutHome:Update", this);
+    addMessageListener("AboutHome:FocusInput", this);
+    addEventListener("click", this, true);
+    addEventListener("pagehide", this, true);
 
     // XXX bug 738646 - when Marketplace is launched, remove this statement and
     // the hidden attribute set on the apps button in aboutHome.xhtml
@@ -128,10 +189,7 @@ let AboutHomeListener = {
       doc.getElementById("apps").removeAttribute("hidden");
 
     sendAsyncMessage("AboutHome:RequestUpdate");
-
-    doc.addEventListener("AboutHomeSearchEvent", function onSearch(e) {
-      sendAsyncMessage("AboutHome:Search", { searchData: e.detail });
-    }, true, true);
+    doc.addEventListener("AboutHomeSearchEvent", this, true, true);
   },
 
   onClick: function(aEvent) {
@@ -184,13 +242,64 @@ let AboutHomeListener = {
         break;
     }
   },
+
+  onPageHide: function(aEvent) {
+    if (aEvent.target.defaultView.frameElement) {
+      return;
+    }
+    removeMessageListener("AboutHome:Update", this);
+    removeEventListener("click", this, true);
+    removeEventListener("pagehide", this, true);
+    if (aEvent.target.documentElement) {
+      aEvent.target.documentElement.removeAttribute("hasBrowserHandlers");
+    }
+  },
+
+  onSearch: function(aEvent) {
+    sendAsyncMessage("AboutHome:Search", { searchData: aEvent.detail });
+  },
+
+  onFocusInput: function () {
+    let searchInput = content.document.getElementById("searchText");
+    if (searchInput) {
+      searchInput.focus();
+    }
+  },
 };
 AboutHomeListener.init(this);
+
+
+// An event listener for custom "WebChannelMessageToChrome" events on pages
+addEventListener("WebChannelMessageToChrome", function (e) {
+  // if target is window then we want the document principal, otherwise fallback to target itself.
+  let principal = e.target.nodePrincipal ? e.target.nodePrincipal : e.target.document.nodePrincipal;
+
+  if (e.detail) {
+    sendAsyncMessage("WebChannelMessageToChrome", e.detail, null, principal);
+  } else  {
+    Cu.reportError("WebChannel message failed. No message detail.");
+  }
+}, true, true);
+
+// Add message listener for "WebChannelMessageToContent" messages from chrome scripts
+addMessageListener("WebChannelMessageToContent", function (e) {
+  if (e.data) {
+    content.dispatchEvent(new content.CustomEvent("WebChannelMessageToContent", {
+      detail: Cu.cloneInto({
+        id: e.data.id,
+        message: e.data.message,
+      }, content),
+    }));
+  } else {
+    Cu.reportError("WebChannel message failed. No message data.");
+  }
+});
 
 
 let ContentSearchMediator = {
 
   whitelist: new Set([
+    "about:home",
     "about:newtab",
   ]),
 
@@ -219,7 +328,7 @@ let ContentSearchMediator = {
   },
 
   get _contentWhitelisted() {
-    return this.whitelist.has(content.document.documentURI.toLowerCase());
+    return this.whitelist.has(content.document.documentURI);
   },
 
   _sendMsg: function (type, data=null) {
@@ -230,18 +339,17 @@ let ContentSearchMediator = {
   },
 
   _fireEvent: function (type, data=null) {
-    content.dispatchEvent(new content.CustomEvent("ContentSearchService", {
+    let event = Cu.cloneInto({
       detail: {
         type: type,
         data: data,
       },
-    }));
+    }, content);
+    content.dispatchEvent(new content.CustomEvent("ContentSearchService",
+                                                  event));
   },
 };
 ContentSearchMediator.init(this);
-
-
-var global = this;
 
 // Lazily load the finder code
 addMessageListener("Finder:Initialize", function () {
@@ -264,6 +372,9 @@ let ClickEventHandler = {
 
     let originalTarget = event.originalTarget;
     let ownerDoc = originalTarget.ownerDocument;
+    if (!ownerDoc) {
+      return;
+    }
 
     // Handle click events from about pages
     if (ownerDoc.documentURI.startsWith("about:certerror")) {
@@ -307,10 +418,15 @@ let ClickEventHandler = {
   },
 
   onAboutCertError: function (targetElement, ownerDoc) {
+    let docshell = ownerDoc.defaultView.QueryInterface(Ci.nsIInterfaceRequestor)
+                                       .getInterface(Ci.nsIWebNavigation)
+                                       .QueryInterface(Ci.nsIDocShell);
     sendAsyncMessage("Browser:CertExceptionError", {
       location: ownerDoc.location.href,
       elementId: targetElement.getAttribute("id"),
-      isTopFrame: (ownerDoc.defaultView.parent === ownerDoc.defaultView)
+      isTopFrame: (ownerDoc.defaultView.parent === ownerDoc.defaultView),
+    }, {
+      failedChannel: docshell.failedChannel
     });
   },
 
@@ -372,12 +488,15 @@ let ClickEventHandler = {
     // In case of XLink, we don't return the node we got href from since
     // callers expect <a>-like elements.
     // Note: makeURI() will throw if aUri is not a valid URI.
-    return [href ? makeURI(href, null, baseURI).spec : null, null];
+    return [href ? BrowserUtils.makeURI(href, null, baseURI).spec : null, null];
   }
 };
 ClickEventHandler.init();
 
 ContentLinkHandler.init(this);
+
+// TODO: Load this lazily so the JSM is run only if a relevant event/message fires.
+let pluginContent = new PluginContent(global);
 
 addEventListener("DOMWebNotificationClicked", function(event) {
   sendAsyncMessage("DOMWebNotificationClicked", {});
@@ -394,7 +513,7 @@ let PageStyleHandler = {
   },
 
   get markupDocumentViewer() {
-    return docShell.contentViewer.QueryInterface(Ci.nsIMarkupDocumentViewer);
+    return docShell.contentViewer;
   },
 
   // Called synchronously via CPOW from the parent.
@@ -485,3 +604,91 @@ if (Services.prefs.getBoolPref("browser.translation.detectLanguage")) {
   Cu.import("resource:///modules/translation/TranslationContentHandler.jsm");
   trHandler = new TranslationContentHandler(global, docShell);
 }
+
+let DOMFullscreenHandler = {
+  _fullscreenDoc: null,
+
+  init: function() {
+    addMessageListener("DOMFullscreen:Approved", this);
+    addMessageListener("DOMFullscreen:CleanUp", this);
+    addEventListener("MozEnteredDomFullscreen", this);
+  },
+
+  receiveMessage: function(aMessage) {
+    switch(aMessage.name) {
+      case "DOMFullscreen:Approved": {
+        if (this._fullscreenDoc) {
+          Services.obs.notifyObservers(this._fullscreenDoc,
+                                       "fullscreen-approved",
+                                       "");
+        }
+        break;
+      }
+      case "DOMFullscreen:CleanUp": {
+        this._fullscreenDoc = null;
+        break;
+      }
+    }
+  },
+
+  handleEvent: function(aEvent) {
+    if (aEvent.type == "MozEnteredDomFullscreen") {
+      this._fullscreenDoc = aEvent.target;
+      sendAsyncMessage("MozEnteredDomFullscreen", {
+        origin: this._fullscreenDoc.nodePrincipal.origin,
+      });
+    }
+  }
+};
+DOMFullscreenHandler.init();
+
+function gKeywordURIFixup(fixupInfo) {
+  fixupInfo.QueryInterface(Ci.nsIURIFixupInfo);
+
+  // Ignore info from other docshells
+  let parent = fixupInfo.consumer.QueryInterface(Ci.nsIDocShellTreeItem).sameTypeRootTreeItem;
+  if (parent != docShell)
+    return;
+
+  let data = {};
+  for (let f of Object.keys(fixupInfo)) {
+    if (f == "consumer" || typeof fixupInfo[f] == "function")
+      continue;
+
+    if (fixupInfo[f] && fixupInfo[f] instanceof Ci.nsIURI) {
+      data[f] = fixupInfo[f].spec;
+    } else {
+      data[f] = fixupInfo[f];
+    }
+  }
+
+  sendAsyncMessage("Browser:URIFixup", data);
+}
+Services.obs.addObserver(gKeywordURIFixup, "keyword-uri-fixup", false);
+addEventListener("unload", () => {
+  Services.obs.removeObserver(gKeywordURIFixup, "keyword-uri-fixup");
+}, false);
+
+addMessageListener("Browser:AppTab", function(message) {
+  docShell.isAppTab = message.data.isAppTab;
+});
+
+let WebBrowserChrome = {
+  onBeforeLinkTraversal: function(originalTarget, linkURI, linkNode, isAppTab) {
+    return BrowserUtils.onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab);
+  },
+};
+
+if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
+  let tabchild = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsITabChild);
+  tabchild.webBrowserChrome = WebBrowserChrome;
+}
+
+addEventListener("pageshow", function(event) {
+  if (event.target == content.document) {
+    sendAsyncMessage("PageVisibility:Show", {
+      persisted: event.persisted,
+    });
+  }
+});

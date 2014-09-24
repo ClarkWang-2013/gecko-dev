@@ -9,10 +9,12 @@
       android:sharedUserId="@MOZ_ANDROID_SHARED_ID@"
 #endif
       >
-    <uses-sdk android:minSdkVersion="8"
+    <uses-sdk android:minSdkVersion="@MOZ_ANDROID_MIN_SDK_VERSION@"
+#ifdef MOZ_ANDROID_MAX_SDK_VERSION
+              android:maxSdkVersion="@MOZ_ANDROID_MAX_SDK_VERSION@"
+#endif
               android:targetSdkVersion="@ANDROID_TARGET_SDK@"/>
 
-#include ../services/manifests/AnnouncementsAndroidManifest_permissions.xml.in
 #include ../services/manifests/FxAccountAndroidManifest_permissions.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_permissions.xml.in
 #include ../services/manifests/SyncAndroidManifest_permissions.xml.in
@@ -38,7 +40,7 @@
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.PASSWORD_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
     <uses-permission android:name="@ANDROID_PACKAGE_NAME@.permissions.FORMHISTORY_PROVIDER"/>
-
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
 #ifdef MOZ_WEBSMS_BACKEND
     <!-- WebSMS -->
     <uses-permission android:name="android.permission.SEND_SMS"/>
@@ -106,7 +108,13 @@
                   android:configChanges="keyboard|keyboardHidden|mcc|mnc|orientation|screenSize|locale|layoutDirection"
                   android:windowSoftInputMode="stateUnspecified|adjustResize"
                   android:launchMode="singleTask"
+                  android:exported="true"
                   android:theme="@style/Gecko.App">
+          <!-- We export this activity so that it can be launched by explicit
+               intents, in particular homescreen shortcuts.  See Bug 1032217.
+               In future we would prefer to move all intent filters off the .App
+               alias and onto BrowserApp so that we can deprecate activities
+               that refer to pre-processed class names. -->
         </activity>
 
         <!-- Fennec is shipped as the Android package named
@@ -121,10 +129,14 @@
         <activity-alias android:name=".App"
                         android:label="@MOZ_APP_DISPLAYNAME@"
                         android:targetActivity="org.mozilla.gecko.BrowserApp">
-            <intent-filter>
+            <!-- android:priority ranges between -1000 and 1000.  We never want
+                 another activity to usurp the MAIN action, so we ratchet our
+                 priority up. -->
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.MULTIWINDOW_LAUNCHER"/>
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
             <meta-data android:name="com.sec.minimode.icon.portrait.normal"
@@ -135,6 +147,18 @@
 
             <intent-filter>
                 <action android:name="org.mozilla.gecko.ACTION_ALERT_CALLBACK" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="org.mozilla.gecko.GUEST_SESSION_INPROGRESS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Notification API V2 -->
+            <intent-filter>
+                <action android:name="@ANDROID_PACKAGE_NAME@.helperBroadcastAction" />
+                <data android:scheme="moz-notification" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
             <intent-filter>
@@ -215,6 +239,10 @@
             </intent-filter>
         </activity-alias>
 
+        <activity android:name="org.mozilla.gecko.StartPane"
+                  android:theme="@style/GeckoStartPane"
+                  android:excludeFromRecents="true"/>
+
         <activity android:name="org.mozilla.gecko.webapp.Dispatcher"
             android:noHistory="true" >
             <intent-filter>
@@ -248,10 +276,16 @@
                   android:taskAffinity="org.mozilla.gecko.WEBAPP"
                   android:process=":@ANDROID_PACKAGE_NAME@.Webapp"
                   android:excludeFromRecents="true"
+                  android:exported="true"
                   android:theme="@style/Gecko.App">
+          <!-- We export this activity so that it can be launched by explicit
+               intents, in particular old-style WebApp launching homescreen
+               shortcuts. Such shortcuts were made before the new "synthetic
+               APK" WebApps were deployed. See Bug 1032217. -->
         </activity>
 
-        <!-- Alias Webapp so we can launch it from the package namespace. -->
+        <!-- Alias Webapp so we can launch it from the package namespace. Prefer
+             to launch with the fully qualified name "org.mozilla.gecko.Webapp". -->
         <activity-alias android:name=".Webapp"
                         android:label="@string/webapp_generic_name"
                         android:targetActivity="org.mozilla.gecko.Webapp">
@@ -308,7 +342,6 @@
           </intent-filter>
         </activity>
 
-#include ../services/manifests/AnnouncementsAndroidManifest_activities.xml.in
 #include ../services/manifests/FxAccountAndroidManifest_activities.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_activities.xml.in
 #include ../services/manifests/SyncAndroidManifest_activities.xml.in
@@ -329,23 +362,10 @@
   </activity>
 #endif
 
-        <activity android:name="org.mozilla.gecko.VideoPlayer"
-                  android:configChanges="keyboard|keyboardHidden|mcc|mnc|orientation|locale|layoutDirection"
-                  android:theme="@android:style/Theme.NoTitleBar">
-            <intent-filter>
-                <action android:name="org.mozilla.gecko.PLAY_VIDEO" />
-            </intent-filter>
-        </activity>
-
         <activity android:name="org.mozilla.gecko.preferences.GeckoPreferences"
                   android:theme="@style/Gecko.Preferences"
                   android:configChanges="orientation|screenSize|locale|layoutDirection"
                   android:excludeFromRecents="true"/>
-
-        <activity android:name="org.mozilla.gecko.home.HomePanelPicker"
-                  android:theme="@style/Gecko.TitleDialog"
-                  android:label="@string/home_add_panel_title"
-                  android:excludeFromRecents="true" />
 
         <provider android:name="org.mozilla.gecko.db.BrowserProvider"
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.browser"
@@ -356,6 +376,25 @@
 
         </provider>
 
+#ifdef MOZ_ANDROID_SHARE_OVERLAY
+        <!-- Share overlay activity -->
+        <activity android:name="org.mozilla.gecko.overlays.ui.ShareDialog"
+                  android:label="@string/overlay_share_label"
+                  android:theme="@style/ShareOverlayActivity"
+                  android:configChanges="keyboard|keyboardHidden|mcc|mnc|locale|layoutDirection"
+                  android:windowSoftInputMode="stateAlwaysHidden|adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Service to handle requests from overlays. -->
+        <service android:name="org.mozilla.gecko.overlays.service.OverlayActionService" />
+#endif
         <!--
           Ensure that passwords provider runs in its own process. (Bug 718760.)
           Process name is per-application to avoid loading CPs from multiple
@@ -390,6 +429,10 @@
                   android:authorities="@ANDROID_PACKAGE_NAME@.db.readinglist"
                   android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
 
+        <provider android:name="org.mozilla.gecko.db.SearchHistoryProvider"
+                  android:authorities="@ANDROID_PACKAGE_NAME@.db.searchhistory"
+                  android:permission="@ANDROID_PACKAGE_NAME@.permissions.BROWSER_PROVIDER"/>
+
         <service
             android:exported="false"
             android:name="org.mozilla.gecko.updater.UpdateService"
@@ -402,12 +445,14 @@
         </service>
 
 
-#include ../services/manifests/AnnouncementsAndroidManifest_services.xml.in
 #include ../services/manifests/FxAccountAndroidManifest_services.xml.in
 #include ../services/manifests/HealthReportAndroidManifest_services.xml.in
 #include ../services/manifests/SyncAndroidManifest_services.xml.in
 #ifdef MOZ_ANDROID_SEARCH_ACTIVITY
 #include ../search/manifests/SearchAndroidManifest_services.xml.in
+#endif
+#ifdef MOZ_ANDROID_MLS_STUMBLER
+#include ../stumbler/manifests/StumblerManifest_services.xml.in
 #endif
 
     </application>

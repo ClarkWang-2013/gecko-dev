@@ -723,6 +723,9 @@ function todo_check_neq(left, right, stack) {
 }
 
 function do_report_result(passed, text, stack, todo) {
+  while (stack.filename.contains("head.js") && stack.caller) {
+    stack = stack.caller;
+  }
   if (passed) {
     if (todo) {
       do_throw_todo(text, stack);
@@ -1070,7 +1073,7 @@ function do_get_profile() {
           prop == "ProfLDS" || prop == "TmpD") {
         return file.clone();
       }
-      throw Components.results.NS_ERROR_FAILURE;
+      return null;
     },
     QueryInterface: function(iid) {
       if (iid.equals(Components.interfaces.nsIDirectoryServiceProvider) ||
@@ -1337,5 +1340,15 @@ try {
       .getService(Components.interfaces.nsIPrefBranch);
 
     prefs.setBoolPref("geo.provider.testing", true);
+  }
+} catch (e) { }
+
+// We need to avoid hitting the network with certain components.
+try {
+  if (runningInParent) {
+    let prefs = Components.classes["@mozilla.org/preferences-service;1"]
+      .getService(Components.interfaces.nsIPrefBranch);
+
+    prefs.setCharPref("media.gmp-manager.url.override", "http://%(server)s/dummy-gmp-manager.xml");
   }
 } catch (e) { }

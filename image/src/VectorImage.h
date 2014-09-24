@@ -26,8 +26,8 @@ class  SVGRootRenderingObserver;
 class  SVGLoadEventListener;
 class  SVGParseCompleteListener;
 
-class VectorImage : public ImageResource,
-                    public nsIStreamListener
+class VectorImage MOZ_FINAL : public ImageResource,
+                              public nsIStreamListener
 {
 public:
   NS_DECL_ISUPPORTS
@@ -42,8 +42,8 @@ public:
                 uint32_t aFlags);
   virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
 
-  virtual size_t HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
-  virtual size_t HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const;
+  virtual size_t HeapSizeOfSourceWithComputedFallback(MallocSizeOf aMallocSizeOf) const;
+  virtual size_t HeapSizeOfDecodedWithComputedFallback(MallocSizeOf aMallocSizeOf) const;
   virtual size_t NonHeapSizeOfDecoded() const;
   virtual size_t OutOfProcessSizeOfDecoded() const;
 
@@ -78,15 +78,15 @@ public:
   void OnSVGDocumentError();
 
 protected:
-  VectorImage(imgStatusTracker* aStatusTracker = nullptr,
-              ImageURL* aURI = nullptr);
+  explicit VectorImage(imgStatusTracker* aStatusTracker = nullptr,
+                       ImageURL* aURI = nullptr);
   virtual ~VectorImage();
 
   virtual nsresult StartAnimation();
   virtual nsresult StopAnimation();
   virtual bool     ShouldAnimate();
 
-  void CreateDrawableAndShow(const SVGDrawingParameters& aParams);
+  void CreateSurfaceAndShow(const SVGDrawingParameters& aParams);
   void Show(gfxDrawable* aDrawable, const SVGDrawingParameters& aParams);
 
 private:

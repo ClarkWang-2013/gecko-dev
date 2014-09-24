@@ -31,14 +31,6 @@ WaiveAccessors(JSContext *cx, JS::MutableHandle<JSPropertyDescriptor> desc)
     return true;
 }
 
-WaiveXrayWrapper::WaiveXrayWrapper(unsigned flags) : js::CrossCompartmentWrapper(flags)
-{
-}
-
-WaiveXrayWrapper::~WaiveXrayWrapper()
-{
-}
-
 bool
 WaiveXrayWrapper::getPropertyDescriptor(JSContext *cx, HandleObject wrapper,
                                         HandleId id, JS::MutableHandle<JSPropertyDescriptor> desc)
@@ -63,6 +55,14 @@ WaiveXrayWrapper::get(JSContext *cx, HandleObject wrapper,
                       MutableHandleValue vp) const
 {
     return CrossCompartmentWrapper::get(cx, wrapper, receiver, id, vp) &&
+           WrapperFactory::WaiveXrayAndWrap(cx, vp);
+}
+
+bool
+WaiveXrayWrapper::iterate(JSContext *cx, HandleObject proxy, unsigned flags,
+                         MutableHandleValue vp) const
+{
+    return CrossCompartmentWrapper::iterate(cx, proxy, flags, vp) &&
            WrapperFactory::WaiveXrayAndWrap(cx, vp);
 }
 

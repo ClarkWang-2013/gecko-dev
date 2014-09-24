@@ -20,8 +20,7 @@ class HTMLPictureElement MOZ_FINAL : public nsGenericHTMLElement,
                                     public nsIDOMHTMLPictureElement
 {
 public:
-  HTMLPictureElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~HTMLPictureElement();
+  explicit HTMLPictureElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -34,6 +33,8 @@ public:
   static bool IsPictureEnabled();
 
 protected:
+  virtual ~HTMLPictureElement();
+
   virtual JSObject* WrapNode(JSContext* aCx) MOZ_OVERRIDE;
 };
 

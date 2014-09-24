@@ -11,6 +11,7 @@
 #include "base/message_loop.h"
 #include "base/task.h"
 #include "mozilla/dom/Element.h"
+#include "nsIDocument.h"
 
 #define AEM_LOG(...)
 // #define AEM_LOG(...) printf_stderr("AEM: " __VA_ARGS__)
@@ -118,6 +119,11 @@ ActiveElementManager::HandleTouchEnd(bool aWasClick)
   CancelTask();
   if (aWasClick) {
     SetActive(mTarget);
+  } else {
+    // We might reach here if mCanBePan was false on touch-start and
+    // so we set the element active right away. Now it turns out the
+    // action was not a click so we need to reset the active element.
+    ResetActive();
   }
 
   ResetTouchBlockState();
@@ -142,7 +148,7 @@ ActiveElementManager::ResetActive()
   if (mTarget) {
     dom::Element* root = mTarget->OwnerDoc()->GetDocumentElement();
     if (root) {
-      AEM_LOG("Found root %p, making active\n", root.get());
+      AEM_LOG("Found root %p, making active\n", root);
       SetActive(root);
     }
   }

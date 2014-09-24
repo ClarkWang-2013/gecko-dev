@@ -190,6 +190,9 @@ destroying the MediaDecoder object.
 #include "MediaStreamGraph.h"
 #include "AbstractMediaDecoder.h"
 #include "necko-config.h"
+#ifdef MOZ_EME
+#include "mozilla/CDMProxy.h"
+#endif
 
 class nsIStreamListener;
 class nsIPrincipal;
@@ -440,7 +443,8 @@ public:
   public:
     DecodedStreamGraphListener(MediaStream* aStream, DecodedStreamData* aData);
     virtual void NotifyOutput(MediaStreamGraph* aGraph, GraphTime aCurrentTime) MOZ_OVERRIDE;
-    virtual void NotifyFinished(MediaStreamGraph* aGraph) MOZ_OVERRIDE;
+    virtual void NotifyEvent(MediaStreamGraph* aGraph,
+                             MediaStreamListener::MediaStreamGraphEvent event) MOZ_OVERRIDE;
 
     void DoNotifyFinished();
 
@@ -566,7 +570,7 @@ public:
 
   // Called as data arrives on the stream and is read into the cache.  Called
   // on the main thread only.
-  virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset);
+  virtual void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset) MOZ_OVERRIDE;
 
   // Called by MediaResource when the principal of the resource has
   // changed. Called on main thread only.
@@ -576,8 +580,6 @@ public:
   // from the resource. Called on the main by an event runner dispatched
   // by the MediaResource read functions.
   void NotifyBytesConsumed(int64_t aBytes, int64_t aOffset) MOZ_FINAL MOZ_OVERRIDE;
-
-  int64_t GetEndMediaTime() const MOZ_FINAL MOZ_OVERRIDE;
 
   // Return true if we are currently seeking in the media resource.
   // Call on the main thread only.
@@ -754,6 +756,9 @@ public:
                      MediaInfo* aInfo,
                      MetadataTags* aTags);
 
+  int64_t GetSeekTime() { return mRequestedSeekTarget.mTime; }
+  void ResetSeekTime() { mRequestedSeekTarget.Reset(); }
+
   /******
    * The following methods must only be called on the main
    * thread.
@@ -813,7 +818,7 @@ public:
   // Called when the backend has changed the current playback
   // position. It dispatches a timeupdate event and invalidates the frame.
   // This must be called on the main thread only.
-  void PlaybackPositionChanged();
+  virtual void PlaybackPositionChanged();
 
   // Calls mElement->UpdateReadyStateForData, telling it whether we have
   // data for the next frame and if we're buffering. Main thread only.
@@ -848,6 +853,14 @@ public:
   // The decoder monitor must be held.
   bool IsLogicallyPlaying();
 
+#ifdef MOZ_EME
+  // This takes the decoder monitor.
+  virtual nsresult SetCDMProxy(CDMProxy* aProxy) MOZ_OVERRIDE;
+
+  // Decoder monitor must be held.
+  virtual CDMProxy* GetCDMProxy() MOZ_OVERRIDE;
+#endif
+
 #ifdef MOZ_RAW
   static bool IsRawEnabled();
 #endif
@@ -872,10 +885,11 @@ public:
 
 #ifdef MOZ_OMX_DECODER
   static bool IsOmxEnabled();
+  static bool IsOmxAsyncEnabled();
 #endif
 
-#ifdef MOZ_MEDIA_PLUGINS
-  static bool IsMediaPluginsEnabled();
+#ifdef MOZ_ANDROID_OMX
+  static bool IsAndroidMediaEnabled();
 #endif
 
 #ifdef MOZ_WMF
@@ -1002,6 +1016,7 @@ public:
 
 protected:
   virtual ~MediaDecoder();
+  void SetStateMachineParameters();
 
   /******
    * The following members should be accessed with the decoder lock held.
@@ -1076,7 +1091,7 @@ private:
   class RestrictedAccessMonitor
   {
   public:
-    RestrictedAccessMonitor(const char* aName) :
+    explicit RestrictedAccessMonitor(const char* aName) :
       mReentrantMonitor(aName)
     {
       MOZ_COUNT_CTOR(RestrictedAccessMonitor);
@@ -1096,6 +1111,10 @@ private:
 
   // The |RestrictedAccessMonitor| member object.
   RestrictedAccessMonitor mReentrantMonitor;
+
+#ifdef MOZ_EME
+  nsRefPtr<CDMProxy> mProxy;
+#endif
 
 protected:
   // Data about MediaStreams that are being fed by this decoder.

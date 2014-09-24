@@ -187,7 +187,7 @@ nsresult nsCertTree::InitCompareHash()
 {
   ClearCompareHash();
   if (!PL_DHashTableInit(&mCompareCache, &gMapOps, nullptr,
-                         sizeof(CompareCacheHashEntryPtr), 128, fallible_t())) {
+                         sizeof(CompareCacheHashEntryPtr), fallible_t(), 64)) {
     mCompareCache.ops = nullptr;
     return NS_ERROR_OUT_OF_MEMORY;
   }
@@ -638,8 +638,7 @@ nsCertTree::GetCertsByType(uint32_t           aType,
 {
   nsNSSShutDownPreventionLock locker;
   nsCOMPtr<nsIInterfaceRequestor> cxt = new PipUIContext();
-  mozilla::pkix::ScopedCERTCertList certList(
-    PK11_ListCerts(PK11CertListUnique, cxt));
+  ScopedCERTCertList certList(PK11_ListCerts(PK11CertListUnique, cxt));
   return GetCertsByTypeFromCertList(certList.get(), aType, aCertCmpFn,
                                     aCertCmpFnArg);
 }
@@ -809,7 +808,7 @@ nsCertTree::DeleteEntryObject(uint32_t index)
             // although there are still overrides stored,
             // so, we keep the cert, but remove the trust
 
-            mozilla::pkix::ScopedCERTCertificate nsscert(cert->GetCert());
+            ScopedCERTCertificate nsscert(cert->GetCert());
 
             if (nsscert) {
               CERTCertTrust trust;

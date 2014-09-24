@@ -23,7 +23,7 @@ public:
     LeafAccessible(aContent, aDoc) {}
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
 };
 
 /**
@@ -39,8 +39,8 @@ public:
   }
 
   // Accessible
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
 
 protected:
   // Accessible
@@ -60,10 +60,11 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
   virtual Relation RelationByType(RelationType aType) MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLLabelAccessible() {}
   virtual ENameValueFlag NativeName(nsString& aName) MOZ_OVERRIDE;
 };
 
@@ -80,9 +81,12 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
   virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
   virtual Relation RelationByType(RelationType aType) MOZ_OVERRIDE;
+
+protected:
+  virtual ~HTMLOutputAccessible() {}
 };
 
 } // namespace a11y

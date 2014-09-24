@@ -84,7 +84,7 @@ function getDummyTempDatabase(name, extraOptions={}) {
 }
 
 function run_test() {
-  Cu.import("resource://testing-common/services-common/logging.js");
+  Cu.import("resource://testing-common/services/common/logging.js");
   initTestLogging("Trace");
 
   run_next_test();
@@ -711,7 +711,7 @@ add_task(function test_programmatic_binding_transaction_partial_rollback() {
 
       // Insert multiple rows. mozStorage will want to start a transaction.
       // One of the inserts will fail, so the transaction should be rolled back.
-      let result = yield c.execute(sql, bindings);
+      result = yield c.execute(sql, bindings);
       secondSucceeded = true;
     });
   } catch (ex) {

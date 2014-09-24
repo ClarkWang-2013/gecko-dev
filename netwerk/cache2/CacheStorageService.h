@@ -10,11 +10,13 @@
 
 #include "nsITimer.h"
 #include "nsClassHashtable.h"
+#include "nsDataHashtable.h"
 #include "nsString.h"
 #include "nsThreadUtils.h"
 #include "nsProxyRelease.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/TimeStamp.h"
 #include "nsTArray.h"
 
 class nsIURI;
@@ -57,14 +59,14 @@ protected:
     DONT_REPORT = 1 << 1
   };
 
-  CacheMemoryConsumer(uint32_t aFlags);
+  explicit CacheMemoryConsumer(uint32_t aFlags);
   ~CacheMemoryConsumer() { DoMemoryReport(0); }
   void DoMemoryReport(uint32_t aCurrentSize);
 };
 
-class CacheStorageService : public nsICacheStorageService
-                          , public nsIMemoryReporter
-                          , public nsITimerCallback
+class CacheStorageService MOZ_FINAL : public nsICacheStorageService
+                                    , public nsIMemoryReporter
+                                    , public nsITimerCallback
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -88,6 +90,10 @@ public:
   static bool IsOnManagementThread();
   already_AddRefed<nsIEventTarget> Thread() const;
   mozilla::Mutex& Lock() { return mLock; }
+
+  // Tracks entries that may be forced valid in a pruned hashtable.
+  nsDataHashtable<nsCStringHashKey, TimeStamp> mForcedValidEntries;
+  void ForcedValidEntriesPrune(TimeStamp &now);
 
   // Helper thread-safe interface to pass entry info, only difference from
   // nsICacheStorageVisitor is that instead of nsIURI only the uri spec is
@@ -143,6 +149,32 @@ private:
   void RecordMemoryOnlyEntry(CacheEntry* aEntry,
                              bool aOnlyInMemory,
                              bool aOverwrite);
+
+  /**
+   * Sets a cache entry valid (overrides the default loading behavior by loading
+   * directly from cache) for the given number of seconds
+   * See nsICacheEntry.idl for more details
+   */
+  void ForceEntryValidFor(nsACString &aCacheEntryKey,
+                          uint32_t aSecondsToTheFuture);
+
+private:
+  friend class CacheIndex;
+
+  /**
+   * Retrieves the status of the cache entry to see if it has been forced valid
+   * (so it will loaded directly from cache without further validation)
+   * CacheIndex uses this to prevent a cache entry from being prememptively
+   * thrown away when forced valid
+   * See nsICacheEntry.idl for more details
+   */
+  bool IsForcedValidEntry(nsACString &aCacheEntryKey);
+
+private:
+  // These are helpers for telemetry monitorying of the memory pools.
+  void TelemetryPrune(TimeStamp &now);
+  void TelemetryRecordEntryCreation(CacheEntry const* entry);
+  void TelemetryRecordEntryRemoval(CacheEntry const* entry);
 
 private:
   // Following methods are thread safe to call.
@@ -255,6 +287,7 @@ private:
   static CacheStorageService* sSelf;
 
   mozilla::Mutex mLock;
+  mozilla::Mutex mForcedValidEntriesLock;
 
   bool mShutdown;
 
@@ -268,7 +301,7 @@ private:
       MEMORY,
     } mType;
 
-    MemoryPool(EType aType);
+    explicit MemoryPool(EType aType);
     ~MemoryPool();
 
     nsTArray<nsRefPtr<CacheEntry> > mFrecencyArray;
@@ -323,6 +356,12 @@ private:
     nsRefPtr<CacheStorageService> mService;
     uint32_t mWhat;
   };
+
+  // Used just for telemetry purposes, accessed only on the management thread.
+  // Note: not included in the memory reporter, this is not expected to be huge
+  // and also would be complicated to report since reporting happens on the main
+  // thread but this table is manipulated on the management thread.
+  nsDataHashtable<nsCStringHashKey, mozilla::TimeStamp> mPurgeTimeStamps;
 };
 
 template<class T>

@@ -54,7 +54,7 @@ public:
 class ImageHandle
 {
 public:
-  ImageHandle(layers::Image* image) : mImage(image) {}
+  explicit ImageHandle(layers::Image* image) : mImage(image) {}
 
   const RefPtr<layers::Image>& GetImage() const { return mImage; }
 
@@ -192,21 +192,31 @@ public:
                                    unsigned int* packetsSent,
                                    uint64_t* bytesSent) = 0;
 
+  virtual uint64_t CodecPluginID() = 0;
+
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaSessionConduit)
 
 };
 
 // Abstract base classes for external encoder/decoder.
-class VideoEncoder
+class CodecPluginID
 {
 public:
-  virtual ~VideoEncoder() {};
+  virtual ~CodecPluginID() {}
+
+  virtual const uint64_t PluginID() = 0;
 };
 
-class VideoDecoder
+class VideoEncoder : public CodecPluginID
 {
 public:
-  virtual ~VideoDecoder() {};
+  virtual ~VideoEncoder() {}
+};
+
+class VideoDecoder : public CodecPluginID
+{
+public:
+  virtual ~VideoDecoder() {}
 };
 
 /**

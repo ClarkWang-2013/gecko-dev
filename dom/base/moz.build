@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-TEST_DIRS += ['test']
-
 XPIDL_SOURCES += [
     'nsIConsoleAPIStorage.idl',
     'nsIDOMDOMCursor.idl',
@@ -55,6 +53,7 @@ EXPORTS.mozilla.dom += [
     'DOMError.h',
     'DOMException.h',
     'DOMRequest.h',
+    'ImageEncoder.h',
     'MessageChannel.h',
     'MessagePort.h',
     'MessagePortList.h',
@@ -81,6 +80,7 @@ UNIFIED_SOURCES += [
     'DOMError.cpp',
     'DOMException.cpp',
     'DOMRequest.cpp',
+    'ImageEncoder.cpp',
     'MessageChannel.cpp',
     'MessagePortList.cpp',
     'Navigator.cpp',
@@ -152,15 +152,16 @@ LOCAL_INCLUDES += [
     '../bluetooth',
     '../events',
     '../media',
-    '../network/src',
-    '../src/geolocation',
-    '../src/storage',
+    '../network',
     '../time',
     '../workers',
     '../xbl',
     '/content/base/src',
     '/content/html/document/src',
     '/content/xul/document/src',
+    '/dom/geolocation',
+    '/dom/storage',
+    '/layout/base',
     '/layout/generic',
     '/layout/style',
     '/layout/xul',
@@ -175,7 +176,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
-FINAL_LIBRARY = 'gklayout'
+FINAL_LIBRARY = 'xul'
 
 LOCAL_INCLUDES += [
     '/js/xpconnect/src',
@@ -188,3 +189,9 @@ for var in ('MOZ_B2G_RIL', 'MOZ_B2G_FM'):
 
 if CONFIG['MOZ_BUILD_APP'] in ['browser', 'mobile/android', 'xulrunner']:
     DEFINES['HAVE_SIDEBAR'] = True
+
+MOCHITEST_MANIFESTS += ['test/mochitest.ini']
+MOCHITEST_CHROME_MANIFESTS += ['test/chrome.ini']
+
+if CONFIG['MOZ_X11']:
+    CXXFLAGS += CONFIG['TK_CFLAGS']

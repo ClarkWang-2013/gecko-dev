@@ -3,6 +3,7 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import re
 import select
 import signal
 import subprocess
@@ -11,7 +12,7 @@ import threading
 import time
 import traceback
 from Queue import Queue
-from datetime import datetime, timedelta
+from datetime import datetime
 __all__ = ['ProcessHandlerMixin', 'ProcessHandler']
 
 # Set the MOZPROCESS_DEBUG environment variable to 1 to see some debugging output
@@ -23,7 +24,7 @@ isPosix = os.name == "posix" # includes MacOS X
 
 if isWin:
     import ctypes, ctypes.wintypes, msvcrt
-    from ctypes import sizeof, addressof, c_ulong, byref, POINTER, WinError, c_longlong
+    from ctypes import sizeof, addressof, c_ulong, byref, WinError, c_longlong
     import winprocess
     from qijo import JobObjectAssociateCompletionPortInformation,\
     JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JobObjectExtendedLimitInformation,\
@@ -94,7 +95,7 @@ class ProcessHandlerMixin(object):
                                           preexec_fn, close_fds,
                                           shell, cwd, env,
                                           universal_newlines, startupinfo, creationflags)
-            except OSError, e:
+            except OSError:
                 print >> sys.stderr, args
                 raise
 
@@ -821,7 +822,8 @@ falling back to not using job objects for managing child processes"""
                 if timeout and count > timeout:
                     return None
 
-        return self.proc.wait()
+        self.returncode = self.proc.wait()
+        return self.returncode
 
     # TODO Remove this method when consumers have been fixed
     def waitForFinish(self, timeout=None):
@@ -837,10 +839,17 @@ falling back to not using job objects for managing child processes"""
         PeekNamedPipe = ctypes.windll.kernel32.PeekNamedPipe
         GetLastError = ctypes.windll.kernel32.GetLastError
 
+        @staticmethod
+        def _normalize_newline(line):
+            # adb on windows returns \r\r\n at the end of each line, to get around
+            # this normalize all newlines to have a unix-style '\n'
+            # http://src.chromium.org/viewvc/chrome/trunk/src/build/android/pylib/android_commands.py#l1944
+            return re.sub(r'\r+\n?$', '\n', line)
+
         def _readWithTimeout(self, f, timeout):
             if timeout is None:
                 # shortcut to allow callers to pass in "None" for no timeout.
-                return (f.readline(), False)
+                return (self._normalize_newline(f.readline()), False)
             x = msvcrt.get_osfhandle(f.fileno())
             l = ctypes.c_long()
             done = time.time() + timeout
@@ -854,7 +863,7 @@ falling back to not using job objects for managing child processes"""
                 if l.value > 0:
                     # we're assuming that the output is line-buffered,
                     # which is not unreasonable
-                    return (f.readline(), False)
+                    return (self._normalize_newline(f.readline()), False)
                 time.sleep(0.01)
             return ('', True)
 
@@ -915,7 +924,7 @@ class StreamOutput(object):
     def __call__(self, line):
         try:
             self.stream.write(line + '\n')
-        except UnicodeDecodeError as err:
+        except UnicodeDecodeError:
             # TODO: Workaround for bug #991866 to make sure we can display when
             # when normal UTF-8 display is failing
             self.stream.write(line.decode('iso8859-1') + '\n')
@@ -951,7 +960,7 @@ class ProcessHandler(ProcessHandlerMixin):
     appended to the given file.
     """
 
-    def __init__(self, cmd, logfile=None, stream=None,  storeOutput=True, **kwargs):
+    def __init__(self, cmd, logfile=None, stream=None, storeOutput=True, **kwargs):
         kwargs.setdefault('processOutputLine', [])
         if callable(kwargs['processOutputLine']):
             kwargs['processOutputLine'] = [kwargs['processOutputLine']]

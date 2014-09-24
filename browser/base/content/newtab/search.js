@@ -30,15 +30,29 @@ let gSearch = {
   },
 
   search: function (event) {
-    event.preventDefault();
-    let searchStr = this._nodes.text.value;
+    if (event) {
+      event.preventDefault();
+    }
+    let searchText = this._nodes.text;
+    let searchStr = searchText.value;
     if (this.currentEngineName && searchStr.length) {
-      this._send("Search", {
+
+      let eventData = {
         engineName: this.currentEngineName,
         searchString: searchStr,
         whence: "newtab",
-      });
+      }
+
+      if (searchText.hasAttribute("selection-index")) {
+        eventData.selection = {
+          index: searchText.getAttribute("selection-index"),
+          kind: searchText.getAttribute("selection-kind")
+        };
+      }
+
+      this._send("Search", eventData);
     }
+    this._suggestionController.addInputValueToFormHistory();
   },
 
   manageEngines: function () {
@@ -46,13 +60,11 @@ let gSearch = {
     this._send("ManageEngines");
   },
 
-  setWidth: function (width) {
-    this._nodes.form.style.width = width + "px";
-    this._nodes.form.style.maxWidth = width + "px";
-  },
-
   handleEvent: function (event) {
-    this["on" + event.detail.type](event.detail.data);
+    let methodName = "on" + event.detail.type;
+    if (this.hasOwnProperty(methodName)) {
+      this[methodName](event.detail.data);
+    }
   },
 
   onState: function (data) {
@@ -73,6 +85,10 @@ let gSearch = {
       this._nodes.panel.hidePopup();
       this._setCurrentEngine(engineName);
     }
+  },
+
+  onFocusInput: function () {
+    this._nodes.text.focus();
   },
 
   _nodeIDSuffixes: [
@@ -188,5 +204,14 @@ let gSearch = {
       this._nodes.logo.hidden = true;
       this._nodes.text.placeholder = engine.name;
     }
+
+    // Set up the suggestion controller.
+    if (!this._suggestionController) {
+      let parent = document.getElementById("newtab-scrollbox");
+      this._suggestionController =
+        new SearchSuggestionUIController(this._nodes.text, parent,
+                                         () => this.search());
+    }
+    this._suggestionController.engineName = engine.name;
   },
 };

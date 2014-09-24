@@ -2,10 +2,19 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 /*
- * Provides shared infrastructure for the automated tests.
+ * Initialization of Form Autofill tests shared between all frameworks.
+ *
+ * A copy of this file is installed in each of the framework subfolders, this
+ * means it becomes a sibling of the test files in the final layout.  This is
+ * determined by how manifest "support-files" installation works.
  */
 
 "use strict";
+
+// The requestAutocomplete framework is available at this point, you can add
+// mochitest-chrome specific test initialization here.  If you need shared
+// functions or initialization that are not specific to mochitest-chrome,
+// consider adding them to "head_common.js" in the parent folder instead.
 
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadPaths",
                                   "resource://gre/modules/DownloadPaths.jsm");
@@ -15,34 +24,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "FormAutofill",
                                   "resource://gre/modules/FormAutofill.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-                                  "resource://gre/modules/Promise.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-                                  "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
-
-let gTerminationTasks = [];
-let add_termination_task = taskFn => gTerminationTasks.push(taskFn);
-
-/**
- * None of the testing frameworks support asynchronous termination functions, so
- * this task must be registered later, after the other "add_task" calls.
- *
- * Even xpcshell doesn't support calling "add_task" in the "tail.js" file,
- * because it registers the task but does not wait for its termination,
- * potentially leading to intermittent failures in subsequent tests.
- */
-let terminationTaskFn = function* test_common_terminate() {
-  for (let taskFn of gTerminationTasks) {
-    try {
-      yield Task.spawn(taskFn);
-    } catch (ex) {
-      Output.print(ex);
-      Assert.ok(false);
-    }
-  }
-};
 
 /* --- Global helpers --- */
 
@@ -163,11 +146,97 @@ let TestUtils = {
 
     return path;
   }),
-}
+};
+
+/* --- Local helpers --- */
+
+let FormAutofillTest = {
+  /**
+   * Stores the response that the next call to the mock requestAutocomplete UI
+   * will return to the requester, or null to enable displaying the default UI.
+   */
+  requestAutocompleteResponse: null,
+
+  /**
+   * Displays the requestAutocomplete user interface using the specified data.
+   *
+   * @param aFormAutofillData
+   *        Serializable object containing the set of requested fields.
+   *
+   * @return {Promise}
+   * @resolves An object with the following properties:
+   *           {
+   *             uiWindow: Reference to the initialized window.
+   *             promiseResult: Promise resolved by the UI when it closes.
+   *           }
+   */
+  showUI: Task.async(function* (aFormAutofillData) {
+    Output.print("Opening UI with data: " + JSON.stringify(aFormAutofillData));
+
+    // Wait for the initialization event before opening the window.
+    let promiseUIWindow =
+        TestUtils.waitForNotification("formautofill-window-initialized");
+    let ui = yield FormAutofill.integration.createRequestAutocompleteUI(
+                                                         aFormAutofillData);
+    let promiseResult = ui.show();
+
+    // The window is the subject of the observer notification.
+    return {
+      uiWindow: (yield promiseUIWindow)[0],
+      promiseResult: promiseResult,
+    };
+  }),
+};
+
+let TestData = {
+  /**
+   * Autofill UI request for the e-mail field only.
+   */
+  get requestEmailOnly() {
+    return {
+      sections: [{
+        name: "",
+        addressSections: [{
+          addressType: "",
+          fields: [{
+            fieldName: "email",
+            contactType: "",
+          }],
+        }],
+      }],
+    };
+  },
+};
 
 /* --- Initialization and termination functions common to all tests --- */
 
-add_task(function* test_common_initialize() {
+add_task_in_parent_process(function* () {
+  // If required, we return a mock response instead of displaying the UI.
+  let mockIntegrationFn = base => ({
+    createRequestAutocompleteUI: Task.async(function* () {
+      // Call the base method to display the UI if override is not requested.
+      if (FormAutofillTest.requestAutocompleteResponse === null) {
+        return yield base.createRequestAutocompleteUI.apply(this, arguments);
+      }
+
+      // Return a mock RequestAutocompleteUI object.
+      return {
+        show: Task.async(function* () {
+          let response = FormAutofillTest.requestAutocompleteResponse;
+          Output.print("Mock UI response: " + JSON.stringify(response));
+          return response;
+        }),
+      };
+    }),
+  });
+
+  FormAutofill.registerIntegration(mockIntegrationFn);
+  add_termination_task(function* () {
+    FormAutofill.unregisterIntegration(mockIntegrationFn);
+  });
+});
+
+add_task_in_both_processes(function* () {
   // We must manually enable the feature while testing.
   Services.prefs.setBoolPref("dom.forms.requestAutocomplete", true);
   add_termination_task(function* () {

@@ -389,10 +389,10 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
         mov(ImmWord(uintptr_t(imm.value)), dest);
     }
     void mov(Register src, Address dest) {
-        MOZ_ASSUME_UNREACHABLE("NYI-IC");
+        MOZ_CRASH("NYI-IC");
     }
     void mov(Address src, Register dest) {
-        MOZ_ASSUME_UNREACHABLE("NYI-IC");
+        MOZ_CRASH("NYI-IC");
     }
 
     void call(const Register reg) {
@@ -767,6 +767,7 @@ protected:
 public:
     void moveValue(const Value &val, Register type, Register data);
 
+    CodeOffsetJump backedgeJump(RepatchLabel *label);
     CodeOffsetJump jumpWithPatch(RepatchLabel *label);
 
     template <typename T>
@@ -1007,7 +1008,7 @@ public:
             ma_addTestOverflow(dest, dest, src, overflow);
             break;
           default:
-            MOZ_ASSUME_UNREACHABLE("NYI");
+            MOZ_CRASH("NYI");
         }
     }
     template <typename T>
@@ -1022,7 +1023,7 @@ public:
             ma_b(dest, dest, overflow, cond);
             break;
           default:
-            MOZ_ASSUME_UNREACHABLE("NYI");
+            MOZ_CRASH("NYI");
         }
     }
 
@@ -1076,6 +1077,16 @@ public:
 
     void loadPrivate(const Address &address, Register dest);
 
+    void loadAlignedInt32x4(const Address &addr, FloatRegister dest) { MOZ_CRASH("NYI"); }
+    void storeAlignedInt32x4(FloatRegister src, Address addr) { MOZ_CRASH("NYI"); }
+    void loadUnalignedInt32x4(const Address &addr, FloatRegister dest) { MOZ_CRASH("NYI"); }
+    void storeUnalignedInt32x4(FloatRegister src, Address addr) { MOZ_CRASH("NYI"); }
+
+    void loadAlignedFloat32x4(const Address &addr, FloatRegister dest) { MOZ_CRASH("NYI"); }
+    void storeAlignedFloat32x4(FloatRegister src, Address addr) { MOZ_CRASH("NYI"); }
+    void loadUnalignedFloat32x4(const Address &addr, FloatRegister dest) { MOZ_CRASH("NYI"); }
+    void storeUnalignedFloat32x4(FloatRegister src, Address addr) { MOZ_CRASH("NYI"); }
+
     void loadDouble(const Address &addr, FloatRegister dest);
     void loadDouble(const BaseIndex &src, FloatRegister dest);
 
@@ -1101,6 +1112,12 @@ public:
     void store32(Register src, const BaseIndex &address);
     void store32(Imm32 src, const Address &address);
     void store32(Imm32 src, const BaseIndex &address);
+
+    // NOTE: This will use second scratch on MIPS. Only ARM needs the
+    // implementation without second scratch.
+    void store32_NoSecondScratch(Imm32 src, const Address &address) {
+        store32(src, address);
+    }
 
     void storePtr(ImmWord imm, const Address &address);
     void storePtr(ImmPtr imm, const Address &address);
@@ -1284,6 +1301,10 @@ public:
     void branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp,
                                     Label *label);
 #endif
+
+    void loadAsmJSActivation(Register dest) {
+        loadPtr(Address(GlobalReg, AsmJSActivationGlobalDataOffset - AsmJSGlobalRegBias), dest);
+    }
 };
 
 typedef MacroAssemblerMIPSCompat MacroAssemblerSpecific;

@@ -9,9 +9,6 @@
 
 #include "ClientLayerManager.h"
 #include "gfxPlatform.h"
-#if defined(MOZ_ENABLE_D3D10_LAYER)
-# include "LayerManagerD3D10.h"
-#endif
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
@@ -290,14 +287,14 @@ PuppetWidget::DispatchEvent(WidgetGUIEvent* event, nsEventStatus& aStatus)
     mIMEComposing = true;
   }
   uint32_t seqno = kLatestSeqno;
-  switch (event->eventStructType) {
-  case NS_COMPOSITION_EVENT:
+  switch (event->mClass) {
+  case eCompositionEventClass:
     seqno = event->AsCompositionEvent()->mSeqno;
     break;
-  case NS_TEXT_EVENT:
+  case eTextEventClass:
     seqno = event->AsTextEvent()->mSeqno;
     break;
-  case NS_SELECTION_EVENT:
+  case eSelectionEventClass:
     seqno = event->AsSelectionEvent()->mSeqno;
     break;
   default:
@@ -365,20 +362,7 @@ PuppetWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
                               bool* aAllowRetaining)
 {
   if (!mLayerManager) {
-    // The backend hint is a temporary placeholder until Azure, when
-    // all content-process layer managers will be BasicLayerManagers.
-#if defined(MOZ_ENABLE_D3D10_LAYER)
-    if (mozilla::layers::LayersBackend::LAYERS_D3D10 == aBackendHint) {
-      nsRefPtr<LayerManagerD3D10> m = new LayerManagerD3D10(this);
-      m->AsShadowForwarder()->SetShadowManager(aShadowManager);
-      if (m->Initialize()) {
-        mLayerManager = m;
-      }
-    }
-#endif
-    if (!mLayerManager) {
-      mLayerManager = new ClientLayerManager(this);
-    }
+    mLayerManager = new ClientLayerManager(this);
   }
   ShadowLayerForwarder* lf = mLayerManager->AsShadowForwarder();
   if (!lf->HasShadowManager() && aShadowManager) {
@@ -439,6 +423,8 @@ PuppetWidget::NotifyIME(const IMENotification& aIMENotification)
       return NotifyIMEOfTextChange(aIMENotification);
     case NOTIFY_IME_OF_COMPOSITION_UPDATE:
       return NotifyIMEOfUpdateComposition();
+    case NOTIFY_IME_OF_MOUSE_BUTTON_EVENT:
+      return NotifyIMEOfMouseButtonEvent(aIMENotification);
     default:
       return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -541,21 +527,29 @@ PuppetWidget::NotifyIMEOfUpdateComposition()
   NS_ENSURE_TRUE(textComposition, NS_ERROR_FAILURE);
 
   nsEventStatus status;
-  uint32_t offset = textComposition->OffsetOfTargetClause();
-  WidgetQueryContentEvent textRect(true, NS_QUERY_TEXT_RECT, this);
-  InitEvent(textRect, nullptr);
-  textRect.InitForQueryTextRect(offset, 1);
-  DispatchEvent(&textRect, status);
-  NS_ENSURE_TRUE(textRect.mSucceeded, NS_ERROR_FAILURE);
+  nsTArray<nsIntRect> textRectArray(textComposition->String().Length());
+  uint32_t startOffset = textComposition->NativeOffsetOfStartComposition();
+  uint32_t endOffset = textComposition->String().Length() + startOffset;
+  for (uint32_t i = startOffset; i < endOffset; i++) {
+    WidgetQueryContentEvent textRect(true, NS_QUERY_TEXT_RECT, this);
+    InitEvent(textRect, nullptr);
+    textRect.InitForQueryTextRect(i, 1);
+    DispatchEvent(&textRect, status);
+    NS_ENSURE_TRUE(textRect.mSucceeded, NS_ERROR_FAILURE);
 
+    textRectArray.AppendElement(textRect.mReply.mRect);
+  }
+
+  uint32_t targetCauseOffset = textComposition->OffsetOfTargetClause();
   WidgetQueryContentEvent caretRect(true, NS_QUERY_CARET_RECT, this);
   InitEvent(caretRect, nullptr);
-  caretRect.InitForQueryCaretRect(offset);
+  caretRect.InitForQueryCaretRect(targetCauseOffset);
   DispatchEvent(&caretRect, status);
   NS_ENSURE_TRUE(caretRect.mSucceeded, NS_ERROR_FAILURE);
 
-  mTabChild->SendNotifyIMESelectedCompositionRect(offset,
-                                                  textRect.mReply.mRect,
+  mTabChild->SendNotifyIMESelectedCompositionRect(startOffset,
+                                                  textRectArray,
+                                                  targetCauseOffset,
                                                   caretRect.mReply.mRect);
   return NS_OK;
 }
@@ -638,6 +632,23 @@ PuppetWidget::NotifyIMEOfSelectionChange(
       aIMENotification.mSelectionChangeData.mCausedByComposition);
   }
   return NS_OK;
+}
+
+nsresult
+PuppetWidget::NotifyIMEOfMouseButtonEvent(
+                const IMENotification& aIMENotification)
+{
+  if (!mTabChild) {
+    return NS_ERROR_FAILURE;
+  }
+
+  bool consumedByIME = false;
+  if (!mTabChild->SendNotifyIMEMouseButtonEvent(aIMENotification,
+                                                &consumedByIME)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return consumedByIME ? NS_SUCCESS_EVENT_CONSUMED : NS_OK;
 }
 
 NS_IMETHODIMP
@@ -804,6 +815,13 @@ ScreenConfig()
 }
 
 NS_IMETHODIMP
+PuppetScreen::GetId(uint32_t *outId)
+{
+  *outId = 1;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 PuppetScreen::GetRect(int32_t *outLeft,  int32_t *outTop,
                       int32_t *outWidth, int32_t *outHeight)
 {
@@ -821,7 +839,6 @@ PuppetScreen::GetAvailRect(int32_t *outLeft,  int32_t *outTop,
 {
   return GetRect(outLeft, outTop, outWidth, outHeight);
 }
-
 
 NS_IMETHODIMP
 PuppetScreen::GetPixelDepth(int32_t *aPixelDepth)
@@ -860,6 +877,14 @@ PuppetScreenManager::PuppetScreenManager()
 
 PuppetScreenManager::~PuppetScreenManager()
 {
+}
+
+NS_IMETHODIMP
+PuppetScreenManager::ScreenForId(uint32_t aId,
+                                 nsIScreen** outScreen)
+{
+  NS_IF_ADDREF(*outScreen = mOneScreen.get());
+  return NS_OK;
 }
 
 NS_IMETHODIMP

@@ -4,29 +4,27 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * SurfaceCache is a service for caching temporary surfaces in imagelib.
+ * SurfaceCache is a service for caching temporary surfaces and decoded image
+ * data in imagelib.
  */
 
 #ifndef MOZILLA_IMAGELIB_SURFACECACHE_H_
 #define MOZILLA_IMAGELIB_SURFACECACHE_H_
 
+#include "mozilla/Maybe.h"          // for Maybe
 #include "mozilla/HashFunctions.h"  // for HashGeneric and AddToHash
 #include "gfxPoint.h"               // for gfxSize
 #include "nsCOMPtr.h"               // for already_AddRefed
 #include "mozilla/gfx/Point.h"      // for mozilla::gfx::IntSize
+#include "mozilla/gfx/2D.h"         // for SourceSurface
 #include "SVGImageContext.h"        // for SVGImageContext
 
-class gfxDrawable;
-
 namespace mozilla {
-
-namespace gfx {
-class DrawTarget;
-} // namespace gfx
-
 namespace image {
 
+class DrawableFrameRef;
 class Image;
+class imgFrame;
 
 /*
  * ImageKey contains the information we need to look up all cached surfaces for
@@ -46,28 +44,19 @@ class SurfaceKey
   typedef gfx::IntSize IntSize;
 public:
   SurfaceKey(const IntSize& aSize,
-             const gfxSize aScale,
-             const SVGImageContext* aSVGContext,
+             const Maybe<SVGImageContext>& aSVGContext,
              const float aAnimationTime,
              const uint32_t aFlags)
     : mSize(aSize)
-    , mScale(aScale)
-    , mSVGContextIsValid(aSVGContext != nullptr)
+    , mSVGContext(aSVGContext)
     , mAnimationTime(aAnimationTime)
     , mFlags(aFlags)
-  {
-    // XXX(seth): Would love to use Maybe<T> here, but see bug 913586.
-    if (mSVGContextIsValid)
-      mSVGContext = *aSVGContext;
-  }
+  { }
 
   bool operator==(const SurfaceKey& aOther) const
   {
-    bool matchesSVGContext = aOther.mSVGContextIsValid == mSVGContextIsValid &&
-                             (!mSVGContextIsValid || aOther.mSVGContext == mSVGContext);
     return aOther.mSize == mSize &&
-           aOther.mScale == mScale &&
-           matchesSVGContext &&
+           aOther.mSVGContext == mSVGContext &&
            aOther.mAnimationTime == mAnimationTime &&
            aOther.mFlags == mFlags;
   }
@@ -75,8 +64,7 @@ public:
   uint32_t Hash() const
   {
     uint32_t hash = HashGeneric(mSize.width, mSize.height);
-    hash = AddToHash(hash, mScale.width, mScale.height);
-    hash = AddToHash(hash, mSVGContextIsValid, mSVGContext.Hash());
+    hash = AddToHash(hash, mSVGContext.map(HashSIC).valueOr(0));
     hash = AddToHash(hash, mAnimationTime, mFlags);
     return hash;
   }
@@ -84,18 +72,25 @@ public:
   IntSize Size() const { return mSize; }
 
 private:
-  IntSize         mSize;
-  gfxSize         mScale;
-  SVGImageContext mSVGContext;
-  bool            mSVGContextIsValid;
-  float           mAnimationTime;
-  uint32_t        mFlags;
+  static uint32_t HashSIC(const SVGImageContext& aSIC) {
+    return aSIC.Hash();
+  }
+
+  IntSize                mSize;
+  Maybe<SVGImageContext> mSVGContext;
+  float                  mAnimationTime;
+  uint32_t               mFlags;
 };
 
 /**
  * SurfaceCache is an imagelib-global service that allows caching of temporary
  * surfaces. Surfaces expire from the cache automatically if they go too long
  * without being accessed.
+ *
+ * SurfaceCache does not hold surfaces directly; instead, it holds imgFrame
+ * objects, which hold surfaces but also layer on additional features specific
+ * to imagelib's needs like animation, padding support, and transparent support
+ * for volatile buffers.
  *
  * SurfaceCache is not thread-safe; it should only be accessed from the main
  * thread.
@@ -115,29 +110,35 @@ struct SurfaceCache
   static void Shutdown();
 
   /*
-   * Look up a surface in the cache.
+   * Look up the imgFrame containing a surface in the cache and returns a
+   * drawable reference to that imgFrame.
+   *
+   * If the imgFrame was found in the cache, but had stored its surface in a
+   * volatile buffer which was discarded by the OS, then it is automatically
+   * removed from the cache and an empty DrawableFrameRef is returned.
    *
    * @param aImageKey    Key data identifying which image the surface belongs to.
    * @param aSurfaceKey  Key data which uniquely identifies the requested surface.
    *
-   * @return the requested surface, or nullptr if not found.
+   * @return a DrawableFrameRef to the imgFrame wrapping the requested surface,
+   *         or an empty DrawableFrameRef if not found.
    */
-  static already_AddRefed<gfxDrawable> Lookup(const ImageKey    aImageKey,
-                                              const SurfaceKey& aSurfaceKey);
+  static DrawableFrameRef Lookup(const ImageKey    aImageKey,
+                                 const SurfaceKey& aSurfaceKey);
 
   /*
    * Insert a surface into the cache. It is an error to call this function
    * without first calling Lookup to verify that the surface is not already in
    * the cache.
    *
-   * @param aTarget      The new surface (in the form of a DrawTarget) to insert
-   *                     into the cache.
+   * @param aTarget      The new surface (wrapped in an imgFrame) to insert into
+   *                     the cache.
    * @param aImageKey    Key data identifying which image the surface belongs to.
    * @param aSurfaceKey  Key data which uniquely identifies the requested surface.
    */
-  static void Insert(mozilla::gfx::DrawTarget* aTarget,
-                     const ImageKey            aImageKey,
-                     const SurfaceKey&         aSurfaceKey);
+  static void Insert(imgFrame*         aSurface,
+                     const ImageKey    aImageKey,
+                     const SurfaceKey& aSurfaceKey);
 
   /*
    * Checks if a surface of a given size could possibly be stored in the cache.

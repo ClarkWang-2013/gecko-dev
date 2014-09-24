@@ -13,7 +13,6 @@ const DEFAULT_MAX_CHILDREN = 100;
 const COLLAPSE_ATTRIBUTE_LENGTH = 120;
 const COLLAPSE_DATA_URL_REGEX = /^data.+base64/;
 const COLLAPSE_DATA_URL_LENGTH = 60;
-const CONTAINER_FLASHING_DURATION = 500;
 const NEW_SELECTION_HIGHLIGHTER_TIMER = 1000;
 
 const {UndoStack} = require("devtools/shared/undo");
@@ -88,6 +87,8 @@ function MarkupView(aInspector, aFrame, aControllerWindow) {
   this._boundOnDisplayChange = this._onDisplayChange.bind(this);
   this.walker.on("display-change", this._boundOnDisplayChange);
 
+  this._onMouseClick = this._onMouseClick.bind(this);
+
   this._boundOnNewSelection = this._onNewSelection.bind(this);
   this._inspector.selection.on("new-node-front", this._boundOnNewSelection);
   this._onNewSelection();
@@ -97,6 +98,8 @@ function MarkupView(aInspector, aFrame, aControllerWindow) {
 
   this._boundFocus = this._onFocus.bind(this);
   this._frame.addEventListener("focus", this._boundFocus, false);
+
+  this._makeTooltipPersistent = this._makeTooltipPersistent.bind(this);
 
   this._initPreview();
   this._initTooltips();
@@ -108,12 +111,18 @@ function MarkupView(aInspector, aFrame, aControllerWindow) {
 exports.MarkupView = MarkupView;
 
 MarkupView.prototype = {
+  /**
+   * How long does a node flash when it mutates (in ms).
+   */
+  CONTAINER_FLASHING_DURATION: 500,
+
   _selectedContainer: null,
 
   _initTooltips: function() {
     this.tooltip = new Tooltip(this._inspector.panelDoc);
-    this.tooltip.startTogglingOnHover(this._elt,
-      this._isImagePreviewTarget.bind(this));
+    this._makeTooltipPersistent(false);
+
+    this._elt.addEventListener("click", this._onMouseClick, false);
   },
 
   _initHighlighter: function() {
@@ -129,8 +138,17 @@ MarkupView.prototype = {
       this.showNode(nodeFront, true).then(() => {
         this._showContainerAsHovered(nodeFront);
       });
-    }
+    };
     this._inspector.toolbox.on("picker-node-hovered", this._onToolboxPickerHover);
+  },
+
+  _makeTooltipPersistent: function(state) {
+    if (state) {
+      this.tooltip.stopTogglingOnHover();
+    } else {
+      this.tooltip.startTogglingOnHover(this._elt,
+        this._isImagePreviewTarget.bind(this));
+    }
   },
 
   _onMouseMove: function(event) {
@@ -153,6 +171,26 @@ MarkupView.prototype = {
       }
     }
     this._showContainerAsHovered(container.node);
+  },
+
+  _onMouseClick: function(event) {
+    // From the target passed here, let's find the parent MarkupContainer
+    // and ask it if the tooltip should be shown
+    let parentNode = event.target;
+    let container;
+    while (parentNode !== this.doc.body) {
+      if (parentNode.container) {
+        container = parentNode.container;
+        break;
+      }
+      parentNode = parentNode.parentNode;
+    }
+
+    if (container) {
+      // With the newly found container, delegate the tooltip content creation
+      // and decision to show or not the tooltip
+      container._buildEventTooltipContent(event.target, this.tooltip);
+    }
   },
 
   _hoveredNode: null,
@@ -819,29 +857,33 @@ MarkupView.prototype = {
   },
 
   /**
-   * Retrieve the index of a child within its parent's children collection.
-   * @param aNode The NodeFront to find the index of.
+   * Replace the outerHTML of any node displayed in the inspector with
+   * some other HTML code
+   * @param aNode node which outerHTML will be replaced.
    * @param newValue The new outerHTML to set on the node.
-   * @param oldValue The old outerHTML that will be reverted to find the index of.
-   * @returns A promise that will be resolved with the integer index.
-   *          If the child cannot be found, returns -1
+   * @param oldValue The old outerHTML that will be used if the user undos the update.
+   * @returns A promise that will resolve when the outer HTML has been updated.
    */
   updateNodeOuterHTML: function(aNode, newValue, oldValue) {
-    let container = this.getContainer(aNode);
+    let container = this._containers.get(aNode);
     if (!container) {
-      return;
+      return promise.reject();
     }
+
+    let def = promise.defer();
 
     this.getNodeChildIndex(aNode).then((i) => {
       this._outerHTMLChildIndex = i;
       this._outerHTMLNode = aNode;
 
       container.undo.do(() => {
-        this.walker.setOuterHTML(aNode, newValue);
+        this.walker.setOuterHTML(aNode, newValue).then(def.resolve, def.reject);
       }, () => {
-        this.walker.setOuterHTML(aNode, oldValue);
+        this.walker.setOuterHTML(aNode, oldValue).then(def.resolve, def.reject);
       });
     });
+
+    return def.promise;
   },
 
   /**
@@ -1116,6 +1158,8 @@ MarkupView.prototype = {
     // in case the browser is closed and will trigger a noSuchActor message.
     this._destroyer = this._hideBoxModel();
 
+    this._elt.removeEventListener("click", this._onMouseClick, false);
+
     this._hoveredNode = null;
     this._inspector.toolbox.off("picker-node-hovered", this._onToolboxPickerHover);
 
@@ -1238,7 +1282,7 @@ MarkupView.prototype = {
     let bgSize = ~~width + "px " + ~~height + "px";
     this._preview.setAttribute("style", "background-size:" + bgSize);
 
-    let height = ~~(win.innerHeight * ratio) + "px";
+    height = ~~(win.innerHeight * ratio) + "px";
     let top = ~~(win.scrollY * ratio) + "px";
     this._viewbox.setAttribute("style", "height:" + height +
       ";transform: translateY(" + top + ")");
@@ -1415,6 +1459,27 @@ MarkupContainer.prototype = {
     });
   },
 
+  _buildEventTooltipContent: function(target, tooltip) {
+    if (target.hasAttribute("data-event")) {
+      tooltip.hide(target);
+
+      this.node.getEventListenerInfo().then(listenerInfo => {
+        tooltip.setEventContent({
+          eventListenerInfos: listenerInfo,
+          toolbox: this._inspector.toolbox
+        });
+
+        this.markup._makeTooltipPersistent(true);
+        tooltip.once("hidden", () => {
+          this.markup._makeTooltipPersistent(false);
+        });
+
+        tooltip.show(target);
+      });
+      return true;
+    }
+  },
+
   /**
    * True if the current node has children.  The MarkupView
    * will set this attribute for the MarkupContainer.
@@ -1521,7 +1586,7 @@ MarkupContainer.prototype = {
       }
       this._flashMutationTimer = contentWin.setTimeout(() => {
         this.flashed = false;
-      }, CONTAINER_FLASHING_DURATION);
+      }, this.markup.CONTAINER_FLASHING_DURATION);
     }
   },
 
@@ -1860,6 +1925,7 @@ function ElementEditor(aContainer, aNode) {
   let tagName = this.node.nodeName.toLowerCase();
   this.tag.textContent = tagName;
   this.closeTag.textContent = tagName;
+  this.eventNode.style.display = this.node.hasEventListeners ? "inline-block" : "none";
 
   this.update();
 }
@@ -2121,6 +2187,7 @@ function truncateString(str, maxLength) {
          "…" +
          str.substring(str.length - Math.floor(maxLength / 2));
 }
+
 /**
  * Parse attribute names and values from a string.
  *
@@ -2134,22 +2201,21 @@ function truncateString(str, maxLength) {
 function parseAttributeValues(attr, doc) {
   attr = attr.trim();
 
-  // Handle bad user inputs by appending a " or ' if it fails to parse without them.
-  let el = DOMParser.parseFromString("<div " + attr + "></div>", "text/html").body.childNodes[0] ||
-           DOMParser.parseFromString("<div " + attr + "\"></div>", "text/html").body.childNodes[0] ||
-           DOMParser.parseFromString("<div " + attr + "'></div>", "text/html").body.childNodes[0];
-  let div = doc.createElement("div");
+  // Handle bad user inputs by appending a " or ' if it fails to parse without
+  // them. Also note that a SVG tag is used to make sure the HTML parser
+  // preserves mixed-case attributes
+  let el = DOMParser.parseFromString("<svg " + attr + "></svg>", "text/html").body.childNodes[0] ||
+           DOMParser.parseFromString("<svg " + attr + "\"></svg>", "text/html").body.childNodes[0] ||
+           DOMParser.parseFromString("<svg " + attr + "'></svg>", "text/html").body.childNodes[0];
 
+  let div = doc.createElement("div");
   let attributes = [];
-  for (let attribute of el.attributes) {
+  for (let {name, value} of el.attributes) {
     // Try to set on an element in the document, throws exception on bad input.
     // Prevents InvalidCharacterError - "String contains an invalid character".
     try {
-      div.setAttribute(attribute.name, attribute.value);
-      attributes.push({
-        name: attribute.name,
-        value: attribute.value
-      });
+      div.setAttribute(name, value);
+      attributes.push({ name, value });
     }
     catch(e) { }
   }

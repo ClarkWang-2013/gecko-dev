@@ -8,6 +8,7 @@
 #define js_RootingAPI_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/NullPtr.h"
@@ -103,8 +104,6 @@
 
 namespace js {
 
-class ScriptSourceObject;
-
 template <typename T>
 struct GCMethods {};
 
@@ -167,6 +166,23 @@ struct JS_PUBLIC_API(NullPtr)
 {
     static void * const constNullValue;
 };
+
+#ifdef JSGC_GENERATIONAL
+JS_FRIEND_API(void) HeapCellPostBarrier(js::gc::Cell **cellp);
+JS_FRIEND_API(void) HeapCellRelocate(js::gc::Cell **cellp);
+#endif
+
+#ifdef JS_DEBUG
+/*
+ * For generational GC, assert that an object is in the tenured generation as
+ * opposed to being in the nursery.
+ */
+extern JS_FRIEND_API(void)
+AssertGCThingMustBeTenured(JSObject* obj);
+#else
+inline void
+AssertGCThingMustBeTenured(JSObject *obj) {}
+#endif
 
 /*
  * The Heap<T> class is a heap-stored reference to a JS GC thing. All members of
@@ -286,18 +302,6 @@ class Heap : public js::HeapBase<T>
 
     T ptr;
 };
-
-#ifdef JS_DEBUG
-/*
- * For generational GC, assert that an object is in the tenured generation as
- * opposed to being in the nursery.
- */
-extern JS_FRIEND_API(void)
-AssertGCThingMustBeTenured(JSObject* obj);
-#else
-inline void
-AssertGCThingMustBeTenured(JSObject *obj) {}
-#endif
 
 /*
  * The TenuredHeap<T> class is similar to the Heap<T> class above in that it
@@ -562,11 +566,6 @@ class MOZ_STACK_CLASS MutableHandle : public js::MutableHandleBase<T>
     void operator=(MutableHandle other) MOZ_DELETE;
 };
 
-#ifdef JSGC_GENERATIONAL
-JS_FRIEND_API(void) HeapCellPostBarrier(js::gc::Cell **cellp);
-JS_FRIEND_API(void) HeapCellRelocate(js::gc::Cell **cellp);
-#endif
-
 } /* namespace JS */
 
 namespace js {
@@ -668,6 +667,12 @@ struct GCMethods<JSObject *>
 {
     static JSObject *initial() { return nullptr; }
     static bool poisoned(JSObject *v) { return JS::IsPoisonedPtr(v); }
+    static gc::Cell *asGCThingOrNull(JSObject *v) {
+        if (!v)
+            return nullptr;
+        JS_ASSERT(uintptr_t(v) > 32);
+        return reinterpret_cast<gc::Cell *>(v);
+    }
     static bool needsPostBarrier(JSObject *v) {
         return v != nullptr && gc::IsInsideNursery(reinterpret_cast<gc::Cell *>(v));
     }
@@ -723,14 +728,12 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
     /* Note: CX is a subclass of either ContextFriendFields or PerThreadDataFriendFields. */
     template <typename CX>
     void init(CX *cx) {
-#ifdef JSGC_TRACK_EXACT_ROOTS
         js::ThingRootKind kind = js::RootKind<T>::rootKind();
         this->stack = &cx->thingGCRooters[kind];
         this->prev = *stack;
         *stack = reinterpret_cast<Rooted<void*>*>(this);
 
         MOZ_ASSERT(!js::GCMethods<T>::poisoned(ptr));
-#endif
     }
 
   public:
@@ -804,19 +807,12 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
         init(js::PerThreadDataFriendFields::getMainThread(rt));
     }
 
-    // Note that we need to let the compiler generate the default destructor in
-    // non-exact-rooting builds because of a bug in the instrumented PGO builds
-    // using MSVC, see bug 915735 for more details.
-#ifdef JSGC_TRACK_EXACT_ROOTS
     ~Rooted() {
         MOZ_ASSERT(*stack == reinterpret_cast<Rooted<void*>*>(this));
         *stack = prev;
     }
-#endif
 
-#ifdef JSGC_TRACK_EXACT_ROOTS
     Rooted<T> *previous() { return reinterpret_cast<Rooted<T>*>(prev); }
-#endif
 
     /*
      * Important: Return a reference here so passing a Rooted<T> to
@@ -849,14 +845,12 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
     bool operator==(const T &other) const { return ptr == other; }
 
   private:
-#ifdef JSGC_TRACK_EXACT_ROOTS
     /*
      * These need to be templated on void* to avoid aliasing issues between, for
      * example, Rooted<JSObject> and Rooted<JSFunction>, which use the same
      * stack head pointer for different classes.
      */
     Rooted<void *> **stack, *prev;
-#endif
 
     /*
      * |ptr| must be the last field in Rooted because the analysis treats all
@@ -1018,12 +1012,12 @@ template <typename T> class MaybeRooted<T, NoGC>
     typedef FakeRooted<T> RootType;
     typedef FakeMutableHandle<T> MutableHandleType;
 
-    static inline JS::Handle<T> toHandle(HandleType v) {
-        MOZ_ASSUME_UNREACHABLE("Bad conversion");
+    static JS::Handle<T> toHandle(HandleType v) {
+        MOZ_CRASH("Bad conversion");
     }
 
-    static inline JS::MutableHandle<T> toMutableHandle(MutableHandleType v) {
-        MOZ_ASSUME_UNREACHABLE("Bad conversion");
+    static JS::MutableHandle<T> toMutableHandle(MutableHandleType v) {
+        MOZ_CRASH("Bad conversion");
     }
 };
 
@@ -1231,23 +1225,24 @@ class JS_PUBLIC_API(ObjectPtr)
 } /* namespace JS */
 
 namespace js {
+namespace gc {
 
-/* Base class for automatic read-only object rooting during compilation. */
-class CompilerRootNode
+template <typename T, typename TraceCallbacks>
+void
+CallTraceCallbackOnNonHeap(T *v, const TraceCallbacks &aCallbacks, const char *aName, void *aClosure)
 {
-  protected:
-    explicit CompilerRootNode(js::gc::Cell *ptr) : next(nullptr), ptr_(ptr) {}
+    static_assert(sizeof(T) == sizeof(JS::Heap<T>), "T and Heap<T> must be compatible.");
+    MOZ_ASSERT(v);
+    mozilla::DebugOnly<Cell *> cell = GCMethods<T>::asGCThingOrNull(*v);
+    MOZ_ASSERT(cell);
+    MOZ_ASSERT(!IsInsideNursery(cell));
+    JS::Heap<T> *asHeapT = reinterpret_cast<JS::Heap<T>*>(v);
+    aCallbacks.Trace(asHeapT, aName, aClosure);
+    MOZ_ASSERT(GCMethods<T>::asGCThingOrNull(*v) == cell);
+}
 
-  public:
-    void **address() { return (void **)&ptr_; }
+} /* namespace gc */
 
-  public:
-    CompilerRootNode *next;
-
-  protected:
-    js::gc::Cell *ptr_;
-};
-
-}  /* namespace js */
+} /* namespace js */
 
 #endif  /* js_RootingAPI_h */

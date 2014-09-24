@@ -78,7 +78,7 @@ using icu::NumberingSystem;
 static int32_t
 u_strlen(const UChar *s)
 {
-    MOZ_ASSUME_UNREACHABLE("u_strlen: Intl API disabled");
+    MOZ_CRASH("u_strlen: Intl API disabled");
 }
 
 struct UEnumeration;
@@ -86,19 +86,19 @@ struct UEnumeration;
 static int32_t
 uenum_count(UEnumeration *en, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("uenum_count: Intl API disabled");
+    MOZ_CRASH("uenum_count: Intl API disabled");
 }
 
 static const char *
 uenum_next(UEnumeration *en, int32_t *resultLength, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("uenum_next: Intl API disabled");
+    MOZ_CRASH("uenum_next: Intl API disabled");
 }
 
 static void
 uenum_close(UEnumeration *en)
 {
-    MOZ_ASSUME_UNREACHABLE("uenum_close: Intl API disabled");
+    MOZ_CRASH("uenum_close: Intl API disabled");
 }
 
 struct UCollator;
@@ -131,47 +131,47 @@ enum UCollationResult {
 };
 
 static int32_t
-ucol_countAvailable(void)
+ucol_countAvailable()
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_countAvailable: Intl API disabled");
+    MOZ_CRASH("ucol_countAvailable: Intl API disabled");
 }
 
 static const char *
 ucol_getAvailable(int32_t localeIndex)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_getAvailable: Intl API disabled");
+    MOZ_CRASH("ucol_getAvailable: Intl API disabled");
 }
 
 static UCollator *
 ucol_open(const char *loc, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_open: Intl API disabled");
+    MOZ_CRASH("ucol_open: Intl API disabled");
 }
 
 static void
 ucol_setAttribute(UCollator *coll, UColAttribute attr, UColAttributeValue value, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_setAttribute: Intl API disabled");
+    MOZ_CRASH("ucol_setAttribute: Intl API disabled");
 }
 
 static UCollationResult
 ucol_strcoll(const UCollator *coll, const UChar *source, int32_t sourceLength,
              const UChar *target, int32_t targetLength)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_strcoll: Intl API disabled");
+    MOZ_CRASH("ucol_strcoll: Intl API disabled");
 }
 
 static void
 ucol_close(UCollator *coll)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_close: Intl API disabled");
+    MOZ_CRASH("ucol_close: Intl API disabled");
 }
 
 static UEnumeration *
 ucol_getKeywordValuesForLocale(const char *key, const char *locale, UBool commonlyUsed,
                                UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucol_getKeywordValuesForLocale: Intl API disabled");
+    MOZ_CRASH("ucol_getKeywordValuesForLocale: Intl API disabled");
 }
 
 struct UParseError;
@@ -206,48 +206,48 @@ enum UNumberFormatTextAttribute {
 };
 
 static int32_t
-unum_countAvailable(void)
+unum_countAvailable()
 {
-    MOZ_ASSUME_UNREACHABLE("unum_countAvailable: Intl API disabled");
+    MOZ_CRASH("unum_countAvailable: Intl API disabled");
 }
 
 static const char *
 unum_getAvailable(int32_t localeIndex)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_getAvailable: Intl API disabled");
+    MOZ_CRASH("unum_getAvailable: Intl API disabled");
 }
 
 static UNumberFormat *
 unum_open(UNumberFormatStyle style, const UChar *pattern, int32_t patternLength,
           const char *locale, UParseError *parseErr, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_open: Intl API disabled");
+    MOZ_CRASH("unum_open: Intl API disabled");
 }
 
 static void
 unum_setAttribute(UNumberFormat *fmt, UNumberFormatAttribute  attr, int32_t newValue)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_setAttribute: Intl API disabled");
+    MOZ_CRASH("unum_setAttribute: Intl API disabled");
 }
 
 static int32_t
 unum_formatDouble(const UNumberFormat *fmt, double number, UChar *result,
                   int32_t resultLength, UFieldPosition *pos, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_formatDouble: Intl API disabled");
+    MOZ_CRASH("unum_formatDouble: Intl API disabled");
 }
 
 static void
 unum_close(UNumberFormat *fmt)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_close: Intl API disabled");
+    MOZ_CRASH("unum_close: Intl API disabled");
 }
 
 static void
 unum_setTextAttribute(UNumberFormat *fmt, UNumberFormatTextAttribute tag, const UChar *newValue,
                       int32_t newValueLength, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("unum_setTextAttribute: Intl API disabled");
+    MOZ_CRASH("unum_setTextAttribute: Intl API disabled");
 }
 
 class Locale {
@@ -259,7 +259,7 @@ class Locale {
 Locale::Locale(const char *language, const char *country, const char *variant,
                const char *keywordsAndValues)
 {
-    MOZ_ASSUME_UNREACHABLE("Locale::Locale: Intl API disabled");
+    MOZ_CRASH("Locale::Locale: Intl API disabled");
 }
 
 class NumberingSystem {
@@ -271,13 +271,13 @@ class NumberingSystem {
 NumberingSystem *
 NumberingSystem::createInstance(const Locale &inLocale, UErrorCode &status)
 {
-    MOZ_ASSUME_UNREACHABLE("NumberingSystem::createInstance: Intl API disabled");
+    MOZ_CRASH("NumberingSystem::createInstance: Intl API disabled");
 }
 
 const char *
 NumberingSystem::getName()
 {
-    MOZ_ASSUME_UNREACHABLE("NumberingSystem::getName: Intl API disabled");
+    MOZ_CRASH("NumberingSystem::getName: Intl API disabled");
 }
 
 typedef void *UCalendar;
@@ -292,26 +292,26 @@ static UCalendar *
 ucal_open(const UChar *zoneID, int32_t len, const char *locale,
           UCalendarType type, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucal_open: Intl API disabled");
+    MOZ_CRASH("ucal_open: Intl API disabled");
 }
 
 static const char *
 ucal_getType(const UCalendar *cal, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucal_getType: Intl API disabled");
+    MOZ_CRASH("ucal_getType: Intl API disabled");
 }
 
 static UEnumeration *
 ucal_getKeywordValuesForLocale(const char *key, const char *locale,
                                UBool commonlyUsed, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("ucal_getKeywordValuesForLocale: Intl API disabled");
+    MOZ_CRASH("ucal_getKeywordValuesForLocale: Intl API disabled");
 }
 
 static void
 ucal_close(UCalendar *cal)
 {
-    MOZ_ASSUME_UNREACHABLE("ucal_close: Intl API disabled");
+    MOZ_CRASH("ucal_close: Intl API disabled");
 }
 
 typedef void *UDateTimePatternGenerator;
@@ -319,7 +319,7 @@ typedef void *UDateTimePatternGenerator;
 static UDateTimePatternGenerator *
 udatpg_open(const char *locale, UErrorCode *pErrorCode)
 {
-    MOZ_ASSUME_UNREACHABLE("udatpg_open: Intl API disabled");
+    MOZ_CRASH("udatpg_open: Intl API disabled");
 }
 
 static int32_t
@@ -327,13 +327,13 @@ udatpg_getBestPattern(UDateTimePatternGenerator *dtpg, const UChar *skeleton,
                       int32_t length, UChar *bestPattern, int32_t capacity,
                       UErrorCode *pErrorCode)
 {
-    MOZ_ASSUME_UNREACHABLE("udatpg_getBestPattern: Intl API disabled");
+    MOZ_CRASH("udatpg_getBestPattern: Intl API disabled");
 }
 
 static void
 udatpg_close(UDateTimePatternGenerator *dtpg)
 {
-    MOZ_ASSUME_UNREACHABLE("udatpg_close: Intl API disabled");
+    MOZ_CRASH("udatpg_close: Intl API disabled");
 }
 
 typedef void *UCalendar;
@@ -345,15 +345,15 @@ enum UDateFormatStyle {
 };
 
 static int32_t
-udat_countAvailable(void)
+udat_countAvailable()
 {
-    MOZ_ASSUME_UNREACHABLE("udat_countAvailable: Intl API disabled");
+    MOZ_CRASH("udat_countAvailable: Intl API disabled");
 }
 
 static const char *
 udat_getAvailable(int32_t localeIndex)
 {
-    MOZ_ASSUME_UNREACHABLE("udat_getAvailable: Intl API disabled");
+    MOZ_CRASH("udat_getAvailable: Intl API disabled");
 }
 
 static UDateFormat *
@@ -361,32 +361,32 @@ udat_open(UDateFormatStyle timeStyle, UDateFormatStyle dateStyle, const char *lo
           const UChar *tzID, int32_t tzIDLength, const UChar *pattern,
           int32_t patternLength, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("udat_open: Intl API disabled");
+    MOZ_CRASH("udat_open: Intl API disabled");
 }
 
 static const UCalendar *
 udat_getCalendar(const UDateFormat *fmt)
 {
-    MOZ_ASSUME_UNREACHABLE("udat_getCalendar: Intl API disabled");
+    MOZ_CRASH("udat_getCalendar: Intl API disabled");
 }
 
 static void
 ucal_setGregorianChange(UCalendar *cal, UDate date, UErrorCode *pErrorCode)
 {
-    MOZ_ASSUME_UNREACHABLE("ucal_setGregorianChange: Intl API disabled");
+    MOZ_CRASH("ucal_setGregorianChange: Intl API disabled");
 }
 
 static int32_t
 udat_format(const UDateFormat *format, UDate dateToFormat, UChar *result,
             int32_t resultLength, UFieldPosition *position, UErrorCode *status)
 {
-    MOZ_ASSUME_UNREACHABLE("udat_format: Intl API disabled");
+    MOZ_CRASH("udat_format: Intl API disabled");
 }
 
 static void
 udat_close(UDateFormat *format)
 {
-    MOZ_ASSUME_UNREACHABLE("udat_close: Intl API disabled");
+    MOZ_CRASH("udat_close: Intl API disabled");
 }
 
 #endif
@@ -430,7 +430,7 @@ CreateDefaultOptions(JSContext *cx, MutableHandleValue defaultOptions)
 // CountAvailable and GetAvailable describe the signatures used for ICU API
 // to determine available locales for various functionality.
 typedef int32_t
-(* CountAvailable)(void);
+(* CountAvailable)();
 
 typedef const char *
 (* GetAvailable)(int32_t localeIndex);
@@ -546,7 +546,7 @@ class ScopedICUObject
     }
 };
 
-// The inline capacity we use for the jschar Vectors.
+// The inline capacity we use for the char16_t Vectors.
 static const size_t INITIAL_CHAR_BUFFER_SIZE = 32;
 
 /******************** Collator ********************/
@@ -705,7 +705,7 @@ InitCollatorClass(JSContext *cx, HandleObject Intl, Handle<GlobalObject*> global
         return nullptr;
     if (!JSObject::defineProperty(cx, proto, cx->names().compare, UndefinedHandleValue,
                                   JS_DATA_TO_FUNC_PTR(JSPropertyOp, &getter.toObject()),
-                                  nullptr, JSPROP_GETTER))
+                                  nullptr, JSPROP_GETTER | JSPROP_SHARED))
     {
         return nullptr;
     }
@@ -973,18 +973,18 @@ intl_CompareStrings(JSContext *cx, UCollator *coll, HandleString str1, HandleStr
     if (!stableChars2.initTwoByte(cx, str2))
         return false;
 
-    mozilla::Range<const jschar> chars1 = stableChars1.twoByteRange();
-    mozilla::Range<const jschar> chars2 = stableChars2.twoByteRange();
+    mozilla::Range<const char16_t> chars1 = stableChars1.twoByteRange();
+    mozilla::Range<const char16_t> chars2 = stableChars2.twoByteRange();
 
     UCollationResult uresult = ucol_strcoll(coll,
-                                            JSCharToUChar(chars1.start().get()), chars1.length(),
-                                            JSCharToUChar(chars2.start().get()), chars2.length());
+                                            Char16ToUChar(chars1.start().get()), chars1.length(),
+                                            Char16ToUChar(chars2.start().get()), chars2.length());
     int32_t res;
     switch (uresult) {
         case UCOL_LESS: res = -1; break;
         case UCOL_EQUAL: res = 0; break;
         case UCOL_GREATER: res = 1; break;
-        default: MOZ_ASSUME_UNREACHABLE("ucol_strcoll returned bad UCollationResult");
+        default: MOZ_CRASH("ucol_strcoll returned bad UCollationResult");
     }
     result.setInt32(res);
     return true;
@@ -1196,7 +1196,7 @@ InitNumberFormatClass(JSContext *cx, HandleObject Intl, Handle<GlobalObject*> gl
         return nullptr;
     if (!JSObject::defineProperty(cx, proto, cx->names().format, UndefinedHandleValue,
                                   JS_DATA_TO_FUNC_PTR(JSPropertyOp, &getter.toObject()),
-                                  nullptr, JSPROP_GETTER))
+                                  nullptr, JSPROP_GETTER | JSPROP_SHARED))
     {
         return nullptr;
     }
@@ -1323,7 +1323,7 @@ NewUNumberFormat(JSContext *cx, HandleObject numberFormat)
         if (!currency->ensureFlat(cx) || !stableChars.initTwoByte(cx, currency))
             return nullptr;
         // uCurrency remains owned by stableChars.
-        uCurrency = JSCharToUChar(stableChars.twoByteRange().start().get());
+        uCurrency = Char16ToUChar(stableChars.twoByteRange().start().get());
         if (!uCurrency)
             return nullptr;
 
@@ -1426,17 +1426,17 @@ intl_FormatNumber(JSContext *cx, UNumberFormat *nf, double x, MutableHandleValue
     if (IsNegativeZero(x))
         x = 0.0;
 
-    Vector<jschar, INITIAL_CHAR_BUFFER_SIZE> chars(cx);
+    Vector<char16_t, INITIAL_CHAR_BUFFER_SIZE> chars(cx);
     if (!chars.resize(INITIAL_CHAR_BUFFER_SIZE))
         return false;
     UErrorCode status = U_ZERO_ERROR;
-    int size = unum_formatDouble(nf, x, JSCharToUChar(chars.begin()), INITIAL_CHAR_BUFFER_SIZE,
+    int size = unum_formatDouble(nf, x, Char16ToUChar(chars.begin()), INITIAL_CHAR_BUFFER_SIZE,
                                  nullptr, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
         if (!chars.resize(size))
             return false;
         status = U_ZERO_ERROR;
-        unum_formatDouble(nf, x, JSCharToUChar(chars.begin()), size, nullptr, &status);
+        unum_formatDouble(nf, x, Char16ToUChar(chars.begin()), size, nullptr, &status);
     }
     if (U_FAILURE(status)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INTERNAL_INTL_ERROR);
@@ -1652,7 +1652,7 @@ InitDateTimeFormatClass(JSContext *cx, HandleObject Intl, Handle<GlobalObject*> 
         return nullptr;
     if (!JSObject::defineProperty(cx, proto, cx->names().format, UndefinedHandleValue,
                                   JS_DATA_TO_FUNC_PTR(JSPropertyOp, &getter.toObject()),
-                                  nullptr, JSPROP_GETTER))
+                                  nullptr, JSPROP_GETTER | JSPROP_SHARED))
     {
         return nullptr;
     }
@@ -1799,8 +1799,8 @@ js::intl_patternForSkeleton(JSContext *cx, unsigned argc, Value *vp)
     if (!stableChars.initTwoByte(cx, skeletonFlat))
         return false;
 
-    mozilla::Range<const jschar> skeletonChars = stableChars.twoByteRange();
-    uint32_t skeletonLen = u_strlen(JSCharToUChar(skeletonChars.start().get()));
+    mozilla::Range<const char16_t> skeletonChars = stableChars.twoByteRange();
+    uint32_t skeletonLen = u_strlen(Char16ToUChar(skeletonChars.start().get()));
 
     UErrorCode status = U_ZERO_ERROR;
     UDateTimePatternGenerator *gen = udatpg_open(icuLocale(locale.ptr()), &status);
@@ -1810,7 +1810,7 @@ js::intl_patternForSkeleton(JSContext *cx, unsigned argc, Value *vp)
     }
     ScopedICUObject<UDateTimePatternGenerator> toClose(gen, udatpg_close);
 
-    int32_t size = udatpg_getBestPattern(gen, JSCharToUChar(skeletonChars.start().get()),
+    int32_t size = udatpg_getBestPattern(gen, Char16ToUChar(skeletonChars.start().get()),
                                          skeletonLen, nullptr, 0, &status);
     if (U_FAILURE(status) && status != U_BUFFER_OVERFLOW_ERROR) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INTERNAL_INTL_ERROR);
@@ -1821,14 +1821,14 @@ js::intl_patternForSkeleton(JSContext *cx, unsigned argc, Value *vp)
         return false;
     pattern[size] = '\0';
     status = U_ZERO_ERROR;
-    udatpg_getBestPattern(gen, JSCharToUChar(skeletonChars.start().get()),
+    udatpg_getBestPattern(gen, Char16ToUChar(skeletonChars.start().get()),
                           skeletonLen, pattern, size, &status);
     if (U_FAILURE(status)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INTERNAL_INTL_ERROR);
         return false;
     }
 
-    RootedString str(cx, JS_NewUCStringCopyZ(cx, reinterpret_cast<jschar*>(pattern.get())));
+    RootedString str(cx, JS_NewUCStringCopyZ(cx, reinterpret_cast<char16_t*>(pattern.get())));
     if (!str)
         return false;
     args.rval().setString(str);
@@ -1878,7 +1878,7 @@ NewUDateFormat(JSContext *cx, HandleObject dateTimeFormat)
             JSFlatString *flat = value.toString()->ensureFlat(cx);
             if (!flat || !timeZoneChars.initTwoByte(cx, flat))
                 return nullptr;
-            uTimeZone = JSCharToUChar(timeZoneChars.twoByteRange().start().get());
+            uTimeZone = Char16ToUChar(timeZoneChars.twoByteRange().start().get());
             if (!uTimeZone)
                 return nullptr;
             uTimeZoneLength = u_strlen(uTimeZone);
@@ -1892,7 +1892,7 @@ NewUDateFormat(JSContext *cx, HandleObject dateTimeFormat)
     if (!flat || !patternChars.initTwoByte(cx, flat))
         return nullptr;
 
-    uPattern = JSCharToUChar(patternChars.twoByteRange().start().get());
+    uPattern = Char16ToUChar(patternChars.twoByteRange().start().get());
     if (!uPattern)
         return nullptr;
     uPatternLength = u_strlen(uPattern);
@@ -1927,17 +1927,17 @@ intl_FormatDateTime(JSContext *cx, UDateFormat *df, double x, MutableHandleValue
         return false;
     }
 
-    Vector<jschar, INITIAL_CHAR_BUFFER_SIZE> chars(cx);
+    Vector<char16_t, INITIAL_CHAR_BUFFER_SIZE> chars(cx);
     if (!chars.resize(INITIAL_CHAR_BUFFER_SIZE))
         return false;
     UErrorCode status = U_ZERO_ERROR;
-    int size = udat_format(df, x, JSCharToUChar(chars.begin()), INITIAL_CHAR_BUFFER_SIZE,
+    int size = udat_format(df, x, Char16ToUChar(chars.begin()), INITIAL_CHAR_BUFFER_SIZE,
                            nullptr, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
         if (!chars.resize(size))
             return false;
         status = U_ZERO_ERROR;
-        udat_format(df, x, JSCharToUChar(chars.begin()), size, nullptr, &status);
+        udat_format(df, x, Char16ToUChar(chars.begin()), size, nullptr, &status);
     }
     if (U_FAILURE(status)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INTERNAL_INTL_ERROR);

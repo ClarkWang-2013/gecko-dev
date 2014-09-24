@@ -125,7 +125,7 @@ JSSHELL_BINS += \
 endif # Darwin
 endif # WINNT
 endif # MOZ_STATIC_JS
-MAKE_JSSHELL  = $(PYTHON) $(topsrcdir)/toolkit/mozapps/installer/dozip.py $(PKG_JSSHELL) $(abspath $(JSSHELL_BINS))
+MAKE_JSSHELL  = $(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/dozip.py $(PKG_JSSHELL) $(abspath $(JSSHELL_BINS))
 endif # LIBXUL_SDK
 
 _ABS_DIST = $(abspath $(DIST))
@@ -217,7 +217,7 @@ RPM_CMD = \
   --define 'moz_numeric_app_version $(MOZ_NUMERIC_APP_VERSION)' \
   --define 'moz_rpm_release $(MOZ_RPM_RELEASE)' \
   --define 'buildid $(BUILDID)' \
-  --define 'moz_source_repo $(MOZ_SOURCE_REPO)' \
+  $(if $(MOZ_SOURCE_REPO),--define 'moz_source_repo $(MOZ_SOURCE_REPO)') \
   --define 'moz_source_stamp $(MOZ_SOURCE_STAMP)' \
   --define 'moz_branding_directory $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)' \
   --define '_topdir $(RPMBUILD_TOPDIR)' \
@@ -403,7 +403,7 @@ endif
 
 ifdef MOZ_OMX_PLUGIN
 DIST_FILES += libomxplugin.so libomxplugingb.so libomxplugingb235.so \
-              libomxpluginhc.so libomxpluginfroyo.so libomxpluginkk.so
+              libomxpluginhc.so libomxpluginkk.so
 endif
 
 SO_LIBRARIES := $(filter %.so,$(DIST_FILES))
@@ -462,8 +462,6 @@ INNER_MAKE_PACKAGE	= \
     diff $(GECKO_APP_AP_PATH)/R.txt $(GECKO_APP_AP_PATH)/gecko-nodeps/R.txt >/dev/null || \
     (echo "*** Error: The R.txt that was built and the R.txt that is being packaged are not the same. Rebuild mobile/android/base and re-package." && exit 1)) && \
   ( cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && \
-    mkdir -p lib/$(ANDROID_CPU_ARCH) && \
-    mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) lib/$(ANDROID_CPU_ARCH) && \
     unzip -o $(_ABS_DIST)/gecko.ap_ && \
     rm $(_ABS_DIST)/gecko.ap_ && \
     $(ZIP) $(if $(MOZ_ENABLE_SZIP),-0 )$(_ABS_DIST)/gecko.ap_ $(ASSET_SO_LIBRARIES) && \
@@ -493,9 +491,6 @@ INNER_UNMAKE_PACKAGE	= \
   mkdir $(MOZ_PKG_DIR) && \
   ( cd $(MOZ_PKG_DIR) && \
     $(UNZIP) $(UNPACKAGE) && \
-    mv lib/$(ANDROID_CPU_ARCH)/libmozglue.so . && \
-    mv lib/$(ANDROID_CPU_ARCH)/*plugin-container* $(MOZ_CHILD_PROCESS_NAME) && \
-    rm -rf lib/$(ANDROID_CPU_ARCH) && \
     rm -rf res \
     $(if $(filter-out ./,$(OMNIJAR_DIR)), \
       && mv $(OMNIJAR_DIR)$(OMNIJAR_NAME) $(OMNIJAR_NAME)) )
@@ -615,6 +610,7 @@ NO_PKG_FILES += \
 	certutil* \
 	pk12util* \
 	BadCertServer* \
+	ClientAuthServer* \
 	OCSPStaplingServer* \
 	GenerateOCSPResponse* \
 	winEmbed.exe \
@@ -741,10 +737,23 @@ ifdef MOZ_PACKAGE_JSSHELL
 	$(MAKE_JSSHELL)
 endif # MOZ_PACKAGE_JSSHELL
 endif # LIBXUL_SDK
+ifdef MOZ_CODE_COVERAGE
+	# Package code coverage gcno tree
+	@echo 'Packaging code coverage data...'
+	$(RM) $(CODE_COVERAGE_ARCHIVE_BASENAME).zip
+	$(PYTHON) -mmozbuild.codecoverage.packager \
+		--output-file='$(DIST)/$(PKG_PATH)$(CODE_COVERAGE_ARCHIVE_BASENAME).zip'
+endif
+ifeq (Darwin, $(OS_ARCH))
+ifdef MOZ_ASAN
+	@echo "Rewriting ASan runtime dylib paths for all binaries in $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) ..."
+	$(PYTHON) $(MOZILLA_DIR)/build/unix/rewrite_asan_dylib.py $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)
+endif # MOZ_ASAN
+endif # Darwin
 
 prepare-package: stage-package
 
-make-package-internal: prepare-package make-sourcestamp-file make-buildinfo-file
+make-package-internal: prepare-package make-sourcestamp-file make-buildinfo-file make-mozinfo-file
 	@echo 'Compressing...'
 	cd $(DIST) && $(MAKE_PACKAGE)
 
@@ -757,16 +766,22 @@ GARBAGE += make-package
 make-sourcestamp-file::
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 	@echo '$(BUILDID)' > $(MOZ_SOURCESTAMP_FILE)
+ifdef MOZ_SOURCE_REPO
 	@echo '$(MOZ_SOURCE_REPO)/rev/$(MOZ_SOURCE_STAMP)' >> $(MOZ_SOURCESTAMP_FILE)
+endif
 
 .PHONY: make-buildinfo-file
 make-buildinfo-file:
 	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/informulate.py \
 		$(MOZ_BUILDINFO_FILE) \
 		BUILDID=$(BUILDID) \
-		MOZ_SOURCE_REPO=$(MOZ_SOURCE_REPO) \
+		$(addprefix MOZ_SOURCE_REPO=,MOZ_SOURCE_REPO=$(MOZ_SOURCE_REPO)) \
 		MOZ_SOURCE_STAMP=$(MOZ_SOURCE_STAMP) \
 		MOZ_PKG_PLATFORM=$(MOZ_PKG_PLATFORM)
+
+.PHONY: make-mozinfo-file
+make-mozinfo-file:
+	cp $(DEPTH)/mozinfo.json $(MOZ_MOZINFO_FILE)
 
 # The install target will install the application to prefix/lib/appname-version
 # In addition if INSTALL_SDK is set, it will install the development headers,
@@ -881,12 +896,18 @@ UPLOAD_FILES= \
   $(call QUOTED_WILDCARD,$(DIST)/$(SDK)) \
   $(call QUOTED_WILDCARD,$(MOZ_SOURCESTAMP_FILE)) \
   $(call QUOTED_WILDCARD,$(MOZ_BUILDINFO_FILE)) \
+  $(call QUOTED_WILDCARD,$(MOZ_MOZINFO_FILE)) \
   $(call QUOTED_WILDCARD,$(PKG_JSSHELL)) \
   $(if $(UPLOAD_EXTRA_FILES), $(foreach f, $(UPLOAD_EXTRA_FILES), $(wildcard $(DIST)/$(f))))
 
 ifdef MOZ_CRASHREPORTER_UPLOAD_FULL_SYMBOLS
 UPLOAD_FILES += \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip)
+endif
+
+ifdef MOZ_CODE_COVERAGE
+UPLOAD_FILES += \
+  $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(CODE_COVERAGE_ARCHIVE_BASENAME).zip)
 endif
 
 SIGN_CHECKSUM_CMD=

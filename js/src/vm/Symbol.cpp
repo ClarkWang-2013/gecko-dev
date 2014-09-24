@@ -10,6 +10,7 @@
 #include "jscompartment.h"
 
 #include "gc/Rooting.h"
+#include "vm/StringBuffer.h"
 
 #include "jscompartmentinlines.h"
 #include "jsgcinlines.h"
@@ -84,15 +85,12 @@ Symbol::dump(FILE *fp)
 {
     if (isWellKnownSymbol()) {
         // All the well-known symbol names are ASCII.
-        const jschar *desc = description_->chars();
-        size_t len = description_->length();
-        for (size_t i = 0; i < len; i++)
-            fputc(char(desc[i]), fp);
+        description_->dumpCharsNoNewline(fp);
     } else if (code_ == SymbolCode::InSymbolRegistry || code_ == SymbolCode::UniqueSymbol) {
         fputs(code_ == SymbolCode::InSymbolRegistry ? "Symbol.for(" : "Symbol(", fp);
 
         if (description_)
-            JSString::dumpChars(description_->chars(), description_->length(), fp);
+            description_->dumpCharsNoNewline(fp);
         else
             fputs("undefined", fp);
 
@@ -114,4 +112,27 @@ SymbolRegistry::sweep()
         if (IsSymbolAboutToBeFinalized(&sym))
             e.removeFront();
     }
+}
+
+bool
+js::SymbolDescriptiveString(JSContext *cx, Symbol *sym, MutableHandleValue result)
+{
+    // steps 2-5
+    StringBuffer sb(cx);
+    if (!sb.append("Symbol("))
+        return false;
+    RootedString str(cx, sym->description());
+    if (str) {
+        if (!sb.append(str))
+            return false;
+    }
+    if (!sb.append(')'))
+        return false;
+
+    // step 6
+    str = sb.finishString();
+    if (!str)
+        return false;
+    result.setString(str);
+    return true;
 }

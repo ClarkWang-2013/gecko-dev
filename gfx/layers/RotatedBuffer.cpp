@@ -95,24 +95,21 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
 
   gfx::Point quadrantTranslation(quadrantRect.x, quadrantRect.y);
 
+  MOZ_ASSERT(aSource != BUFFER_BOTH);
+  RefPtr<SourceSurface> snapshot = GetSourceSurface(aSource);
+
   // direct2d is much slower when using OP_SOURCE so use OP_OVER and
   // (maybe) a clear instead. Normally we need to draw in a single operation
   // (to avoid flickering) but direct2d is ok since it defers rendering.
   // We should try abstract this logic in a helper when we have other use
   // cases.
-  if (aTarget->GetBackendType() == BackendType::DIRECT2D && aOperator == CompositionOp::OP_SOURCE) {
+  if ((aTarget->GetBackendType() == BackendType::DIRECT2D ||
+       aTarget->GetBackendType() == BackendType::DIRECT2D1_1) &&
+      aOperator == CompositionOp::OP_SOURCE) {
     aOperator = CompositionOp::OP_OVER;
-    if (mDTBuffer->GetFormat() == SurfaceFormat::B8G8R8A8) {
+    if (snapshot->GetFormat() == SurfaceFormat::B8G8R8A8) {
       aTarget->ClearRect(ToRect(fillRect));
     }
-  }
-
-  RefPtr<gfx::SourceSurface> snapshot;
-  if (aSource == BUFFER_BLACK) {
-    snapshot = mDTBuffer->Snapshot();
-  } else {
-    MOZ_ASSERT(aSource == BUFFER_WHITE);
-    snapshot = mDTBufferOnWhite->Snapshot();
   }
 
   if (aOperator == CompositionOp::OP_SOURCE) {
@@ -127,8 +124,8 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
     Matrix oldTransform = aTarget->GetTransform();
 
     // Transform from user -> buffer space.
-    Matrix transform;
-    transform.Translate(quadrantTranslation.x, quadrantTranslation.y);
+    Matrix transform =
+      Matrix::Translation(quadrantTranslation.x, quadrantTranslation.y);
 
     Matrix inverseMask = *aMaskTransform;
     inverseMask.Invert();
@@ -179,6 +176,21 @@ RotatedBuffer::DrawBufferWithRotation(gfx::DrawTarget *aTarget, ContextSource aS
   DrawBufferQuadrant(aTarget, RIGHT, TOP, aSource, aOpacity, aOperator, aMask, aMaskTransform);
   DrawBufferQuadrant(aTarget, LEFT, BOTTOM, aSource, aOpacity, aOperator, aMask, aMaskTransform);
   DrawBufferQuadrant(aTarget, RIGHT, BOTTOM, aSource, aOpacity, aOperator,aMask, aMaskTransform);
+}
+
+TemporaryRef<SourceSurface>
+SourceRotatedBuffer::GetSourceSurface(ContextSource aSource) const
+{
+  RefPtr<SourceSurface> surf;
+  if (aSource == BUFFER_BLACK) {
+    surf = mSource;
+  } else {
+    MOZ_ASSERT(aSource == BUFFER_WHITE);
+    surf = mSourceOnWhite;
+  }
+
+  MOZ_ASSERT(surf);
+  return surf;
 }
 
 /* static */ bool
@@ -285,9 +297,9 @@ RotatedContentBuffer::BorrowDrawTargetForQuadrantUpdate(const nsIntRect& aBounds
   NS_ASSERTION(quadrantRect.Contains(bounds), "Messed up quadrants");
 
   mLoanedTransform = mLoanedDrawTarget->GetTransform();
-  mLoanedTransform.Translate(-quadrantRect.x, -quadrantRect.y);
-  mLoanedDrawTarget->SetTransform(mLoanedTransform);
-  mLoanedTransform.Translate(quadrantRect.x, quadrantRect.y);
+  mLoanedDrawTarget->SetTransform(Matrix(mLoanedTransform).
+                                    PreTranslate(-quadrantRect.x,
+                                                 -quadrantRect.y));
 
   return mLoanedDrawTarget;
 }
@@ -465,10 +477,8 @@ RotatedContentBuffer::BeginPaint(ThebesLayer* aLayer,
 #else
       if (!aLayer->GetParent() ||
           !aLayer->GetParent()->SupportsComponentAlphaChildren() ||
-          !aLayer->Manager()->IsCompositingCheap() ||
           !aLayer->AsShadowableLayer() ||
-          !aLayer->AsShadowableLayer()->HasShadow() ||
-          !gfxPrefs::ComponentAlphaEnabled()) {
+          !aLayer->AsShadowableLayer()->HasShadow()) {
         mode = SurfaceMode::SURFACE_SINGLE_CHANNEL_ALPHA;
       } else {
         result.mContentType = gfxContentType::COLOR;
@@ -653,8 +663,7 @@ RotatedContentBuffer::BeginPaint(ThebesLayer* aLayer,
     if (!isClear && (mode != SurfaceMode::SURFACE_COMPONENT_ALPHA || HaveBufferOnWhite())) {
       // Copy the bits
       nsIntPoint offset = -destBufferRect.TopLeft();
-      Matrix mat;
-      mat.Translate(offset.x, offset.y);
+      Matrix mat = Matrix::Translation(offset.x, offset.y);
       destDTBuffer->SetTransform(mat);
       if (!EnsureBuffer()) {
         return result;
@@ -737,6 +746,19 @@ RotatedContentBuffer::BorrowDrawTargetForPainting(PaintState& aPaintState,
   }
 
   return result;
+}
+
+TemporaryRef<SourceSurface>
+RotatedContentBuffer::GetSourceSurface(ContextSource aSource) const
+{
+  MOZ_ASSERT(mDTBuffer);
+  if (aSource == BUFFER_BLACK) {
+    return mDTBuffer->Snapshot();
+  } else {
+    MOZ_ASSERT(mDTBufferOnWhite);
+    MOZ_ASSERT(aSource == BUFFER_WHITE);
+    return mDTBufferOnWhite->Snapshot();
+  }
 }
 
 }

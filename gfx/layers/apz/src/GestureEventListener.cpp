@@ -54,7 +54,9 @@ GestureEventListener::GestureEventListener(AsyncPanZoomController* aAsyncPanZoom
     mState(GESTURE_NONE),
     mSpanChange(0.0f),
     mPreviousSpan(0.0f),
-    mLastTouchInput(MultiTouchInput::MULTITOUCH_START, 0, TimeStamp(), 0)
+    mLastTouchInput(MultiTouchInput::MULTITOUCH_START, 0, TimeStamp(), 0),
+    mLongTapTimeoutTask(nullptr),
+    mMaxTapTimeoutTask(nullptr)
 {
 }
 
@@ -74,7 +76,6 @@ nsEventStatus GestureEventListener::HandleInputEvent(const MultiTouchInput& aEve
 
   switch (aEvent.mType) {
   case MultiTouchInput::MULTITOUCH_START:
-  case MultiTouchInput::MULTITOUCH_ENTER:
     mTouches.Clear();
     for (size_t i = 0; i < aEvent.mTouches.Length(); i++) {
       mTouches.AppendElement(aEvent.mTouches[i]);
@@ -90,7 +91,6 @@ nsEventStatus GestureEventListener::HandleInputEvent(const MultiTouchInput& aEve
     rv = HandleInputTouchMove();
     break;
   case MultiTouchInput::MULTITOUCH_END:
-  case MultiTouchInput::MULTITOUCH_LEAVE:
     for (size_t i = 0; i < aEvent.mTouches.Length(); i++) {
       for (size_t j = 0; j < mTouches.Length(); j++) {
         if (aEvent.mTouches[i].mIdentifier == mTouches[j].mIdentifier) {
@@ -109,23 +109,6 @@ nsEventStatus GestureEventListener::HandleInputEvent(const MultiTouchInput& aEve
   }
 
   return rv;
-}
-
-void GestureEventListener::CancelSingleTouchDown()
-{
-  GEL_LOG("Cancelling touch-down while in state %d\n", mState);
-
-  switch (mState) {
-  case GESTURE_FIRST_SINGLE_TOUCH_DOWN:
-    CancelLongTapTimeoutTask();
-    CancelMaxTapTimeoutTask();
-    SetState(GESTURE_NONE);
-    break;
-  default:
-    NS_WARNING("IgnoreLastTouchStart() called while in unexpected state");
-    SetState(GESTURE_NONE);
-    break;
-  }
 }
 
 int32_t GestureEventListener::GetLastTouchIdentifier() const
@@ -214,8 +197,10 @@ nsEventStatus GestureEventListener::HandleInputTouchMultiStart()
 
 bool GestureEventListener::MoveDistanceIsLarge()
 {
-  ScreenIntPoint delta = mLastTouchInput.mTouches[0].mScreenPoint - mTouchStartPosition;
-  return (NS_hypot(delta.x, delta.y) > AsyncPanZoomController::GetTouchStartTolerance());
+  const ScreenPoint start = mLastTouchInput.mTouches[0].mScreenPoint;
+  ScreenPoint delta = start - mTouchStartPosition;
+  mAsyncPanZoomController->ToGlobalScreenCoordinates(&delta, start);
+  return (delta.Length() > AsyncPanZoomController::GetTouchStartTolerance());
 }
 
 nsEventStatus GestureEventListener::HandleInputTouchMove()
@@ -402,11 +387,15 @@ nsEventStatus GestureEventListener::HandleInputTouchEnd()
 nsEventStatus GestureEventListener::HandleInputTouchCancel()
 {
   SetState(GESTURE_NONE);
+  CancelMaxTapTimeoutTask();
+  CancelLongTapTimeoutTask();
   return nsEventStatus_eIgnore;
 }
 
 void GestureEventListener::HandleInputTimeoutLongTap()
 {
+  GEL_LOG("Running long-tap timeout task in state %d\n", mState);
+
   mLongTapTimeoutTask = nullptr;
 
   switch (mState) {
@@ -433,6 +422,8 @@ void GestureEventListener::HandleInputTimeoutLongTap()
 
 void GestureEventListener::HandleInputTimeoutMaxTap()
 {
+  GEL_LOG("Running max-tap timeout task in state %d\n", mState);
+
   mMaxTapTimeoutTask = nullptr;
 
   if (mState == GESTURE_FIRST_SINGLE_TOUCH_DOWN) {

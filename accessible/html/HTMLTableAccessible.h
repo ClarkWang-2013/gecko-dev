@@ -39,9 +39,9 @@ public:
   // Accessible
   virtual TableCellAccessible* AsTableCell() { return this; }
   virtual void Shutdown();
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
-  virtual uint64_t NativeInteractiveState() const;
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
+  virtual uint64_t NativeInteractiveState() const MOZ_OVERRIDE;
   virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
 
   // TableCellAccessible
@@ -55,6 +55,8 @@ public:
   virtual bool Selected() MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLTableCellAccessible() {}
+
   /**
    * Return host table accessible.
    */
@@ -81,7 +83,7 @@ public:
   HTMLTableHeaderCellAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
 };
 
 
@@ -97,12 +99,14 @@ public:
     mType = eHTMLTableRowType;
     mGenericTypes |= eTableRow;
   }
-  virtual ~HTMLTableRowAccessible() { }
 
   NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+
+protected:
+  virtual ~HTMLTableRowAccessible() { }
 };
 
 
@@ -134,7 +138,7 @@ public:
   NS_FORWARD_NSIACCESSIBLETABLE(xpcAccessibleTable::)
 
   // TableAccessible
-  virtual Accessible* Caption();
+  virtual Accessible* Caption() const;
   virtual void Summary(nsString& aSummary);
   virtual uint32_t ColCount();
   virtual uint32_t RowCount();
@@ -167,12 +171,14 @@ public:
   virtual void Shutdown();
   virtual TableAccessible* AsTable() { return this; }
   virtual void Description(nsString& aDescription);
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
   virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
   virtual Relation RelationByType(RelationType aRelationType) MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLTableAccessible() {}
+
   // Accessible
   virtual ENameValueFlag NativeName(nsString& aName) MOZ_OVERRIDE;
   virtual void CacheChildren();
@@ -228,7 +234,7 @@ public:
   // nsIAccessible
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
   virtual Relation RelationByType(RelationType aRelationType) MOZ_OVERRIDE;
 };
 

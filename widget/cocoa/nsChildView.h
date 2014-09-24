@@ -26,6 +26,7 @@
 #include "mozilla/Mutex.h"
 #include "nsRegion.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/UniquePtr.h"
 
 #include "nsString.h"
 #include "nsIDragService.h"
@@ -93,6 +94,7 @@ class RectTextureImage;
 }
 
 namespace mozilla {
+class VibrancyManager;
 namespace layers {
 class GLManager;
 class APZCTreeManager;
@@ -308,8 +310,6 @@ typedef NSInteger NSEventGestureAxis;
 
 - (void)handleMouseMoved:(NSEvent*)aEvent;
 
-- (void)updateWindowDraggableStateOnMouseMove:(NSEvent*)theEvent;
-
 - (void)sendMouseEnterOrExitEvent:(NSEvent*)aEvent
                             enter:(BOOL)aEnter
                              type:(mozilla::WidgetMouseEvent::exitType)aType;
@@ -404,9 +404,8 @@ private:
   typedef mozilla::layers::APZCTreeManager APZCTreeManager;
 
 public:
-                          nsChildView();
-  virtual                 ~nsChildView();
-  
+  nsChildView();
+
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIWidget interface
@@ -445,7 +444,7 @@ public:
   // will be 2.0 (and might potentially other values as screen resolutions
   // evolve). This gives the relationship between what Gecko calls "device
   // pixels" and the Cocoa "points" coordinate system.
-  CGFloat                 BackingScaleFactor();
+  CGFloat                 BackingScaleFactor() const;
 
   // Call if the window's backing scale factor changes - i.e., it is moved
   // between HiDPI and non-HiDPI screens
@@ -547,6 +546,9 @@ public:
 
   virtual void UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries);
 
+  virtual void UpdateWindowDraggingRegion(const nsIntRegion& aRegion) MOZ_OVERRIDE;
+  const nsIntRegion& GetDraggableRegion() { return mDraggableRegion; }
+
   void              HidePlugin();
   void              UpdatePluginPort();
 
@@ -570,21 +572,22 @@ public:
   }
 
   void              NotifyDirtyRegion(const nsIntRegion& aDirtyRegion);
+  void              ClearVibrantAreas();
 
   // unit conversion convenience functions
-  int32_t           CocoaPointsToDevPixels(CGFloat aPts) {
+  int32_t           CocoaPointsToDevPixels(CGFloat aPts) const {
     return nsCocoaUtils::CocoaPointsToDevPixels(aPts, BackingScaleFactor());
   }
-  nsIntPoint        CocoaPointsToDevPixels(const NSPoint& aPt) {
+  nsIntPoint        CocoaPointsToDevPixels(const NSPoint& aPt) const {
     return nsCocoaUtils::CocoaPointsToDevPixels(aPt, BackingScaleFactor());
   }
-  nsIntRect         CocoaPointsToDevPixels(const NSRect& aRect) {
+  nsIntRect         CocoaPointsToDevPixels(const NSRect& aRect) const {
     return nsCocoaUtils::CocoaPointsToDevPixels(aRect, BackingScaleFactor());
   }
-  CGFloat           DevPixelsToCocoaPoints(int32_t aPixels) {
+  CGFloat           DevPixelsToCocoaPoints(int32_t aPixels) const {
     return nsCocoaUtils::DevPixelsToCocoaPoints(aPixels, BackingScaleFactor());
   }
-  NSRect            DevPixelsToCocoaPoints(const nsIntRect& aRect) {
+  NSRect            DevPixelsToCocoaPoints(const nsIntRect& aRect) const {
     return nsCocoaUtils::DevPixelsToCocoaPoints(aRect, BackingScaleFactor());
   }
 
@@ -595,6 +598,7 @@ public:
   APZCTreeManager* APZCTM() { return mAPZCTreeManager; }
 
 protected:
+  virtual ~nsChildView();
 
   void              ReportMoveEvent();
   void              ReportSizeEvent();
@@ -625,6 +629,8 @@ protected:
   void UpdateTitlebarCGContext();
 
   nsIntRect RectContainingTitlebarControls();
+  void UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries);
+  mozilla::VibrancyManager& EnsureVibrancyManager();
 
   nsIWidget* GetWidgetForListenerEvents();
 
@@ -674,11 +680,13 @@ protected:
   // uploaded to to mTitlebarImage. Main thread only.
   nsIntRegion           mDirtyTitlebarRegion;
 
+  nsIntRegion           mDraggableRegion;
+
   // Cached value of [mView backingScaleFactor], to avoid sending two obj-c
   // messages (respondsToSelector, backingScaleFactor) every time we need to
   // use it.
   // ** We'll need to reinitialize this if the backing resolution changes. **
-  CGFloat               mBackingScaleFactor;
+  mutable CGFloat       mBackingScaleFactor;
 
   bool                  mVisible;
   bool                  mDrawing;
@@ -693,6 +701,8 @@ protected:
   nsAutoPtr<GLPresenter> mGLPresenter;
 
   nsRefPtr<APZCTreeManager> mAPZCTreeManager;
+
+  mozilla::UniquePtr<mozilla::VibrancyManager> mVibrancyManager;
 
   static uint32_t sLastInputEventCount;
 

@@ -573,6 +573,10 @@ menuitem.bookmark-item {
   #bookmarks-menu-button.toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon {
     list-style-image: url("chrome://browser/skin/Toolbar-lunaSilver.png");
   }
+
+  #loop-call-button > .toolbarbutton-badge-container {
+    list-style-image: url(chrome://browser/skin/loop/toolbar-lunaSilver.png)
+  }
 }
 %endif
 
@@ -1014,7 +1018,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   list-style-image: url("chrome://browser/skin/menu-forward.png") !important;
 }
 
-/* tabview button & menu item */
+/* tabview menu item */
 
 #menu_tabview {
   list-style-image: url(chrome://browser/skin/tabview/tabview.png);
@@ -1035,6 +1039,20 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 
 #menu_tabview[groups="3"] {
   -moz-image-region: rect(1px, 71px, 17px, 55px);
+}
+
+/* undo close tab menu item */
+#alltabs_undoCloseTab {
+  list-style-image: url(chrome://browser/skin/undoCloseTab.png);
+}
+
+@media (min-resolution: 1.25dppx) {
+  #alltabs_undoCloseTab {
+    list-style-image: url(chrome://browser/skin/undoCloseTab@2x.png);
+  }
+  #alltabs_undoCloseTab > .toolbarbutton-icon {
+    width: 16px;
+  }
 }
 
 /* zoom control text (reset) button special case: */
@@ -1229,7 +1247,7 @@ html|*.urlbar-input:-moz-lwtheme::-moz-placeholder,
   -moz-margin-end: 3px;
 }
 
-#urlbar-display {
+.urlbar-display {
   margin-top: 0;
   margin-bottom: 0;
   -moz-margin-start: 0;
@@ -1525,14 +1543,6 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
 #page-report-button[open="true"] {
   -moz-image-region: rect(0, 48px, 16px, 32px);
 }
-
-
-%ifdef MOZ_LOOP
-/* Loop */
-#loop-call-button {
-  list-style-image: url("chrome://global/skin/loop/loop-call.png");
-}
-%endif
 
 /* social share panel */
 
@@ -2132,10 +2142,6 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   list-style-image: url(chrome://mozapps/skin/plugins/pluginBlocked-64.png);
 }
 
-.popup-notification-icon[popupid="plugins-not-found"] {
-  list-style-image: url(chrome://browser/skin/pluginInstall-64.png);
-}
-
 .popup-notification-icon[popupid="web-notifications"] {
   list-style-image: url(chrome://browser/skin/notification-64.png);
 }
@@ -2188,8 +2194,13 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   list-style-image: url(chrome://global/skin/icons/webapps-64.png);
 }
 
-.popup-notification-icon[popupid="mixed-content-blocked"] {
-  list-style-image: url(chrome://browser/skin/mixed-content-blocked-64.png);
+.popup-notification-icon[popupid="bad-content"] {
+  list-style-image: url(chrome://browser/skin/bad-content-blocked-64.png);
+}
+
+.popup-notification-icon[popupid="bad-content"][mixedblockdisabled],
+.popup-notification-icon[popupid="bad-content"][trackingblockdisabled] {
+  list-style-image: url(chrome://browser/skin/bad-content-unblocked-64.png);
 }
 
 .popup-notification-icon[popupid="webRTC-sharingDevices"],
@@ -2200,6 +2211,11 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 .popup-notification-icon[popupid="webRTC-sharingMicrophone"],
 .popup-notification-icon[popupid="webRTC-shareMicrophone"] {
   list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-64.png);
+}
+
+.popup-notification-icon[popupid="webRTC-sharingScreen"],
+.popup-notification-icon[popupid="webRTC-shareScreen"] {
+  list-style-image: url(chrome://browser/skin/webRTC-shareScreen-64.png);
 }
 
 .popup-notification-icon[popupid="pointerLock"] {
@@ -2293,10 +2309,6 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   -moz-image-region: rect(0, 48px, 16px, 32px);
 }
 
-#plugin-install-notification-icon {
-  list-style-image: url(chrome://browser/skin/pluginInstall-16.png);
-}
-
 #notification-popup-box[hidden] {
   /* Override display:none to make the pluginBlockedNotification animation work
      when showing the notification repeatedly. */
@@ -2317,9 +2329,14 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   }
 }
 
-.mixed-content-blocked-notification-icon,
-#mixed-content-blocked-notification-icon {
-  list-style-image: url(chrome://browser/skin/mixed-content-blocked-16.png);
+.bad-content-blocked-notification-icon,
+#bad-content-blocked-notification-icon {
+  list-style-image: url(chrome://browser/skin/bad-content-blocked-16.png);
+}
+
+.bad-content-unblocked-notification-icon,
+#bad-content-unblocked-notification-icon {
+  list-style-image: url(chrome://browser/skin/bad-content-unblocked-16.png);
 }
 
 .webRTC-shareDevices-notification-icon,
@@ -2340,6 +2357,16 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 .webRTC-sharingMicrophone-notification-icon,
 #webRTC-sharingMicrophone-notification-icon {
   list-style-image: url(chrome://browser/skin/webRTC-sharingMicrophone-16.png);
+}
+
+.webRTC-shareScreen-notification-icon,
+#webRTC-shareScreen-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-shareScreen-16.png);
+}
+
+.webRTC-sharingScreen-notification-icon,
+#webRTC-sharingScreen-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-sharingScreen-16.png);
 }
 
 .web-notifications-notification-icon,
@@ -2621,6 +2648,7 @@ notification[value="translation"] {
 %include ../shared/devtools/highlighter.inc.css
 %include ../shared/devtools/commandline.inc.css
 %include ../shared/plugin-doorhanger.inc.css
+%include ../shared/badcontent-doorhanger.inc.css
 
 %include downloads/indicator.css
 
@@ -2980,9 +3008,8 @@ chatbox {
 %include ../shared/contextmenu.inc.css
 
 #context-navigation {
-  background-color: -moz-dialog;
-  padding-bottom: 2px;
-  margin-bottom: 2px;
+  background-color: menu;
+  padding-bottom: 4px;
 }
 
 #context-sep-navigation {

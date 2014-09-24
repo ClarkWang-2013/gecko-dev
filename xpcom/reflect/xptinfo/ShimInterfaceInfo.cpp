@@ -51,7 +51,6 @@
 #include "nsIDOMHTMLAnchorElement.h"
 #include "nsIDOMHTMLAppletElement.h"
 #include "nsIDOMHTMLAreaElement.h"
-#include "nsIDOMHTMLAudioElement.h"
 #include "nsIDOMHTMLBRElement.h"
 #include "nsIDOMHTMLBaseElement.h"
 #include "nsIDOMHTMLBodyElement.h"
@@ -100,7 +99,6 @@
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsIDOMHTMLTitleElement.h"
 #include "nsIDOMHTMLUListElement.h"
-#include "nsIDOMHTMLVideoElement.h"
 #include "nsIDOMKeyEvent.h"
 #include "nsIDOMMediaError.h"
 #include "nsIDOMMediaList.h"
@@ -131,7 +129,6 @@
 #include "nsIDOMText.h"
 #include "nsIDOMTimeEvent.h"
 #include "nsIDOMTimeRanges.h"
-#include "nsIDOMTouchEvent.h"
 #include "nsIDOMTransitionEvent.h"
 #include "nsIDOMTreeWalker.h"
 #include "nsIDOMUIEvent.h"
@@ -190,7 +187,6 @@
 #include "mozilla/dom/HTMLAnchorElementBinding.h"
 #include "mozilla/dom/HTMLAppletElementBinding.h"
 #include "mozilla/dom/HTMLAreaElementBinding.h"
-#include "mozilla/dom/HTMLAudioElementBinding.h"
 #include "mozilla/dom/HTMLBRElementBinding.h"
 #include "mozilla/dom/HTMLBaseElementBinding.h"
 #include "mozilla/dom/HTMLBodyElementBinding.h"
@@ -239,7 +235,6 @@
 #include "mozilla/dom/HTMLTextAreaElementBinding.h"
 #include "mozilla/dom/HTMLTitleElementBinding.h"
 #include "mozilla/dom/HTMLUListElementBinding.h"
-#include "mozilla/dom/HTMLVideoElementBinding.h"
 #include "mozilla/dom/KeyEventBinding.h"
 #include "mozilla/dom/LocalMediaStreamBinding.h"
 #include "mozilla/dom/MediaErrorBinding.h"
@@ -249,7 +244,7 @@
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/MouseScrollEventBinding.h"
 #include "mozilla/dom/MutationEventBinding.h"
-#include "mozilla/dom/MozNamedAttrMapBinding.h"
+#include "mozilla/dom/NamedNodeMapBinding.h"
 #include "mozilla/dom/NodeIteratorBinding.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NotifyPaintEventBinding.h"
@@ -381,7 +376,6 @@ const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
   DEFINE_SHIM(HTMLAnchorElement),
   DEFINE_SHIM(HTMLAppletElement),
   DEFINE_SHIM(HTMLAreaElement),
-  DEFINE_SHIM(HTMLAudioElement),
   DEFINE_SHIM(HTMLBRElement),
   DEFINE_SHIM(HTMLBaseElement),
   DEFINE_SHIM(HTMLBodyElement),
@@ -430,7 +424,6 @@ const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
   DEFINE_SHIM(HTMLTextAreaElement),
   DEFINE_SHIM(HTMLTitleElement),
   DEFINE_SHIM(HTMLUListElement),
-  DEFINE_SHIM(HTMLVideoElement),
   DEFINE_SHIM(KeyEvent),
   DEFINE_SHIM(LocalMediaStream),
   DEFINE_SHIM(MediaError),
@@ -440,7 +433,7 @@ const ComponentsInterfaceShimEntry kComponentsInterfaceShimMap[] =
   DEFINE_SHIM(MouseEvent),
   DEFINE_SHIM(MouseScrollEvent),
   DEFINE_SHIM(MutationEvent),
-  DEFINE_SHIM(MozNamedAttrMap),
+  DEFINE_SHIM_WITH_CUSTOM_INTERFACE(nsIDOMMozNamedAttrMap, NamedNodeMap),
   DEFINE_SHIM(NodeIterator),
   DEFINE_SHIM(Node),
   DEFINE_SHIM(NotifyPaintEvent),

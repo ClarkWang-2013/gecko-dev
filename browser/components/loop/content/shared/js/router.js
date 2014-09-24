@@ -6,7 +6,7 @@
 
 var loop = loop || {};
 loop.shared = loop.shared || {};
-loop.shared.router = (function(l10n) {
+loop.shared.router = (function() {
   "use strict";
 
   /**
@@ -17,44 +17,27 @@ loop.shared.router = (function(l10n) {
    */
   var BaseRouter = Backbone.Router.extend({
     /**
-     * Active view.
-     * @type {Object}
+     * Notifications collection.
+     * @type {loop.shared.models.NotificationCollection}
      */
-    _activeView: undefined,
-
-    /**
-     * Notifications dispatcher.
-     * @type {loop.shared.views.NotificationListView}
-     */
-    _notifier: undefined,
+    _notifications: undefined,
 
     /**
      * Constructor.
      *
      * Required options:
-     * - {loop.shared.views.NotificationListView} notifier Notifier view.
+     * - {loop.shared.models.NotificationCollection} notifications
      *
      * @param  {Object} options Options object.
      */
     constructor: function(options) {
       options = options || {};
-      if (!options.notifier) {
-        throw new Error("missing required notifier");
+      if (!options.notifications) {
+        throw new Error("missing required notifications");
       }
-      this._notifier = options.notifier;
+      this._notifications = options.notifications;
 
       Backbone.Router.apply(this, arguments);
-    },
-
-    /**
-     * Loads and render current active view.
-     *
-     * @param {loop.shared.views.BaseView} view View.
-     */
-    loadView: function(view) {
-      this.clearActiveView();
-      this._activeView = {type: "backbone", view: view.render().show()};
-      this.updateView(this._activeView.view.$el);
     },
 
     /**
@@ -64,34 +47,15 @@ loop.shared.router = (function(l10n) {
      */
     loadReactComponent: function(reactComponent) {
       this.clearActiveView();
-      this._activeView = {
-        type: "react",
-        view: React.renderComponent(reactComponent,
-                                    document.querySelector("#main"))
-      };
+      React.renderComponent(reactComponent,
+                            document.querySelector("#main"));
     },
 
     /**
      * Clears current active view.
      */
     clearActiveView: function() {
-      if (!this._activeView) {
-        return;
-      }
-      if (this._activeView.type === "react") {
-        React.unmountComponentAtNode(document.querySelector("#main"));
-      } else {
-        this._activeView.view.remove();
-      }
-    },
-
-    /**
-     * Updates main div element with provided contents.
-     *
-     * @param  {jQuery} $el Element.
-     */
-    updateView: function($el) {
-      $("#main").html($el);
+      React.unmountComponentAtNode(document.querySelector("#main"));
     }
   });
 
@@ -121,9 +85,12 @@ loop.shared.router = (function(l10n) {
       if (!options.conversation) {
         throw new Error("missing required conversation");
       }
+      if (!options.client) {
+        throw new Error("missing required client");
+      }
       this._conversation = options.conversation;
+      this._client = options.client;
 
-      this.listenTo(this._conversation, "session:ready", this._onSessionReady);
       this.listenTo(this._conversation, "session:ended", this._onSessionEnded);
       this.listenTo(this._conversation, "session:peer-hungup",
                                         this._onPeerHungup);
@@ -141,14 +108,9 @@ loop.shared.router = (function(l10n) {
      */
     _notifyError: function(error) {
       console.log(error);
-      this._notifier.errorL10n("connection_error_see_console_notification");
+      this._notifications.errorL10n("connection_error_see_console_notification");
       this.endCall();
     },
-
-    /**
-     * Starts the call. This method should be overriden.
-     */
-    startCall: function() {},
 
     /**
      * Ends the call. This method should be overriden.
@@ -156,17 +118,9 @@ loop.shared.router = (function(l10n) {
     endCall: function() {},
 
     /**
-     * Session is ready.
-     */
-    _onSessionReady: function() {
-      this.startCall();
-    },
-
-    /**
      * Session has ended. Notifies the user and ends the call.
      */
     _onSessionEnded: function() {
-      this._notifier.warnL10n("call_has_ended");
       this.endCall();
     },
 
@@ -179,7 +133,7 @@ loop.shared.router = (function(l10n) {
      * @param {Object} event
      */
     _onPeerHungup: function() {
-      this._notifier.warnL10n("peer_ended_conversation");
+      this._notifications.warnL10n("peer_ended_conversation2");
       this.endCall();
     },
 
@@ -187,7 +141,7 @@ loop.shared.router = (function(l10n) {
      * Network disconnected. Notifies the user and ends the call.
      */
     _onNetworkDisconnected: function() {
-      this._notifier.warnL10n("network_disconnected");
+      this._notifications.warnL10n("network_disconnected");
       this.endCall();
     }
   });
@@ -196,4 +150,4 @@ loop.shared.router = (function(l10n) {
     BaseRouter: BaseRouter,
     BaseConversationRouter: BaseConversationRouter
   };
-})(document.webL10n || document.mozL10n);
+})();

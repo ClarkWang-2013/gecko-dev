@@ -535,7 +535,7 @@ this.PlacesUtils = {
         return writer.value;
       }
       case this.TYPE_X_MOZ_URL: {
-        function gatherDataUrl(bNode) {
+        let gatherDataUrl = function (bNode) {
           if (isLivemark(bNode)) {
             return gatherLivemarkUrl(bNode) + NEWLINE + bNode.title;
           }
@@ -544,7 +544,7 @@ this.PlacesUtils = {
             return (aOverrideURI || bNode.uri) + NEWLINE + bNode.title;
           // ignore containers and separators - items without valid URIs
           return "";
-        }
+        };
 
         let [node, shouldClose] = convertNode(aNode);
         let dataUrl = gatherDataUrl(node);
@@ -554,15 +554,15 @@ this.PlacesUtils = {
         return dataUrl;
       }
       case this.TYPE_HTML: {
-        function gatherDataHtml(bNode) {
-          function htmlEscape(s) {
+        let gatherDataHtml = function (bNode) {
+          let htmlEscape = function (s) {
             s = s.replace(/&/g, "&amp;");
             s = s.replace(/>/g, "&gt;");
             s = s.replace(/</g, "&lt;");
             s = s.replace(/"/g, "&quot;");
             s = s.replace(/'/g, "&apos;");
             return s;
-          }
+          };
           // escape out potential HTML in the title
           let escapedTitle = bNode.title ? htmlEscape(bNode.title) : "";
 
@@ -1330,9 +1330,9 @@ this.PlacesUtils = {
     let itemIds = [];
     Task.spawn(function* () {
       let conn = yield this.promiseDBConnection();
-      const QUERY_STR = "SELECT b.id FROM moz_bookmarks b " +
-                        "JOIN moz_places h on h.id = b.fk " +
-                        "WHERE h.url = :url";
+      const QUERY_STR = `SELECT b.id FROM moz_bookmarks b
+                         JOIN moz_places h on h.id = b.fk
+                         WHERE h.url = :url`;
       let spec = aURI instanceof Ci.nsIURI ? aURI.spec : aURI;
       yield conn.executeCached(QUERY_STR, { url: spec }, aRow => {
         if (abort)
@@ -1520,6 +1520,33 @@ this.PlacesUtils = {
   },
 
   /**
+   * Returns the passed URL with a #-moz-resolution fragment
+   * for the specified dimensions and devicePixelRatio.
+   *
+   * @param aWindow
+   *        A window from where we want to get the device
+   *        pixel Ratio
+   *
+   * @param aURL
+   *        The URL where we should add the fragment
+   *
+   * @param aWidth
+   *        The target image width
+   *
+   * @param aHeight
+   *        The target image height
+   *
+   * @return The URL with the fragment at the end
+   */
+  getImageURLForResolution:
+  function PU_getImageURLForResolution(aWindow, aURL, aWidth = 16, aHeight = 16) {
+    let width  = Math.round(aWidth * aWindow.devicePixelRatio);
+    let height = Math.round(aHeight * aWindow.devicePixelRatio);
+    return aURL + (aURL.contains("#") ? "&" : "#") +
+           "-moz-resolution=" + width + "," + height;
+  },
+
+  /**
    * Get the unique id for an item (a bookmark, a folder or a separator) given
    * its item id.
    *
@@ -1565,13 +1592,16 @@ this.PlacesUtils = {
    *           this option can slow down the process significantly if the
    *           callback does anything that's not relatively trivial.  It is
    *           highly recommended to avoid any synchronous I/O or DB queries.
+   *        - includeItemIds: opt-in to include the deprecated id property.
+   *          Use it if you must. It'll be removed once the switch to guids is
+   *          complete.
    *
    * @return {Promise}
    * @resolves to a JS object that represents either a single item or a
    * bookmarks tree.  Each node in the tree has the following properties set:
    *  - guid (string): the item's guid (same as aItemGUID for the top item).
-   *  - [deprecated] id (number): the item's id.  Only use it if you must. It'll
-   *    be removed once the switch to guids is complete.
+   *  - [deprecated] id (number): the item's id. This is only if
+   *    aOptions.includeItemIds is set.
    *  - type (number):  the item's type.  @see PlacesUtils.TYPE_X_*
    *  - title (string): the item's title. If it has no title, this property
    *    isn't set.
@@ -1617,9 +1647,16 @@ this.PlacesUtils = {
             item[prop] = val;
         }
       };
-      copyProps("id" ,"guid", "title", "index", "dateAdded", "lastModified");
+      copyProps("guid", "title", "index", "dateAdded", "lastModified");
       if (aIncludeParentGUID)
         copyProps("parentGUID");
+
+      let itemId = aRow.getResultByName("id");
+      if (aOptions.includeItemIds)
+        item.id = itemId;
+
+      // Cache it for promiseItemId consumers regardless.
+      GUIDHelper.idsForGUIDs.set(item.guid, itemId);
 
       let type = aRow.getResultByName("type");
       if (type == Ci.nsINavBookmarksService.TYPE_BOOKMARK)
@@ -1628,7 +1665,7 @@ this.PlacesUtils = {
       // Add annotations.
       if (aRow.getResultByName("has_annos")) {
         try {
-          item.annos = PlacesUtils.getAnnotationsForItem(item.id);
+          item.annos = PlacesUtils.getAnnotationsForItem(itemId);
         } catch (e) {
           Cu.reportError("Unexpected error while reading annotations " + e);
         }
@@ -1640,20 +1677,20 @@ this.PlacesUtils = {
           // If this throws due to an invalid url, the item will be skipped.
           item.uri = NetUtil.newURI(aRow.getResultByName("url")).spec;
           // Keywords are cached, so this should be decently fast.
-          let keyword = PlacesUtils.bookmarks.getKeywordForBookmark(item.id);
+          let keyword = PlacesUtils.bookmarks.getKeywordForBookmark(itemId);
           if (keyword)
             item.keyword = keyword;
           break;
         case Ci.nsINavBookmarksService.TYPE_FOLDER:
           item.type = PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER;
           // Mark root folders.
-          if (item.id == PlacesUtils.placesRootId)
+          if (itemId == PlacesUtils.placesRootId)
             item.root = "placesRoot";
-          else if (item.id == PlacesUtils.bookmarksMenuFolderId)
+          else if (itemId == PlacesUtils.bookmarksMenuFolderId)
             item.root = "bookmarksMenuFolder";
-          else if (item.id == PlacesUtils.unfiledBookmarksFolderId)
+          else if (itemId == PlacesUtils.unfiledBookmarksFolderId)
             item.root = "unfiledBookmarksFolder";
-          else if (item.id == PlacesUtils.toolbarFolderId)
+          else if (itemId == PlacesUtils.toolbarFolderId)
             item.root = "toolbarFolder";
           break;
         case Ci.nsINavBookmarksService.TYPE_SEPARATOR:
@@ -1667,38 +1704,38 @@ this.PlacesUtils = {
     };
 
     const QUERY_STR =
-      "WITH RECURSIVE " +
-      "descendants(fk, level, type, id, guid, parent, parentGUID, position, " +
-      "            title, dateAdded, lastModified) AS (" +
-      "  SELECT b1.fk, 0, b1.type, b1.id, b1.guid, b1.parent, " +
-      "         (SELECT guid FROM moz_bookmarks WHERE id = b1.parent), " +
-      "         b1.position, b1.title, b1.dateAdded, b1.lastModified " +
-      "  FROM moz_bookmarks b1 WHERE b1.guid=:item_guid " +
-      "  UNION ALL " +
-      "  SELECT b2.fk, level + 1, b2.type, b2.id, b2.guid, b2.parent, " +
-      "         descendants.guid, b2.position, b2.title, b2.dateAdded, " +
-      "         b2.lastModified " +
-      "  FROM moz_bookmarks b2 " +
-      "  JOIN descendants ON b2.parent = descendants.id AND b2.id <> :tags_folder) " +
-      "SELECT d.level, d.id, d.guid, d.parent, d.parentGUID, d.type, " +
-      "       d.position AS [index], d.title, d.dateAdded, d.lastModified, " +
-      "       h.url, f.url AS iconuri, " +
-      "       (SELECT GROUP_CONCAT(t.title, ',') " +
-      "        FROM moz_bookmarks b2 " +
-      "        JOIN moz_bookmarks t ON t.id = +b2.parent AND t.parent = :tags_folder " +
-      "        WHERE b2.fk = h.id " +
-      "       ) AS tags, " +
-      "       EXISTS (SELECT 1 FROM moz_items_annos " +
-      "               WHERE item_id = d.id LIMIT 1) AS has_annos, " +
-      "       (SELECT a.content FROM moz_annos a " +
-      "        JOIN moz_anno_attributes n ON a.anno_attribute_id = n.id " +
-      "        WHERE place_id = h.id AND n.name = :charset_anno " +
-      "       ) AS charset " +
-      "FROM descendants d " +
-      "LEFT JOIN moz_bookmarks b3 ON b3.id = d.parent " +
-      "LEFT JOIN moz_places h ON h.id = d.fk " +
-      "LEFT JOIN moz_favicons f ON f.id = h.favicon_id " +
-      "ORDER BY d.level, d.parent, d.position";
+      `WITH RECURSIVE
+       descendants(fk, level, type, id, guid, parent, parentGUID, position,
+                   title, dateAdded, lastModified) AS (
+         SELECT b1.fk, 0, b1.type, b1.id, b1.guid, b1.parent,
+                (SELECT guid FROM moz_bookmarks WHERE id = b1.parent),
+                b1.position, b1.title, b1.dateAdded, b1.lastModified
+         FROM moz_bookmarks b1 WHERE b1.guid=:item_guid
+         UNION ALL
+         SELECT b2.fk, level + 1, b2.type, b2.id, b2.guid, b2.parent,
+                descendants.guid, b2.position, b2.title, b2.dateAdded,
+                b2.lastModified
+         FROM moz_bookmarks b2
+         JOIN descendants ON b2.parent = descendants.id AND b2.id <> :tags_folder)
+       SELECT d.level, d.id, d.guid, d.parent, d.parentGUID, d.type,
+              d.position AS [index], d.title, d.dateAdded, d.lastModified,
+              h.url, f.url AS iconuri,
+              (SELECT GROUP_CONCAT(t.title, ',')
+               FROM moz_bookmarks b2
+               JOIN moz_bookmarks t ON t.id = +b2.parent AND t.parent = :tags_folder
+               WHERE b2.fk = h.id
+              ) AS tags,
+              EXISTS (SELECT 1 FROM moz_items_annos
+                      WHERE item_id = d.id LIMIT 1) AS has_annos,
+              (SELECT a.content FROM moz_annos a
+               JOIN moz_anno_attributes n ON a.anno_attribute_id = n.id
+               WHERE place_id = h.id AND n.name = :charset_anno
+              ) AS charset
+       FROM descendants d
+       LEFT JOIN moz_bookmarks b3 ON b3.id = d.parent
+       LEFT JOIN moz_places h ON h.id = d.fk
+       LEFT JOIN moz_favicons f ON f.id = h.favicon_id
+       ORDER BY d.level, d.parent, d.position`;
 
 
     if (!aItemGUID)

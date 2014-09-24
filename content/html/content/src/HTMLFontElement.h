@@ -14,11 +14,10 @@ namespace dom {
 class HTMLFontElement MOZ_FINAL : public nsGenericHTMLElement
 {
 public:
-  HTMLFontElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLFontElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLFontElement();
 
   void GetColor(nsString& aColor)
   {
@@ -54,6 +53,8 @@ public:
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLFontElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

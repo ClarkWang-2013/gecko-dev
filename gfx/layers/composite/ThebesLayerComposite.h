@@ -37,9 +37,12 @@ class ThebesLayerComposite : public ThebesLayer,
                              public LayerComposite
 {
 public:
-  ThebesLayerComposite(LayerManagerComposite *aManager);
+  explicit ThebesLayerComposite(LayerManagerComposite *aManager);
+
+protected:
   virtual ~ThebesLayerComposite();
 
+public:
   virtual void Disconnect() MOZ_OVERRIDE;
 
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
@@ -62,8 +65,6 @@ public:
 
   virtual LayerComposite* AsLayerComposite() MOZ_OVERRIDE { return this; }
 
-  void EnsureTiled() { mRequiresTiledProperties = true; }
-
   virtual void InvalidateRegion(const nsIntRegion& aRegion)
   {
     NS_RUNTIMEABORT("ThebesLayerComposites can't fill invalidated regions");
@@ -85,11 +86,8 @@ protected:
 private:
   gfx::Filter GetEffectFilter() { return gfx::Filter::LINEAR; }
 
-  CSSToScreenScale GetEffectiveResolution();
-
 private:
   RefPtr<ContentHost> mBuffer;
-  bool mRequiresTiledProperties;
 };
 
 } /* layers */

@@ -24,8 +24,7 @@ public:
   using Element::GetText;
   using Element::SetText;
 
-  HTMLTitleElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
-  virtual ~HTMLTitleElement();
+  explicit HTMLTitleElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -58,6 +57,7 @@ public:
   virtual void DoneAddingChildren(bool aHaveNotified) MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLTitleElement();
 
   virtual JSObject* WrapNode(JSContext* cx)
     MOZ_OVERRIDE MOZ_FINAL;

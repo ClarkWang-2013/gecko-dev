@@ -9,6 +9,7 @@
 #include "mozilla/Atomics.h"
 
 #include "jslock.h"
+#include "jsmath.h"
 #include "jsnum.h" // for FIX_FPU
 
 #include "js/Utility.h"
@@ -130,9 +131,6 @@ ThreadPoolWorker::randomWorker()
 bool
 ThreadPoolWorker::start()
 {
-#ifndef JS_THREADSAFE
-    return false;
-#else
     if (isMainThread())
         return true;
 
@@ -141,12 +139,13 @@ ThreadPoolWorker::start()
     // Set state to active now, *before* the thread starts:
     state_ = ACTIVE;
 
+    MOZ_ASSERT(CanUseExtraThreads());
+
     return PR_CreateThread(PR_USER_THREAD,
                            HelperThreadMain, this,
                            PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD,
                            PR_UNJOINABLE_THREAD,
                            WORKER_THREAD_STACK_SIZE);
-#endif
 }
 
 #ifdef MOZ_NUWA_PROCESS
@@ -179,6 +178,7 @@ void
 ThreadPoolWorker::helperLoop()
 {
     MOZ_ASSERT(!isMainThread());
+    MOZ_ASSERT(CanUseExtraThreads());
 
     // This is hokey in the extreme.  To compute the stack limit,
     // subtract the size of the stack from the address of a local
@@ -275,18 +275,15 @@ ThreadPool::~ThreadPool()
     terminateWorkers();
     if (chunkLock_)
         clearChunkCache();
-#ifdef JS_THREADSAFE
     if (chunkLock_)
         PR_DestroyLock(chunkLock_);
     if (joinBarrier_)
         PR_DestroyCondVar(joinBarrier_);
-#endif
 }
 
 bool
 ThreadPool::init()
 {
-#ifdef JS_THREADSAFE
     if (!Monitor::init())
         return false;
     joinBarrier_ = PR_NewCondVar(lock_);
@@ -295,18 +292,13 @@ ThreadPool::init()
     chunkLock_ = PR_NewLock();
     if (!chunkLock_)
         return false;
-#endif
     return true;
 }
 
 uint32_t
 ThreadPool::numWorkers() const
 {
-#ifdef JS_THREADSAFE
     return HelperThreadState().cpuCount;
-#else
-    return 1;
-#endif
 }
 
 bool
@@ -320,8 +312,6 @@ ThreadPool::workStealing() const
     return true;
 }
 
-extern uint64_t random_next(uint64_t *, int);
-
 bool
 ThreadPool::lazyStartWorkers(JSContext *cx)
 {
@@ -331,7 +321,6 @@ ThreadPool::lazyStartWorkers(JSContext *cx)
     // from this function, the workers array is either full (upon
     // success) or empty (upon failure).
 
-#ifdef JS_THREADSAFE
     if (!workers_.empty()) {
         MOZ_ASSERT(workers_.length() == numWorkers());
         return true;
@@ -360,7 +349,6 @@ ThreadPool::lazyStartWorkers(JSContext *cx)
             return false;
         }
     }
-#endif
 
     return true;
 }
@@ -502,10 +490,10 @@ ThreadPool::abortJob()
 // that a small number of chunks will be used intensively for a short
 // while and then be abandoned at the next GC.
 //
-// It's an open question whether it's best to go directly to the
-// pageAllocator, as now, or go via the GC's chunk pool.  Either way
-// there's a need to manage a predictable chunk cache here as we don't
-// want chunks to be deallocated during a parallel section.
+// It's an open question whether it's best to map the chunk directly,
+// as now, or go via the GC's chunk pool.  Either way there's a need
+// to manage a predictable chunk cache here as we don't want chunks to
+// be deallocated during a parallel section.
 
 gc::ForkJoinNurseryChunk *
 ThreadPool::getChunk()
@@ -524,7 +512,7 @@ ThreadPool::getChunk()
     }
     gc::ForkJoinNurseryChunk *c =
         reinterpret_cast<gc::ForkJoinNurseryChunk *>(
-            runtime_->gc.pageAllocator.mapAlignedPages(gc::ChunkSize, gc::ChunkSize));
+            gc::MapAlignedPages(gc::ChunkSize, gc::ChunkSize));
     if (!c)
         return c;
     poisonChunk(c);
@@ -580,7 +568,7 @@ ThreadPool::clearChunkCache()
     while (p) {
         ChunkFreeList *victim = p;
         p = p->next;
-        runtime_->gc.pageAllocator.unmapPages(victim, gc::ChunkSize);
+        gc::UnmapPages(victim, gc::ChunkSize);
     }
 #endif
 }

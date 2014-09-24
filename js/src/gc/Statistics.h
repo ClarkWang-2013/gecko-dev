@@ -43,6 +43,7 @@ enum Phase {
     PHASE_SWEEP_COMPARTMENTS,
     PHASE_SWEEP_DISCARD_CODE,
     PHASE_SWEEP_TABLES,
+    PHASE_SWEEP_TABLES_INNER_VIEWS,
     PHASE_SWEEP_TABLES_WRAPPER,
     PHASE_SWEEP_TABLES_BASE_SHAPE,
     PHASE_SWEEP_TABLES_INITIAL_SHAPE,
@@ -58,6 +59,10 @@ enum Phase {
     PHASE_SWEEP_SCRIPT,
     PHASE_SWEEP_SHAPE,
     PHASE_SWEEP_JITCODE,
+    PHASE_COMPACT,
+    PHASE_COMPACT_MOVE,
+    PHASE_COMPACT_UPDATE,
+    PHASE_COMPACT_UPDATE_GRAY,
     PHASE_FINALIZE_END,
     PHASE_DESTROY,
     PHASE_GC_END,
@@ -75,14 +80,31 @@ enum Stat {
 
 class StatisticsSerializer;
 
-struct Statistics {
+struct ZoneGCStats
+{
+    /* Number of zones collected in this GC. */
+    int collectedCount;
+
+    /* Total number of zones in the Runtime at the start of this GC. */
+    int zoneCount;
+
+    /* Total number of compartments in the Runtime at the start of this GC. */
+    int compartmentCount;
+
+    bool isCollectingAllZones() const { return collectedCount == zoneCount; }
+
+    ZoneGCStats() : collectedCount(0), zoneCount(0), compartmentCount(0) {}
+};
+
+struct Statistics
+{
     explicit Statistics(JSRuntime *rt);
     ~Statistics();
 
     void beginPhase(Phase phase);
     void endPhase(Phase phase);
 
-    void beginSlice(int collectedCount, int zoneCount, int compartmentCount, JS::gcreason::Reason reason);
+    void beginSlice(const ZoneGCStats &zoneStats, JS::gcreason::Reason reason);
     void endSlice();
 
     void reset(const char *reason) { slices.back().resetReason = reason; }
@@ -96,10 +118,13 @@ struct Statistics {
     int64_t beginSCC();
     void endSCC(unsigned scc, int64_t start);
 
-    jschar *formatMessage();
-    jschar *formatJSON(uint64_t timestamp);
+    char16_t *formatMessage();
+    char16_t *formatJSON(uint64_t timestamp);
 
     JS::GCSliceCallback setSliceCallback(JS::GCSliceCallback callback);
+
+    int64_t clearMaxGCPauseAccumulator();
+    int64_t getMaxGCPauseSinceClear();
 
   private:
     JSRuntime *runtime;
@@ -115,9 +140,8 @@ struct Statistics {
      */
     int gcDepth;
 
-    int collectedCount;
-    int zoneCount;
-    int compartmentCount;
+    ZoneGCStats zoneStats;
+
     const char *nonincrementalReason;
 
     struct SliceData {
@@ -153,6 +177,9 @@ struct Statistics {
     /* Allocated space before the GC started. */
     size_t preBytes;
 
+    /* Records the maximum GC pause in an API-controlled interval (in us). */
+    int64_t maxPauseInInterval;
+
 #ifdef DEBUG
     /* Phases that are currently on stack. */
     static const size_t MAX_NESTING = 8;
@@ -178,13 +205,12 @@ struct Statistics {
 
 struct AutoGCSlice
 {
-    AutoGCSlice(Statistics &stats, int collectedCount, int zoneCount, int compartmentCount,
-                JS::gcreason::Reason reason
+    AutoGCSlice(Statistics &stats, const ZoneGCStats &zoneStats, JS::gcreason::Reason reason
                 MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : stats(stats)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        stats.beginSlice(collectedCount, zoneCount, compartmentCount, reason);
+        stats.beginSlice(zoneStats, reason);
     }
     ~AutoGCSlice() { stats.endSlice(); }
 
@@ -212,17 +238,16 @@ struct AutoPhase
 
 struct MaybeAutoPhase
 {
-    explicit MaybeAutoPhase(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
+    explicit MaybeAutoPhase(Statistics &statsArg, bool condition, Phase phaseArg
+                            MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : stats(nullptr)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    void construct(Statistics &statsArg, Phase phaseArg)
-    {
-        JS_ASSERT(!stats);
-        stats = &statsArg;
-        phase = phaseArg;
-        stats->beginPhase(phase);
+        if (condition) {
+            stats = &statsArg;
+            phase = phaseArg;
+            stats->beginPhase(phase);
+        }
     }
     ~MaybeAutoPhase() {
         if (stats)

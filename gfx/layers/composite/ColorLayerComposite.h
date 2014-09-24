@@ -23,19 +23,22 @@ class ColorLayerComposite : public ColorLayer,
                             public LayerComposite
 {
 public:
-  ColorLayerComposite(LayerManagerComposite *aManager)
+  explicit ColorLayerComposite(LayerManagerComposite *aManager)
     : ColorLayer(aManager, nullptr)
     , LayerComposite(aManager)
   {
     MOZ_COUNT_CTOR(ColorLayerComposite);
     mImplData = static_cast<LayerComposite*>(this);
   }
+
+protected:
   ~ColorLayerComposite()
   {
     MOZ_COUNT_DTOR(ColorLayerComposite);
     Destroy();
   }
 
+public:
   // LayerComposite Implementation
   virtual Layer* GetLayer() MOZ_OVERRIDE { return this; }
 

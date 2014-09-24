@@ -124,13 +124,13 @@ class gcstats::StatisticsSerializer
         needComma_ = true;
     }
 
-    jschar *finishJSString() {
+    char16_t *finishJSString() {
         char *buf = finishCString();
         if (!buf)
             return nullptr;
 
         size_t nchars = strlen(buf);
-        jschar *out = js_pod_malloc<jschar>(nchars + 1);
+        char16_t *out = js_pod_malloc<char16_t>(nchars + 1);
         if (!out) {
             oom_ = true;
             js_free(buf);
@@ -244,13 +244,13 @@ const char *
 js::gcstats::ExplainReason(JS::gcreason::Reason reason)
 {
     switch (reason) {
-#define SWITCH_REASON(name)                     \
+#define SWITCH_REASON(name)                         \
         case JS::gcreason::name:                    \
           return #name;
         GCREASONS(SWITCH_REASON)
 
         default:
-          MOZ_ASSUME_UNREACHABLE("bad GC reason");
+          MOZ_CRASH("bad GC reason");
 #undef SWITCH_REASON
     }
 }
@@ -292,6 +292,7 @@ static const PhaseInfo phases[] = {
     { PHASE_SWEEP_COMPARTMENTS, "Sweep Compartments", PHASE_SWEEP },
     { PHASE_SWEEP_DISCARD_CODE, "Sweep Discard Code", PHASE_SWEEP_COMPARTMENTS },
     { PHASE_SWEEP_TABLES, "Sweep Tables", PHASE_SWEEP_COMPARTMENTS },
+    { PHASE_SWEEP_TABLES_INNER_VIEWS, "Sweep Inner Views", PHASE_SWEEP_TABLES },
     { PHASE_SWEEP_TABLES_WRAPPER, "Sweep Cross Compartment Wrappers", PHASE_SWEEP_TABLES },
     { PHASE_SWEEP_TABLES_BASE_SHAPE, "Sweep Base Shapes", PHASE_SWEEP_TABLES },
     { PHASE_SWEEP_TABLES_INITIAL_SHAPE, "Sweep Initial Shapes", PHASE_SWEEP_TABLES },
@@ -307,6 +308,10 @@ static const PhaseInfo phases[] = {
     { PHASE_SWEEP_SCRIPT, "Sweep Script", PHASE_SWEEP },
     { PHASE_SWEEP_SHAPE, "Sweep Shape", PHASE_SWEEP },
     { PHASE_SWEEP_JITCODE, "Sweep JIT code", PHASE_SWEEP },
+    { PHASE_COMPACT, "Compact", PHASE_NO_PARENT },
+    { PHASE_COMPACT_MOVE, "Compact Move", PHASE_COMPACT },
+    { PHASE_COMPACT_UPDATE, "Compact Update", PHASE_COMPACT, },
+    { PHASE_COMPACT_UPDATE_GRAY, "Compact Update Gray", PHASE_COMPACT_UPDATE, },
     { PHASE_FINALIZE_END, "Finalize End Callback", PHASE_SWEEP },
     { PHASE_DESTROY, "Deallocate", PHASE_SWEEP },
     { PHASE_GC_END, "End Callback", PHASE_NO_PARENT },
@@ -331,6 +336,8 @@ Statistics::gcDuration(int64_t *total, int64_t *maxPause)
         if (slice->duration() > *maxPause)
             *maxPause = slice->duration();
     }
+    if (*maxPause > maxPauseInInterval)
+        maxPauseInInterval = *maxPause;
 }
 
 void
@@ -363,9 +370,9 @@ Statistics::formatData(StatisticsSerializer &ss, uint64_t timestamp)
     else
         ss.appendString("Reason", ExplainReason(slices[0].reason));
     ss.appendDecimal("Total Time", "ms", t(total));
-    ss.appendNumber("Zones Collected", "%d", "", collectedCount);
-    ss.appendNumber("Total Zones", "%d", "", zoneCount);
-    ss.appendNumber("Total Compartments", "%d", "", compartmentCount);
+    ss.appendNumber("Zones Collected", "%d", "", zoneStats.collectedCount);
+    ss.appendNumber("Total Zones", "%d", "", zoneStats.zoneCount);
+    ss.appendNumber("Total Compartments", "%d", "", zoneStats.compartmentCount);
     ss.appendNumber("Minor GCs", "%d", "", counts[STAT_MINOR_GC]);
     ss.appendNumber("MMU (20ms)", "%d", "%", int(mmu20 * 100));
     ss.appendNumber("MMU (50ms)", "%d", "%", int(mmu50 * 100));
@@ -420,7 +427,7 @@ Statistics::formatData(StatisticsSerializer &ss, uint64_t timestamp)
     return !ss.isOOM();
 }
 
-jschar *
+char16_t *
 Statistics::formatMessage()
 {
     StatisticsSerializer ss(StatisticsSerializer::AsText);
@@ -428,7 +435,7 @@ Statistics::formatMessage()
     return ss.finishJSString();
 }
 
-jschar *
+char16_t *
 Statistics::formatJSON(uint64_t timestamp)
 {
     StatisticsSerializer ss(StatisticsSerializer::AsJSON);
@@ -442,11 +449,9 @@ Statistics::Statistics(JSRuntime *rt)
     fp(nullptr),
     fullFormat(false),
     gcDepth(0),
-    collectedCount(0),
-    zoneCount(0),
-    compartmentCount(0),
     nonincrementalReason(nullptr),
     preBytes(0),
+    maxPauseInInterval(0),
     phaseNestingDepth(0),
     sliceCallback(nullptr)
 {
@@ -492,10 +497,25 @@ Statistics::~Statistics()
 }
 
 JS::GCSliceCallback
-Statistics::setSliceCallback(JS::GCSliceCallback newCallback) {
+Statistics::setSliceCallback(JS::GCSliceCallback newCallback)
+{
     JS::GCSliceCallback oldCallback = sliceCallback;
     sliceCallback = newCallback;
     return oldCallback;
+}
+
+int64_t
+Statistics::clearMaxGCPauseAccumulator()
+{
+    int64_t prior = maxPauseInInterval;
+    maxPauseInInterval = 0;
+    return prior;
+}
+
+int64_t
+Statistics::getMaxGCPauseSinceClear()
+{
+    return maxPauseInInterval;
 }
 
 void
@@ -531,7 +551,7 @@ Statistics::beginGC()
     sccTimes.clearAndFree();
     nonincrementalReason = nullptr;
 
-    preBytes = runtime->gc.bytes;
+    preBytes = runtime->gc.usage.gcBytes();
 }
 
 void
@@ -549,7 +569,7 @@ Statistics::endGC()
         int64_t sccTotal, sccLongest;
         sccDurations(&sccTotal, &sccLongest);
 
-        (*cb)(JS_TELEMETRY_GC_IS_COMPARTMENTAL, collectedCount == zoneCount ? 0 : 1);
+        (*cb)(JS_TELEMETRY_GC_IS_COMPARTMENTAL, !zoneStats.isCollectingAllZones());
         (*cb)(JS_TELEMETRY_GC_MS, t(total));
         (*cb)(JS_TELEMETRY_GC_MAX_PAUSE_MS, t(longest));
         (*cb)(JS_TELEMETRY_GC_MARK_MS, t(phaseTimes[PHASE_MARK]));
@@ -570,18 +590,15 @@ Statistics::endGC()
 }
 
 void
-Statistics::beginSlice(int collectedCount, int zoneCount, int compartmentCount,
-                       JS::gcreason::Reason reason)
+Statistics::beginSlice(const ZoneGCStats &zoneStats, JS::gcreason::Reason reason)
 {
-    this->collectedCount = collectedCount;
-    this->zoneCount = zoneCount;
-    this->compartmentCount = compartmentCount;
+    this->zoneStats = zoneStats;
 
     bool first = runtime->gc.state() == gc::NO_INCREMENTAL;
     if (first)
         beginGC();
 
-    SliceData data(reason, PRMJ_Now(), SystemPageAllocator::GetPageFaultCount());
+    SliceData data(reason, PRMJ_Now(), GetPageFaultCount());
     (void) slices.append(data); /* Ignore any OOMs here. */
 
     if (JSAccumulateTelemetryDataCallback cb = runtime->telemetryCallback)
@@ -589,7 +606,7 @@ Statistics::beginSlice(int collectedCount, int zoneCount, int compartmentCount,
 
     // Slice callbacks should only fire for the outermost level
     if (++gcDepth == 1) {
-        bool wasFullGC = collectedCount == zoneCount;
+        bool wasFullGC = zoneStats.isCollectingAllZones();
         if (sliceCallback)
             (*sliceCallback)(runtime, first ? JS::GC_CYCLE_BEGIN : JS::GC_SLICE_BEGIN,
                              JS::GCDescription(!wasFullGC));
@@ -600,7 +617,7 @@ void
 Statistics::endSlice()
 {
     slices.back().end = PRMJ_Now();
-    slices.back().endFaults = SystemPageAllocator::GetPageFaultCount();
+    slices.back().endFaults = GetPageFaultCount();
 
     if (JSAccumulateTelemetryDataCallback cb = runtime->telemetryCallback) {
         (*cb)(JS_TELEMETRY_GC_SLICE_MS, t(slices.back().end - slices.back().start));
@@ -613,7 +630,7 @@ Statistics::endSlice()
 
     // Slice callbacks should only fire for the outermost level
     if (--gcDepth == 0) {
-        bool wasFullGC = collectedCount == zoneCount;
+        bool wasFullGC = zoneStats.isCollectingAllZones();
         if (sliceCallback)
             (*sliceCallback)(runtime, last ? JS::GC_CYCLE_END : JS::GC_SLICE_END,
                              JS::GCDescription(!wasFullGC));

@@ -15,9 +15,11 @@ package org.mozilla.search;
  * https://github.com/ericedens/FirefoxSearch/issues/3
  */
 public class Constants {
-    public static final String AUTO_COMPLETE_FRAGMENT = "org.mozilla.search.AUTO_COMPLETE_FRAGMENT";
-    public static final String CARD_STREAM_FRAGMENT = "org.mozilla.search.CARD_STREAM_FRAGMENT";
-    public static final String GECKO_VIEW_FRAGMENT = "org.mozilla.search.GECKO_VIEW_FRAGMENT";
 
-    public static final String AUTOCOMPLETE_ROW_LIMIT = "5";
+    public static final int SUGGESTION_MAX = 5;
+
+    public static final String ABOUT_BLANK = "about:blank";
+
+    // TODO: Localize this with region.properties (or a similar solution). See bug 1065306.
+    public static final String DEFAULT_ENGINE_IDENTIFIER = "yahoo";
 }

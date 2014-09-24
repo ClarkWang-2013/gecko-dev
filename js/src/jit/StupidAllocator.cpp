@@ -34,7 +34,7 @@ StupidAllocator::registerIndex(AnyRegister reg)
         if (reg == registers[i].reg)
             return i;
     }
-    MOZ_ASSUME_UNREACHABLE("Bad register");
+    MOZ_CRASH("Bad register");
 }
 
 bool
@@ -51,8 +51,7 @@ StupidAllocator::init()
         for (LInstructionIterator ins = block->begin(); ins != block->end(); ins++) {
             for (size_t j = 0; j < ins->numDefs(); j++) {
                 LDefinition *def = ins->getDef(j);
-                if (def->policy() != LDefinition::PASSTHROUGH)
-                    virtualRegisters[def->virtualRegister()] = def;
+                virtualRegisters[def->virtualRegister()] = def;
             }
 
             for (size_t j = 0; j < ins->numTemps(); j++) {
@@ -77,8 +76,10 @@ StupidAllocator::init()
         RegisterSet remainingRegisters(allRegisters_);
         while (!remainingRegisters.empty(/* float = */ false))
             registers[registerCount++].reg = AnyRegister(remainingRegisters.takeGeneral());
+
         while (!remainingRegisters.empty(/* float = */ true))
             registers[registerCount++].reg = AnyRegister(remainingRegisters.takeFloat());
+
         JS_ASSERT(registerCount <= MAX_REGISTERS);
     }
 
@@ -94,7 +95,7 @@ StupidAllocator::allocationRequiresRegister(const LAllocation *alloc, AnyRegiste
         const LUse *use = alloc->toUse();
         if (use->policy() == LUse::FIXED) {
             AnyRegister usedReg = GetFixedRegister(virtualRegisters[use->virtualRegister()], use);
-            if (usedReg == reg)
+            if (usedReg.aliases(reg))
                 return true;
         }
     }
@@ -129,7 +130,7 @@ StupidAllocator::ensureHasRegister(LInstruction *ins, uint32_t vreg)
     RegisterIndex existing = findExistingRegister(vreg);
     if (existing != UINT32_MAX) {
         if (registerIsReserved(ins, registers[existing].reg)) {
-            evictRegister(ins, existing);
+            evictAliasedRegister(ins, existing);
         } else {
             registers[existing].age = ins->id();
             return registers[existing].reg;
@@ -158,7 +159,7 @@ StupidAllocator::allocateRegister(LInstruction *ins, uint32_t vreg)
     for (size_t i = 0; i < registerCount; i++) {
         AnyRegister reg = registers[i].reg;
 
-        if (reg.isFloat() != def->isFloatReg())
+        if (!def->isCompatibleReg(reg))
             continue;
 
         // Skip the register if it is in use for an allocated input or output.
@@ -173,7 +174,7 @@ StupidAllocator::allocateRegister(LInstruction *ins, uint32_t vreg)
         }
     }
 
-    evictRegister(ins, best);
+    evictAliasedRegister(ins, best);
     return best;
 }
 
@@ -197,6 +198,16 @@ StupidAllocator::evictRegister(LInstruction *ins, RegisterIndex index)
 {
     syncRegister(ins, index);
     registers[index].set(MISSING_ALLOCATION);
+}
+
+void
+StupidAllocator::evictAliasedRegister(LInstruction *ins, RegisterIndex index)
+{
+    for (size_t i = 0; i < registers[index].reg.numAliased(); i++) {
+        uint32_t aindex = registerIndex(registers[index].reg.aliased(i));
+        syncRegister(ins, aindex);
+        registers[aindex].set(MISSING_ALLOCATION);
+    }
 }
 
 void
@@ -334,7 +345,9 @@ StupidAllocator::allocateForInstruction(LInstruction *ins)
             AnyRegister reg = GetFixedRegister(virtualRegisters[vreg], use);
             RegisterIndex index = registerIndex(reg);
             if (registers[index].vreg != vreg) {
-                evictRegister(ins, index);
+                // Need to evict multiple registers
+                evictAliasedRegister(ins, registerIndex(reg));
+                // If this vreg is already assigned to an incorrect register
                 RegisterIndex existing = findExistingRegister(vreg);
                 if (existing != UINT32_MAX)
                     evictRegister(ins, existing);
@@ -356,8 +369,7 @@ StupidAllocator::allocateForInstruction(LInstruction *ins)
     }
     for (size_t i = 0; i < ins->numDefs(); i++) {
         LDefinition *def = ins->getDef(i);
-        if (def->policy() != LDefinition::PASSTHROUGH)
-            allocateForDefinition(ins, def);
+        allocateForDefinition(ins, def);
     }
 
     // Allocate for remaining inputs which do not need to be in registers.

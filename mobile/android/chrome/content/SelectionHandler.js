@@ -4,6 +4,9 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
+// Define elements that bound phone number containers.
+const PHONE_NUMBER_CONTAINERS = "td,div";
+
 var SelectionHandler = {
   HANDLE_TYPE_START: "START",
   HANDLE_TYPE_MIDDLE: "MIDDLE",
@@ -195,7 +198,7 @@ var SelectionHandler = {
       }
 
       case "TextSelection:Get":
-        sendMessageToJava({
+        Messaging.sendRequest({
           type: "TextSelection:Data",
           requestId: aData,
           text: this._getSelectedText()
@@ -209,7 +212,7 @@ var SelectionHandler = {
   _startDraggingHandles: function sh_startDraggingHandles() {
     if (!this._draggingHandles) {
       this._draggingHandles = true;
-      sendMessageToJava({ type: "TextSelection:DraggingHandle", dragging: true });
+      Messaging.sendRequest({ type: "TextSelection:DraggingHandle", dragging: true });
     }
   },
 
@@ -218,7 +221,7 @@ var SelectionHandler = {
   _stopDraggingHandles: function sh_stopDraggingHandles() {
     if (this._draggingHandles) {
       this._draggingHandles = false;
-      sendMessageToJava({ type: "TextSelection:DraggingHandle", dragging: false });
+      Messaging.sendRequest({ type: "TextSelection:DraggingHandle", dragging: false });
     }
   },
 
@@ -317,42 +320,6 @@ var SelectionHandler = {
       return false;
     }
 
-    if (this._isPhoneNumber(selection.toString())) {
-      let anchorNode = selection.anchorNode;
-      let anchorOffset = selection.anchorOffset;
-      let focusNode = null;
-      let focusOffset = null;
-      while (this._isPhoneNumber(selection.toString().trim())) {
-        focusNode = selection.focusNode;
-        focusOffset = selection.focusOffset;
-        selection.modify("extend", "forward", "word");
-        // if we hit the end of the text on the page, we can't advance the selection
-        if (focusNode == selection.focusNode && focusOffset == selection.focusOffset) {
-          break;
-        }
-      }
-
-      // reverse selection
-      selection.collapse(focusNode, focusOffset);
-      selection.extend(anchorNode, anchorOffset);
-
-      anchorNode = focusNode;
-      anchorOffset = focusOffset
-
-      while (this._isPhoneNumber(selection.toString().trim())) {
-        focusNode = selection.focusNode;
-        focusOffset = selection.focusOffset;
-        selection.modify("extend", "backward", "word");
-        // if we hit the end of the text on the page, we can't advance the selection
-        if (focusNode == selection.focusNode && focusOffset == selection.focusOffset) {
-          break;
-        }
-      }
-
-      selection.collapse(focusNode, focusOffset);
-      selection.extend(anchorNode, anchorOffset);
-    }
-
     // Add a listener to end the selection if it's removed programatically
     selection.QueryInterface(Ci.nsISelectionPrivate).addSelectionListener(this);
     this._activeType = this.TYPE_SELECTION;
@@ -374,7 +341,7 @@ var SelectionHandler = {
 
     // Determine position and show handles, open actionbar
     this._positionHandles(positions);
-    sendMessageToJava({
+    Messaging.sendRequest({
       type: "TextSelection:ShowHandles",
       handles: [this.HANDLE_TYPE_START, this.HANDLE_TYPE_END]
     });
@@ -387,7 +354,18 @@ var SelectionHandler = {
    */
   _performSelection: function sh_performSelection(aOptions) {
     if (aOptions.mode == this.SELECT_AT_POINT) {
-      return this._domWinUtils.selectAtPoint(aOptions.x, aOptions.y, Ci.nsIDOMWindowUtils.SELECT_WORDNOSPACE);
+      // Clear any ranges selected outside SelectionHandler, by code such as Find-In-Page.
+      this._contentWindow.getSelection().removeAllRanges();
+      if (!this._domWinUtils.selectAtPoint(aOptions.x, aOptions.y, Ci.nsIDOMWindowUtils.SELECT_WORDNOSPACE)) {
+        return false;
+      }
+
+      // Perform additional phone-number "smart selection".
+      if (this._isPhoneNumber(this._getSelection().toString())) {
+        this._selectSmartPhoneNumber();
+      }
+
+      return true;
     }
 
     if (aOptions.mode != this.SELECT_ALL) {
@@ -425,6 +403,71 @@ var SelectionHandler = {
     }
 
     return true;
+  },
+
+  /*
+   * Called to expand a selection that appears to represent a phone number. This enhances the basic
+   * SELECT_WORDNOSPACE logic employed in performSelection() in response to long-tap / selecting text.
+   */
+  _selectSmartPhoneNumber: function() {
+    this._extendPhoneNumberSelection("forward");
+    this._reversePhoneNumberSelectionDir();
+
+    this._extendPhoneNumberSelection("backward");
+    this._reversePhoneNumberSelectionDir();
+  },
+
+  /*
+   * Extend the current phone number selection in the requested direction.
+   */
+  _extendPhoneNumberSelection: function(direction) {
+    let selection = this._getSelection();
+
+    // Extend the phone number selection until we find a boundry.
+    while (true) {
+      // Save current focus position, and extend the selection.
+      let focusNode = selection.focusNode;
+      let focusOffset = selection.focusOffset;
+      selection.modify("extend", direction, "character");
+
+      // If the selection doesn't change, (can't extend further), we're done.
+      if (selection.focusNode == focusNode && selection.focusOffset == focusOffset) {
+        return;
+      }
+
+      // Don't extend past a valid phone number.
+      if (!this._isPhoneNumber(selection.toString().trim())) {
+        // Backout the undesired selection extend, and we're done.
+        selection.collapse(selection.anchorNode, selection.anchorOffset);
+        selection.extend(focusNode, focusOffset);
+        return;
+      }
+
+      // Don't extend the selection into a new container.
+      if (selection.focusNode != focusNode) {
+        let nextContainer = (selection.focusNode instanceof Text) ?
+          selection.focusNode.parentNode : selection.focusNode;
+        if (nextContainer.matches &&
+            nextContainer.matches(PHONE_NUMBER_CONTAINERS)) {
+          // Backout the undesired selection extend, and we're done.
+          selection.collapse(selection.anchorNode, selection.anchorOffset);
+          selection.extend(focusNode, focusOffset);
+          return
+        }
+      }
+    }
+  },
+
+  /*
+   * Reverse the the selection direction, swapping anchorNode <-+-> focusNode.
+   */
+  _reversePhoneNumberSelectionDir: function(direction) {
+    let selection = this._getSelection();
+
+    let anchorNode = selection.anchorNode;
+    let anchorOffset = selection.anchorOffset;
+    selection.collapse(selection.focusNode, selection.focusOffset);
+    selection.extend(anchorNode, anchorOffset);
   },
 
   /* Return true if the current selection (given by aPositions) is near to where the coordinates passed in */
@@ -503,7 +546,7 @@ var SelectionHandler = {
 
     actions.sort((a, b) => b.order - a.order);
 
-    sendMessageToJava({
+    Messaging.sendRequest({
       type: "TextSelection:Update",
       actions: actions
     });
@@ -609,6 +652,10 @@ var SelectionHandler = {
       },
       selector: {
         matches: function() {
+          if (!ParentalControls.isAllowed(ParentalControls.SHARE)) {
+            return false;
+          }
+
           return SelectionHandler.isSelectionActive();
         }
       }
@@ -659,7 +706,7 @@ var SelectionHandler = {
   attachCaret: function sh_attachCaret(aElement) {
     // Ensure it isn't disabled, isn't handled by Android native dialog, and is editable text element
     if (aElement.disabled || InputWidgetHelper.hasInputWidget(aElement) || !this.isElementEditableText(aElement)) {
-      return;
+      return false;
     }
 
     this._initTargetInfo(aElement, this.TYPE_CURSOR);
@@ -674,11 +721,13 @@ var SelectionHandler = {
 
     // Determine position and show caret, open actionbar
     this._positionHandles();
-    sendMessageToJava({
+    Messaging.sendRequest({
       type: "TextSelection:ShowHandles",
       handles: [this.HANDLE_TYPE_MIDDLE]
     });
     this._updateMenu();
+
+    return true;
   },
 
   // Target initialization for both TYPE_CURSOR and TYPE_SELECTION
@@ -752,8 +801,8 @@ var SelectionHandler = {
   },
 
   isElementEditableText: function (aElement) {
-    return ((aElement instanceof HTMLInputElement && aElement.mozIsTextField(false)) ||
-            (aElement instanceof HTMLTextAreaElement));
+    return (((aElement instanceof HTMLInputElement && aElement.mozIsTextField(false)) ||
+            (aElement instanceof HTMLTextAreaElement)) && !aElement.readOnly);
   },
 
   /*
@@ -886,7 +935,7 @@ var SelectionHandler = {
   shareSelection: function sh_shareSelection() {
     let selectedText = this._getSelectedText();
     if (selectedText.length) {
-      sendMessageToJava({
+      Messaging.sendRequest({
         type: "Share:Text",
         text: selectedText
       });
@@ -955,7 +1004,7 @@ var SelectionHandler = {
   _deactivate: function sh_deactivate() {
     this._stopDraggingHandles();
     // Hide handle/caret, close actionbar
-    sendMessageToJava({ type: "TextSelection:HideHandles" });
+    Messaging.sendRequest({ type: "TextSelection:HideHandles" });
 
     this._removeObservers();
 
@@ -1111,7 +1160,7 @@ var SelectionHandler = {
     if (!positions) {
       positions = this._getHandlePositions(this._getScrollPos());
     }
-    sendMessageToJava({
+    Messaging.sendRequest({
       type: "TextSelection:PositionHandles",
       positions: positions,
       rtl: this._isRTL

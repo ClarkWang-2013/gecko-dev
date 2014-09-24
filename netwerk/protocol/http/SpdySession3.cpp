@@ -2265,7 +2265,7 @@ SpdySession3::CloseTransaction(nsAHttpTransaction *aTransaction,
           this, aTransaction, aResult));
     return;
   }
-  LOG3(("SpdySession3::CloseTranscation probably a cancel. "
+  LOG3(("SpdySession3::CloseTransaction probably a cancel. "
         "this=%p, trans=%p, result=%x, streamID=0x%X stream=%p",
         this, aTransaction, aResult, stream->StreamID(), stream));
   CleanupStream(stream, aResult, RST_CANCEL);
@@ -2527,10 +2527,14 @@ SpdySession3::DispatchOnTunnel(nsAHttpTransaction *aHttpTransaction,
   // this transaction has done its work of setting up a tunnel, let
   // the connection manager queue it if necessary
   trans->SetDontRouteViaWildCard(true);
+  trans->EnableKeepAlive();
 
   if (FindTunnelCount(ci) < gHttpHandler->MaxConnectionsPerOrigin()) {
     LOG3(("SpdySession3::DispatchOnTunnel %p create on new tunnel %s",
           this, ci->HashKey().get()));
+    // The connect transaction will hold onto the underlying http
+    // transaction so that an auth created by the connect can be mappped
+    // to the correct security callbacks
     nsRefPtr<SpdyConnectTransaction> connectTrans =
       new SpdyConnectTransaction(ci, aCallbacks,
                                  trans->Caps(), trans, this);
@@ -2539,13 +2543,14 @@ SpdySession3::DispatchOnTunnel(nsAHttpTransaction *aHttpTransaction,
     SpdyStream3 *tunnel = mStreamTransactionHash.Get(connectTrans);
     MOZ_ASSERT(tunnel);
     RegisterTunnel(tunnel);
+  } else {
+    // requeue it. The connection manager is responsible for actually putting
+    // this on the tunnel connection with the specific ci now that it
+    // has DontRouteViaWildCard set.
+    LOG3(("SpdySession3::DispatchOnTunnel %p trans=%p queue in connection manager",
+          this, trans));
+    gHttpHandler->InitiateTransaction(trans, trans->Priority());
   }
-
-  // requeue it. The connection manager is responsible for actually putting
-  // this on the tunnel connection with the specific ci now that it
-  // has DontRouteViaWildCard set.
-  trans->EnableKeepAlive();
-  gHttpHandler->InitiateTransaction(trans, trans->Priority());
 }
 
 //-----------------------------------------------------------------------------

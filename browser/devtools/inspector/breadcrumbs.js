@@ -88,6 +88,8 @@ HTMLBreadcrumbs.prototype = {
 
     this.container.addEventListener("mousedown", this, true);
     this.container.addEventListener("keypress", this, true);
+    this.container.addEventListener("mouseover", this, true);
+    this.container.addEventListener("mouseleave", this, true);
 
     // We will save a list of already displayed nodes in this array.
     this.nodeHierarchy = [];
@@ -373,6 +375,17 @@ HTMLBreadcrumbs.prototype = {
       event.preventDefault();
       event.stopPropagation();
     }
+
+    if (event.type == "mouseover") {
+      let target = event.originalTarget;
+      if (target.tagName == "button") {
+        target.onBreadcrumbsHover();
+      }
+    }
+
+    if (event.type == "mouseleave") {
+      this.inspector.toolbox.highlighterUtils.unhighlight();
+    }
   },
 
   /**
@@ -392,6 +405,8 @@ HTMLBreadcrumbs.prototype = {
     this.empty();
     this.container.removeEventListener("mousedown", this, true);
     this.container.removeEventListener("keypress", this, true);
+    this.container.removeEventListener("mouseover", this, true);
+    this.container.removeEventListener("mouseleave", this, true);
     this.container = null;
 
     this.separators.remove();
@@ -484,6 +499,10 @@ HTMLBreadcrumbs.prototype = {
 
     button.onBreadcrumbsClick = () => {
       this.selection.setNodeFront(aNode, "breadcrumbs");
+    };
+
+    button.onBreadcrumbsHover = () => {
+      this.inspector.toolbox.highlighterUtils.highlightNodeFront(aNode);
     };
 
     button.onclick = (function _onBreadcrumbsRightClick(event) {
@@ -596,8 +615,8 @@ HTMLBreadcrumbs.prototype = {
     if (this.currentIndex == this.nodeHierarchy.length - 1) {
       let node = this.nodeHierarchy[this.currentIndex].node;
       return this.getInterestingFirstNode(node).then(child => {
-        // If the node has a child
-        if (child) {
+        // If the node has a child and we've not been destroyed in the meantime
+        if (child && !this.isDestroyed) {
           // Show this child
           this.expand(child);
         }

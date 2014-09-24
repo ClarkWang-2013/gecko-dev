@@ -150,11 +150,11 @@ class TypedObjectPrediction {
         kind_ = Empty;
     }
 
-    TypedObjectPrediction(const TypedProto &proto) {
+    explicit TypedObjectPrediction(const TypedProto &proto) {
         setProto(proto);
     }
 
-    TypedObjectPrediction(const TypeDescr &descr) {
+    explicit TypedObjectPrediction(const TypeDescr &descr) {
         setDescr(descr);
     }
 
@@ -200,7 +200,7 @@ class TypedObjectPrediction {
 
     ScalarTypeDescr::Type scalarType() const;
     ReferenceTypeDescr::Type referenceType() const;
-    X4TypeDescr::Type x4Type() const;
+    SimdTypeDescr::Type simdType() const;
 
     ///////////////////////////////////////////////////////////////////////////
     // Queries valid only for arrays.

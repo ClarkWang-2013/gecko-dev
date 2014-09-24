@@ -73,8 +73,7 @@ let CommandUtils = {
    */
   createRequisition: function(environment) {
     return gcli.load().then(() => {
-      let Requisition = require("gcli/cli").Requisition
-      return new Requisition({ environment: environment });
+      return gcli.createRequisition({ environment: environment });
     });
   },
 
@@ -105,6 +104,13 @@ let CommandUtils = {
         if (command == null) {
           throw new Error("No command '" + typed + "'");
         }
+
+        // Do not build a button for a non-remote safe command in a non-local target.
+        if (!target.isLocalTab && !command.isRemoteSafe) {
+          requisition.clear();
+          return;
+        }
+
         if (command.buttonId != null) {
           button.id = command.buttonId;
           if (command.buttonClass != null) {
@@ -167,7 +173,9 @@ let CommandUtils = {
           command.state.onChange(target, onChange);
           onChange("", { target: target });
           document.defaultView.addEventListener("unload", () => {
-            command.state.offChange(target, onChange);
+            if (command.state.offChange) {
+              command.state.offChange(target, onChange);
+            }
           }, false);
         }
 
@@ -319,9 +327,9 @@ Object.defineProperty(DeveloperToolbar.prototype, 'sequenceId', {
  */
 DeveloperToolbar.prototype.toggle = function() {
   if (this.visible) {
-    return this.hide();
+    return this.hide().catch(console.error);
   } else {
-    return this.show(true);
+    return this.show(true).catch(console.error);
   }
 };
 

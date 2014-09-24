@@ -49,6 +49,14 @@ struct CallsiteCloneKey {
 
     CallsiteCloneKey(JSFunction *f, JSScript *s, uint32_t o) : original(f), script(s), offset(o) {}
 
+    bool operator==(const CallsiteCloneKey& other) {
+        return original == other.original && script == other.script && offset == other.offset;
+    }
+
+    bool operator!=(const CallsiteCloneKey& other) {
+        return !(*this == other);
+    }
+
     typedef CallsiteCloneKey Lookup;
 
     static inline uint32_t hash(CallsiteCloneKey key) {
@@ -57,6 +65,12 @@ struct CallsiteCloneKey {
 
     static inline bool match(const CallsiteCloneKey &a, const CallsiteCloneKey &b) {
         return a.script == b.script && a.offset == b.offset && a.original == b.original;
+    }
+
+    static void rekey(CallsiteCloneKey &k, const CallsiteCloneKey &newKey) {
+        k.original = newKey.original;
+        k.script = newKey.script;
+        k.offset = newKey.offset;
     }
 };
 
@@ -274,11 +288,14 @@ struct ThreadSafeContext : ContextFriendFields,
     PropertyName *emptyString() { return runtime_->emptyString; }
     FreeOp *defaultFreeOp() { return runtime_->defaultFreeOp(); }
     void *runtimeAddressForJit() { return runtime_; }
+    void *runtimeAddressOfInterrupt() { return &runtime_->interrupt; }
     void *stackLimitAddress(StackKind kind) { return &runtime_->mainThread.nativeStackLimit[kind]; }
     void *stackLimitAddressForJitCode(StackKind kind);
-    size_t gcSystemPageSize() { return runtime_->gc.pageAllocator.systemPageSize(); }
+    size_t gcSystemPageSize() { return gc::SystemPageSize(); }
     bool signalHandlersInstalled() const { return runtime_->signalHandlersInstalled(); }
+    bool canUseSignalHandlers() const { return runtime_->canUseSignalHandlers(); }
     bool jitSupportsFloatingPoint() const { return runtime_->jitSupportsFloatingPoint; }
+    bool jitSupportsSimd() const { return runtime_->jitSupportsSimd; }
 
     // Thread local data that may be accessed freely.
     DtoaState *dtoaState() {
@@ -439,26 +456,9 @@ struct JSContext : public js::ExclusiveContext,
     bool saveFrameChain();
     void restoreFrameChain();
 
-    /*
-     * When no compartments have been explicitly entered, the context's
-     * compartment will be set to the compartment of the "default compartment
-     * object".
-     */
-  private:
-    JSObject *defaultCompartmentObject_;
   public:
-    inline void setDefaultCompartmentObject(JSObject *obj);
-    inline void setDefaultCompartmentObjectIfUnset(JSObject *obj);
-    JSObject *maybeDefaultCompartmentObject() const {
-        JS_ASSERT(!options().noDefaultCompartmentObject());
-        return defaultCompartmentObject_;
-    }
-
     /* State for object and array toSource conversion. */
     js::ObjectSet       cycleDetectorSet;
-
-    /* Per-context optional error reporter. */
-    JSErrorReporter     errorReporter;
 
     /* Client opaque pointers. */
     void                *data;
@@ -486,14 +486,9 @@ struct JSContext : public js::ExclusiveContext,
 
     js::LifoAlloc &tempLifoAlloc() { return runtime()->tempLifoAlloc; }
 
-#ifdef JS_THREADSAFE
     unsigned            outstandingRequests;/* number of JS_BeginRequest calls
                                                without the corresponding
                                                JS_EndRequest. */
-#endif
-
-    /* Location to stash the iteration value between JSOP_MOREITER and JSOP_ITERNEXT. */
-    js::Value           iterValue;
 
     bool jitIsBroken;
 
@@ -548,6 +543,14 @@ struct JSContext : public js::ExclusiveContext,
     }
 #endif
 
+    void minorGC(JS::gcreason::Reason reason) {
+        runtime_->gc.minorGC(this, reason);
+    }
+
+    void gcIfNeeded() {
+        runtime_->gc.gcIfNeeded(this);
+    }
+
   private:
     /* Innermost-executing generator or null if no generator are executing. */
     JSGenerator *innermostGenerator_;
@@ -576,19 +579,11 @@ struct JSContext : public js::ExclusiveContext,
     void setPropagatingForcedReturn() { propagatingForcedReturn_ = true; }
     void clearPropagatingForcedReturn() { propagatingForcedReturn_ = false; }
 
-#ifdef DEBUG
-    /*
-     * Controls whether a quadratic-complexity assertion is performed during
-     * stack iteration; defaults to true.
-     */
-    bool stackIterAssertionEnabled;
-#endif
-
     /*
      * See JS_SetTrustedPrincipals in jsapi.h.
      * Note: !cx->compartment is treated as trusted.
      */
-    bool runningWithTrustedPrincipals() const;
+    inline bool runningWithTrustedPrincipals() const;
 
     JS_FRIEND_API(size_t) sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
@@ -721,7 +716,7 @@ js_ReportErrorNumberVA(JSContext *cx, unsigned flags, JSErrorCallback callback,
 extern bool
 js_ReportErrorNumberUCArray(JSContext *cx, unsigned flags, JSErrorCallback callback,
                             void *userRef, const unsigned errorNumber,
-                            const jschar **args);
+                            const char16_t **args);
 #endif
 
 extern bool
@@ -791,15 +786,6 @@ js_ReportValueErrorFlags(JSContext *cx, unsigned flags, const unsigned errorNumb
 
 extern const JSErrorFormatString js_ErrorFormatString[JSErr_Limit];
 
-char *
-js_strdup(js::ExclusiveContext *cx, const char *s);
-
-#ifdef JS_THREADSAFE
-# define JS_ASSERT_REQUEST_DEPTH(cx)  JS_ASSERT((cx)->runtime()->requestDepth >= 1)
-#else
-# define JS_ASSERT_REQUEST_DEPTH(cx)  ((void) 0)
-#endif
-
 namespace js {
 
 /*
@@ -824,10 +810,10 @@ HandleExecutionInterrupt(JSContext *cx);
  * break out of its loop. This happens if, for example, the user clicks "Stop
  * script" on the slow script dialog; treat it as an uncatchable error.
  */
-inline bool
+MOZ_ALWAYS_INLINE bool
 CheckForInterrupt(JSContext *cx)
 {
-    JS_ASSERT_REQUEST_DEPTH(cx);
+    MOZ_ASSERT(cx->runtime()->requestDepth >= 1);
     return !cx->runtime()->interrupt || InvokeInterruptCallback(cx);
 }
 
@@ -988,23 +974,6 @@ class AutoAssertNoException
     }
 };
 
-/*
- * FIXME bug 647103 - replace these *AllocPolicy names.
- */
-class ContextAllocPolicy
-{
-    ThreadSafeContext *const cx_;
-
-  public:
-    MOZ_IMPLICIT ContextAllocPolicy(ThreadSafeContext *cx) : cx_(cx) {}
-    ThreadSafeContext *context() const { return cx_; }
-    void *malloc_(size_t bytes) { return cx_->malloc_(bytes); }
-    void *calloc_(size_t bytes) { return cx_->calloc_(bytes); }
-    void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx_->realloc_(p, oldBytes, bytes); }
-    void free_(void *p) { js_free(p); }
-    void reportAllocOverflow() const { js_ReportAllocationOverflow(cx_); }
-};
-
 /* Exposed intrinsics so that Ion may inline them. */
 bool intrinsic_ToObject(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_IsObject(JSContext *cx, unsigned argc, Value *vp);
@@ -1013,6 +982,7 @@ bool intrinsic_ToString(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_IsCallable(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_NewDenseArray(JSContext *cx, unsigned argc, Value *vp);
+bool intrinsic_IsConstructing(JSContext *cx, unsigned argc, Value *vp);
 
 bool intrinsic_UnsafePutElements(JSContext *cx, unsigned argc, Value *vp);
 bool intrinsic_DefineDataProperty(JSContext *cx, unsigned argc, Value *vp);
@@ -1037,7 +1007,6 @@ bool intrinsic_TypeDescrIsSizedArrayType(JSContext *cx, unsigned argc, Value *vp
 
 class AutoLockForExclusiveAccess
 {
-#ifdef JS_THREADSAFE
     JSRuntime *runtime;
 
     void init(JSRuntime *rt) {
@@ -1073,19 +1042,6 @@ class AutoLockForExclusiveAccess
             runtime->mainThreadHasExclusiveAccess = false;
         }
     }
-#else // JS_THREADSAFE
-  public:
-    AutoLockForExclusiveAccess(ExclusiveContext *cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    AutoLockForExclusiveAccess(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM) {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    ~AutoLockForExclusiveAccess() {
-        // An empty destructor is needed to avoid warnings from clang about
-        // unused local variables of this type.
-    }
-#endif // JS_THREADSAFE
 
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };

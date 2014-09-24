@@ -18,7 +18,7 @@ const PAGE_CONTENT = [
 const TYPE = "CssTransformHighlighter";
 
 let test = asyncTest(function*() {
-  yield addTab("data:text/html," + PAGE_CONTENT);
+  yield addTab("data:text/html;charset=utf-8," + PAGE_CONTENT);
 
   let {view: rView} = yield openRuleView();
   let overlay = rView.highlighters;
@@ -31,12 +31,12 @@ let test = asyncTest(function*() {
   is(h, h2, "The same instance of highlighter is returned everytime in the rule-view");
 
   let {view: cView} = yield openComputedView();
-  let overlay = cView.highlighters;
+  overlay = cView.highlighters;
 
   ok(!overlay.highlighters[TYPE], "No highlighter exists in the computed-view");
-  let h = yield overlay._getHighlighter(TYPE);
+  h = yield overlay._getHighlighter(TYPE);
   ok(overlay.highlighters[TYPE], "The highlighter has been created in the computed-view");
   is(h, overlay.highlighters[TYPE], "The right highlighter has been created");
-  let h2 = yield overlay._getHighlighter(TYPE);
+  h2 = yield overlay._getHighlighter(TYPE);
   is(h, h2, "The same instance of highlighter is returned everytime in the computed-view");
 });

@@ -28,10 +28,12 @@ class CanvasLayerComposite : public CanvasLayer,
                              public LayerComposite
 {
 public:
-  CanvasLayerComposite(LayerManagerComposite* aManager);
+  explicit CanvasLayerComposite(LayerManagerComposite* aManager);
 
+protected:
   virtual ~CanvasLayerComposite();
 
+public:
   // CanvasLayer impl
   virtual void Initialize(const Data& aData) MOZ_OVERRIDE
   {

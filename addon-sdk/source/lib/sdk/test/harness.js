@@ -18,6 +18,7 @@ const system = require("../system");
 const memory = require('../deprecated/memory');
 const { gc: gcPromise } = require('./memory');
 const { defer } = require('../core/promise');
+const { extend } = require('../core/heritage');
 
 // Trick manifest builder to make it think we need these modules ?
 const unit = require("../deprecated/unit-test");
@@ -163,8 +164,8 @@ function reportMemoryUsage() {
     mgr.getReportsForThisProcess(logReporter, null, /* anonymize = */ false);
 
     var weakrefs = [info.weakref.get()
-                    for each (info in memory.getObjects())];
-    weakrefs = [weakref for each (weakref in weakrefs) if (weakref)];
+                    for (info of memory.getObjects())];
+    weakrefs = [weakref for (weakref of weakrefs) if (weakref)];
     print("Tracked memory objects in testing sandbox: " + weakrefs.length + "\n");
   }));
 }
@@ -226,7 +227,7 @@ function cleanup() {
 
     if (profileMemory) {
       gWeakrefInfo = [{ weakref: info.weakref, bin: info.bin }
-                      for each (info in memory.getObjects())];
+                      for (info of memory.getObjects())];
     }
 
     loader.unload();
@@ -252,6 +253,8 @@ function cleanup() {
     consoleListener.errorsLogged = 0;
     loader = null;
 
+    consoleListener.unregister();
+
     memory.gc();
   }
   catch (e) {
@@ -260,7 +263,7 @@ function cleanup() {
     console.exception(e);
   };
 
-  setTimeout(require('@test/options').checkMemory ? checkMemory : showResults, 1);
+  setTimeout(require("./options").checkMemory ? checkMemory : showResults, 1);
 
   // dump the coverobject
   if (Object.keys(coverObject).length){
@@ -353,7 +356,7 @@ function getPotentialLeaks() {
       return;
     }
 
-    if (matches = windowRegexp.exec(path)) {
+    if ((matches = windowRegexp.exec(path))) {
       if (matches[1] in windows)
         return;
 
@@ -391,7 +394,7 @@ function nextIteration(tests) {
 
     reportMemoryUsage().then(_ => {
       let testRun = [];
-      for each (let test in tests.testRunSummary) {
+      for (let test of tests.testRunSummary) {
         let testCopy = {};
         for (let info in test) {
           testCopy[info] = test[info];
@@ -439,13 +442,30 @@ var POINTLESS_ERRORS = [
 ];
 
 var consoleListener = {
+  registered: false,
+
+  register: function() {
+    if (this.registered)
+      return;
+    cService.registerListener(this);
+    this.registered = true;
+  },
+
+  unregister: function() {
+    if (!this.registered)
+      return;
+    cService.unregisterListener(this);
+    this.registered = false;
+  },
+
   errorsLogged: 0,
+
   observe: function(object) {
     if (!(object instanceof Ci.nsIScriptError))
       return;
     this.errorsLogged++;
     var message = object.QueryInterface(Ci.nsIConsoleMessage).message;
-    var pointless = [err for each (err in POINTLESS_ERRORS)
+    var pointless = [err for (err of POINTLESS_ERRORS)
                          if (message.indexOf(err) >= 0)];
     if (pointless.length == 0 && message)
       testConsole.log(message);
@@ -453,7 +473,7 @@ var consoleListener = {
 };
 
 function TestRunnerConsole(base, options) {
-  this.__proto__ = {
+  let proto = extend(base, {
     errorsLogged: 0,
     warn: function warn() {
       this.errorsLogged++;
@@ -470,8 +490,8 @@ function TestRunnerConsole(base, options) {
         if (first == "pass:")
           print(".");
     },
-    __proto__: base
-  };
+  });
+  return Object.create(proto);
 }
 
 function stringify(arg) {
@@ -571,7 +591,7 @@ var runTests = exports.runTests = function runTests(options) {
   findAndRunTests = options.findAndRunTests;
 
   try {
-    cService.registerListener(consoleListener);
+    consoleListener.register();
     print("Running tests on " + system.name + " " + system.version +
           "/Gecko " + system.platformVersion + " (" +
           system.id + ") under " +
@@ -591,7 +611,8 @@ var runTests = exports.runTests = function runTests(options) {
     // memory when we check later
     require("../deprecated/unit-test");
     require("../deprecated/unit-test-finder");
-    startLeaks = getPotentialLeaks();
+    if (profileMemory)
+      startLeaks = getPotentialLeaks();
 
     nextIteration();
   } catch (e) {
@@ -620,4 +641,4 @@ var runTests = exports.runTests = function runTests(options) {
   }
 };
 
-unload(_ => cService.unregisterListener(consoleListener));
+unload(_ => consoleListener.unregister());

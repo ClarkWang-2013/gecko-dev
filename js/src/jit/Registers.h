@@ -18,6 +18,8 @@
 # include "jit/arm/Architecture-arm.h"
 #elif defined(JS_CODEGEN_MIPS)
 # include "jit/mips/Architecture-mips.h"
+#elif defined(JS_CODEGEN_NONE)
+# include "jit/none/Architecture-none.h"
 #else
 # error "Unknown architecture!"
 #endif
@@ -28,8 +30,8 @@ namespace jit {
 struct Register {
     typedef Registers Codes;
     typedef Codes::Code Code;
+    typedef Codes::SetType SetType;
     Code code_;
-
     static Register FromCode(uint32_t i) {
         JS_ASSERT(i < Registers::Total);
         Register r = { (Registers::Code)i };
@@ -62,9 +64,22 @@ struct Register {
     uint32_t numAliased() const {
         return 1;
     }
+
+    // N.B. FloatRegister is an explicit outparam here because msvc-2010
+    // miscompiled it on win64 when the value was simply returned.  This
+    // now has an explicit outparam for compatability.
     void aliased(uint32_t aliasIdx, Register *ret) const {
         JS_ASSERT(aliasIdx == 0);
         *ret = *this;
+    }
+    static uint32_t SetSize(SetType x) {
+        return Codes::SetSize(x);
+    }
+    static uint32_t FirstBit(SetType x) {
+        return Codes::FirstBit(x);
+    }
+    static uint32_t LastBit(SetType x) {
+        return Codes::LastBit(x);
     }
 };
 
@@ -72,14 +87,14 @@ class RegisterDump
 {
   protected: // Silence Clang warning.
     mozilla::Array<uintptr_t, Registers::Total> regs_;
-    mozilla::Array<double, FloatRegisters::Total> fpregs_;
+    mozilla::Array<double, FloatRegisters::TotalPhys> fpregs_;
 
   public:
     static size_t offsetOfRegister(Register reg) {
         return offsetof(RegisterDump, regs_) + reg.code() * sizeof(uintptr_t);
     }
     static size_t offsetOfRegister(FloatRegister reg) {
-        return offsetof(RegisterDump, fpregs_) + reg.code() * sizeof(double);
+        return offsetof(RegisterDump, fpregs_) + reg.getRegisterDumpOffsetInBytes();
     }
 };
 
@@ -91,7 +106,7 @@ class MachineState
 
   public:
     static MachineState FromBailout(mozilla::Array<uintptr_t, Registers::Total> &regs,
-                                    mozilla::Array<double, FloatRegisters::Total> &fpregs);
+                                    mozilla::Array<double, FloatRegisters::TotalPhys> &fpregs);
 
     void setRegisterLocation(Register reg, uintptr_t *up) {
         regs_[reg.code()] = up;

@@ -28,8 +28,8 @@ public:
   virtual nsIntRect FrameRect(uint32_t aWhichFrame) MOZ_OVERRIDE;
 
   virtual uint32_t SizeOfData() MOZ_OVERRIDE;
-  virtual size_t HeapSizeOfSourceWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
-  virtual size_t HeapSizeOfDecodedWithComputedFallback(mozilla::MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
+  virtual size_t HeapSizeOfSourceWithComputedFallback(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
+  virtual size_t HeapSizeOfDecodedWithComputedFallback(MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE;
   virtual size_t NonHeapSizeOfDecoded() const MOZ_OVERRIDE;
   virtual size_t OutOfProcessSizeOfDecoded() const MOZ_OVERRIDE;
 
@@ -63,7 +63,7 @@ public:
   virtual ImageURL* GetURI() MOZ_OVERRIDE;
 
 protected:
-  ImageWrapper(Image* aInnerImage)
+  explicit ImageWrapper(Image* aInnerImage)
     : mInnerImage(aInnerImage)
   {
     NS_ABORT_IF_FALSE(aInnerImage, "Cannot wrap a null image");

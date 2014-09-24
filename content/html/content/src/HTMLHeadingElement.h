@@ -17,11 +17,10 @@ class HTMLHeadingElement MOZ_FINAL : public nsGenericHTMLElement,
 				     public nsIDOMHTMLHeadingElement
 {
 public:
-  HTMLHeadingElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLHeadingElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLHeadingElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -41,6 +40,8 @@ public:
   // use from WebIDL.
 
 protected:
+  virtual ~HTMLHeadingElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

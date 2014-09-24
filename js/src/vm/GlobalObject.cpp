@@ -25,6 +25,7 @@
 #include "builtin/SIMD.h"
 #include "builtin/SymbolObject.h"
 #include "builtin/TypedObject.h"
+#include "builtin/WeakSetObject.h"
 #include "vm/HelperThreads.h"
 #include "vm/PIC.h"
 #include "vm/RegExpStatics.h"
@@ -52,7 +53,7 @@ JS_FOR_EACH_PROTOTYPE(DECLARE_PROTOTYPE_CLASS_INIT)
 JSObject *
 js_InitViaClassSpec(JSContext *cx, Handle<JSObject*> obj)
 {
-    MOZ_ASSUME_UNREACHABLE();
+    MOZ_CRASH("js_InitViaClassSpec() should not be called.");
 }
 
 static const ProtoTableEntry protoTable[JSProto_LIMIT] = {
@@ -235,7 +236,9 @@ GlobalObject::create(JSContext *cx, const Class *clasp)
 
     cx->compartment()->initGlobal(*global);
 
-    if (!global->setVarObj(cx))
+    if (!global->setQualifiedVarObj(cx))
+        return nullptr;
+    if (!global->setUnqualifiedVarObj(cx))
         return nullptr;
     if (!global->setDelegate(cx))
         return nullptr;
@@ -413,25 +416,6 @@ GlobalObject::getOrCreateDebuggers(JSContext *cx, Handle<GlobalObject*> global)
     obj->setPrivate(debuggers);
     global->setReservedSlot(DEBUGGERS, ObjectValue(*obj));
     return debuggers;
-}
-
-/* static */ bool
-GlobalObject::addDebugger(JSContext *cx, Handle<GlobalObject*> global, Debugger *dbg)
-{
-    DebuggerVector *debuggers = getOrCreateDebuggers(cx, global);
-    if (!debuggers)
-        return false;
-#ifdef DEBUG
-    for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++)
-        JS_ASSERT(*p != dbg);
-#endif
-    if (debuggers->empty() && !global->compartment()->addDebuggee(cx, global))
-        return false;
-    if (!debuggers->append(dbg)) {
-        (void) global->compartment()->removeDebuggee(cx, global);
-        return false;
-    }
-    return true;
 }
 
 /* static */ JSObject *

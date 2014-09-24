@@ -16,17 +16,16 @@ namespace a11y {
 /**
  * Used for HTML image maps.
  */
-class HTMLImageMapAccessible : public ImageAccessibleWrap
+class HTMLImageMapAccessible MOZ_FINAL : public ImageAccessibleWrap
 {
 public:
   HTMLImageMapAccessible(nsIContent* aContent, DocAccessible* aDoc);
-  virtual ~HTMLImageMapAccessible() { }
 
   // nsISupports and cycle collector
   NS_DECL_ISUPPORTS_INHERITED
 
   // Accessible
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
 
   // HyperLinkAccessible
   virtual uint32_t AnchorCount();
@@ -44,6 +43,7 @@ public:
   Accessible* GetChildAccessibleFor(const nsINode* aNode) const;
 
 protected:
+  virtual ~HTMLImageMapAccessible() { }
 
   // Accessible
   virtual void CacheChildren();
@@ -52,7 +52,7 @@ protected:
 /**
  * Accessible for image map areas - must be child of image.
  */
-class HTMLAreaAccessible : public HTMLLinkAccessible
+class HTMLAreaAccessible MOZ_FINAL : public HTMLLinkAccessible
 {
 public:
 
@@ -62,7 +62,7 @@ public:
   virtual void Description(nsString& aDescription);
   virtual Accessible* ChildAtPoint(int32_t aX, int32_t aY,
                                    EWhichChildAtPoint aWhichChild);
-  virtual void GetBoundsRect(nsRect& aBounds, nsIFrame** aBoundingFrame);
+  virtual nsRect RelativeBounds(nsIFrame** aBoundingFrame) const MOZ_OVERRIDE;
 
   // HyperLinkAccessible
   virtual uint32_t StartOffset();

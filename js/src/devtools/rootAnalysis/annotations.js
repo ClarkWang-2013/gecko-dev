@@ -36,7 +36,7 @@ function indirectCallCannotGC(fullCaller, fullVariable)
     if (name == "op" && /GetWeakmapKeyDelegate/.test(caller))
         return true;
 
-    var CheckCallArgs = "AsmJS.cpp:uint8 CheckCallArgs(FunctionCompiler*, js::frontend::ParseNode*, (uint8)(FunctionCompiler*,js::frontend::ParseNode*,Type)*, FunctionCompiler::Call*)";
+    var CheckCallArgs = "AsmJSValidate.cpp:uint8 CheckCallArgs(FunctionCompiler*, js::frontend::ParseNode*, (uint8)(FunctionCompiler*,js::frontend::ParseNode*,Type)*, FunctionCompiler::Call*)";
     if (name == "checkArg" && caller == CheckCallArgs)
         return true;
 
@@ -95,8 +95,6 @@ function ignoreEdgeUse(edge, variable)
         var callee = edge.Exp[0];
         if (callee.Kind == "Var") {
             var name = callee.Variable.Name[0];
-            if (/~Anchor/.test(name))
-                return true;
             if (/~DebugOnly/.test(name))
                 return true;
             if (/~ScopedThreadSafeStringInspector/.test(name))

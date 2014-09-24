@@ -21,9 +21,8 @@ class HTMLOutputElement MOZ_FINAL : public nsGenericHTMLFormElement,
 public:
   using nsIConstraintValidation::GetValidationMessage;
 
-  HTMLOutputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
-                    FromParser aFromParser = NOT_FROM_PARSER);
-  virtual ~HTMLOutputElement();
+  explicit HTMLOutputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
+                             FromParser aFromParser = NOT_FROM_PARSER);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -98,6 +97,8 @@ public:
   void SetCustomValidity(const nsAString& aError);
 
 protected:
+  virtual ~HTMLOutputElement();
+
   enum ValueModeFlag {
     eModeDefault,
     eModeValue

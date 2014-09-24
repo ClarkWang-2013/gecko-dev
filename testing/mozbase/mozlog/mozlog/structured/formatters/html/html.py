@@ -3,8 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys
-import json
 import datetime
 import os
 
@@ -63,7 +61,7 @@ class HTMLFormatter(base.BaseFormatter):
         debug = data.get("extra", {})
         links_html = []
 
-        status = data["status"]
+        status = status_name = data["status"]
         expected = data.get("expected", status)
 
         if status != expected:

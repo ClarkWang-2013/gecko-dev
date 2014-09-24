@@ -18,6 +18,7 @@
 
 #include "gfxPlatform.h"
 #include "gfxPrefs.h"
+#include "gfxTextRun.h"
 
 #ifdef XP_WIN
 #include <process.h>
@@ -60,6 +61,9 @@
 #include "nsILocaleService.h"
 #include "nsIObserverService.h"
 #include "MainThreadUtils.h"
+#ifdef MOZ_CRASHREPORTER
+#include "nsExceptionHandler.h"
+#endif
 
 #include "nsWeakReference.h"
 
@@ -70,6 +74,7 @@
 #include "nsCRT.h"
 #include "GLContext.h"
 #include "GLContextProvider.h"
+#include "mozilla/gfx/Logging.h"
 
 #ifdef MOZ_WIDGET_ANDROID
 #include "TexturePoolOGL.h"
@@ -93,13 +98,14 @@ class mozilla::gl::SkiaGLGlue : public GenericAtomicRefCounted {
 #include "nsIGfxInfo.h"
 #include "nsIXULRuntime.h"
 
-#ifdef MOZ_WIDGET_GONK
 namespace mozilla {
 namespace layers {
+#ifdef MOZ_WIDGET_GONK
 void InitGralloc();
-}
-}
 #endif
+void ShutdownTileCache();
+}
+}
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -139,6 +145,22 @@ class SRGBOverrideObserver MOZ_FINAL : public nsIObserver,
 public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIOBSERVER
+};
+
+class CrashStatsLogForwarder: public mozilla::gfx::LogForwarder
+{
+public:
+    virtual void Log(const std::string& aString) MOZ_OVERRIDE {
+        if (!NS_IsMainThread()) {
+            return;
+        }
+#ifdef MOZ_CRASHREPORTER
+        nsCString reportString(aString.c_str());
+        CrashReporter::AppendAppNotesToCrashReport(reportString);
+#else
+        printf("GFX ERROR: %s", aString.c_str());
+#endif
+    }
 };
 
 NS_IMPL_ISUPPORTS(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
@@ -219,6 +241,7 @@ MemoryPressureObserver::Observe(nsISupports *aSubject,
 {
     NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
     Factory::PurgeAllCaches();
+    gfxGradientCache::PurgeAllCaches();
 
     gfxPlatform::GetPlatform()->PurgeSkiaCache();
     return NS_OK;
@@ -228,16 +251,13 @@ MemoryPressureObserver::Observe(nsISupports *aSubject,
 // the order *must* match the order in eFontPrefLang
 static const char *gPrefLangNames[] = {
     "x-western",
-    "x-central-euro",
     "ja",
     "zh-TW",
     "zh-CN",
     "zh-HK",
     "ko",
     "x-cyrillic",
-    "x-baltic",
     "el",
-    "tr",
     "th",
     "he",
     "ar",
@@ -279,6 +299,7 @@ gfxPlatform::gfxPlatform()
     uint32_t contentMask = BackendTypeBit(BackendType::CAIRO);
     InitBackendPrefs(canvasMask, BackendType::CAIRO,
                      contentMask, BackendType::CAIRO);
+    mTotalSystemMemory = mozilla::hal::GetTotalSystemMemory();
 }
 
 gfxPlatform*
@@ -329,6 +350,8 @@ gfxPlatform::Init()
         NS_RUNTIMEABORT("Already started???");
     }
     gEverInitialized = true;
+
+    mozilla::gfx::Factory::SetLogForwarder(new CrashStatsLogForwarder);
 
     // Initialize the preferences by creating the singleton.
     gfxPrefs::GetSingleton();
@@ -444,9 +467,8 @@ gfxPlatform::Shutdown()
     gfxGradientCache::Shutdown();
     gfxAlphaBoxBlur::ShutdownBlurCache();
     gfxGraphiteShaper::Shutdown();
-#if defined(XP_MACOSX) || defined(XP_WIN) // temporary, until this is implemented on others
     gfxPlatformFontList::Shutdown();
-#endif
+    ShutdownTileCache();
 
     // Free the various non-null transforms and loaded profiles
     ShutdownCMS();
@@ -491,6 +513,9 @@ gfxPlatform::Shutdown()
     mozilla::gl::GLContextProviderEGL::Shutdown();
 #endif
 
+    delete mozilla::gfx::Factory::GetLogForwarder();
+    mozilla::gfx::Factory::SetLogForwarder(nullptr);
+
     delete gGfxPlatformPrefsLock;
 
     gfxPrefs::DestroySingleton();
@@ -510,8 +535,7 @@ gfxPlatform::InitLayersIPC()
 
     AsyncTransactionTrackersHolder::Initialize();
 
-    if (UsesOffMainThreadCompositing() &&
-        XRE_GetProcessType() == GeckoProcessType_Default)
+    if (XRE_GetProcessType() == GeckoProcessType_Default)
     {
         mozilla::layers::CompositorParent::StartUp();
 #ifndef MOZ_WIDGET_GONK
@@ -533,8 +557,7 @@ gfxPlatform::ShutdownLayersIPC()
     }
     sLayersIPCIsUp = false;
 
-    if (UsesOffMainThreadCompositing() &&
-        XRE_GetProcessType() == GeckoProcessType_Default)
+    if (XRE_GetProcessType() == GeckoProcessType_Default)
     {
         // This must happen after the shutdown of media and widgets, which
         // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
@@ -827,20 +850,6 @@ gfxPlatform::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
   return scaledFont;
 }
 
-cairo_user_data_key_t kDrawSourceSurface;
-static void
-DataSourceSurfaceDestroy(void *dataSourceSurface)
-{
-  static_cast<DataSourceSurface*>(dataSourceSurface)->Release();
-}
-
-cairo_user_data_key_t kDrawTargetForSurface;
-static void
-DataDrawTargetDestroy(void *aTarget)
-{
-  static_cast<DrawTarget*>(aTarget)->Release();
-}
-
 bool
 gfxPlatform::SupportsAzureContentForDrawTarget(DrawTarget* aTarget)
 {
@@ -870,13 +879,12 @@ gfxPlatform::InitializeSkiaCacheLimits()
     cacheSizeLimit *= 1024*1024;
 
     if (usingDynamicCache) {
-      uint32_t totalMemory = mozilla::hal::GetTotalSystemMemory();
-
-      if (totalMemory <= 256*1024*1024) {
-        // We need a very minimal cache on 256 meg devices
+      if (mTotalSystemMemory < 512*1024*1024) {
+        // We need a very minimal cache on anything smaller than 512mb.
+        // Note the large jump as we cross 512mb (from 2mb to 32mb).
         cacheSizeLimit = 2*1024*1024;
-      } else if (totalMemory > 0) {
-        cacheSizeLimit = totalMemory / 16;
+      } else if (mTotalSystemMemory > 0) {
+        cacheSizeLimit = mTotalSystemMemory / 16;
       }
     }
 
@@ -885,7 +893,7 @@ gfxPlatform::InitializeSkiaCacheLimits()
   #endif
 
 #ifdef USE_SKIA_GPU
-    mSkiaGlue->GetGrContext()->setTextureCacheLimits(cacheItemLimit, cacheSizeLimit);
+    mSkiaGlue->GetGrContext()->setResourceCacheLimits(cacheItemLimit, cacheSizeLimit);
 #endif
   }
 }
@@ -900,7 +908,7 @@ gfxPlatform::GetSkiaGLGlue()
      * FIXME: This should be stored in TLS or something, since there needs to be one for each thread using it. As it
      * stands, this only works on the main thread.
      */
-    mozilla::gfx::SurfaceCaps caps = mozilla::gfx::SurfaceCaps::ForRGBA();
+    mozilla::gl::SurfaceCaps caps = mozilla::gl::SurfaceCaps::ForRGBA();
     nsRefPtr<mozilla::gl::GLContext> glContext = mozilla::gl::GLContextProvider::CreateOffscreen(gfxIntSize(16, 16), caps);
     if (!glContext) {
       printf_stderr("Failed to create GLContext for SkiaGL!\n");
@@ -923,50 +931,21 @@ gfxPlatform::PurgeSkiaCache()
       return;
 
   mSkiaGlue->GetGrContext()->freeGpuResources();
+  // GrContext::flush() doesn't call glFlush. Call it here.
+  mSkiaGlue->GetGLContext()->MakeCurrent();
+  mSkiaGlue->GetGLContext()->fFlush();
 #endif
 }
 
-already_AddRefed<gfxASurface>
-gfxPlatform::GetThebesSurfaceForDrawTarget(DrawTarget *aTarget)
+bool
+gfxPlatform::HasEnoughTotalSystemMemoryForSkiaGL()
 {
-  if (aTarget->GetBackendType() == BackendType::CAIRO) {
-    cairo_surface_t* csurf =
-      static_cast<cairo_surface_t*>(aTarget->GetNativeSurface(NativeSurfaceType::CAIRO_SURFACE));
-    if (csurf) {
-      return gfxASurface::Wrap(csurf);
-    }
+#ifdef MOZ_WIDGET_GONK
+  if (mTotalSystemMemory < 250*1024*1024) {
+    return false;
   }
-
-  // The semantics of this part of the function are sort of weird. If we
-  // don't have direct support for the backend, we snapshot the first time
-  // and then return the snapshotted surface for the lifetime of the draw
-  // target. Sometimes it seems like this works out, but it seems like it
-  // might result in no updates ever.
-  RefPtr<SourceSurface> source = aTarget->Snapshot();
-  RefPtr<DataSourceSurface> data = source->GetDataSurface();
-
-  if (!data) {
-    return nullptr;
-  }
-
-  IntSize size = data->GetSize();
-  gfxImageFormat format = SurfaceFormatToImageFormat(data->GetFormat());
-
-
-  nsRefPtr<gfxASurface> surf =
-    new gfxImageSurface(data->GetData(), gfxIntSize(size.width, size.height),
-                        data->Stride(), format);
-
-  if (surf->CairoStatus()) {
-    return nullptr;
-  }
-
-  surf->SetData(&kDrawSourceSurface, data.forget().drop(), DataSourceSurfaceDestroy);
-  // keep the draw target alive as long as we need its data
-  aTarget->AddRef();
-  surf->SetData(&kDrawTargetForSurface, aTarget, DataDrawTargetDestroy);
-
-  return surf.forget();
+#endif
+  return true;
 }
 
 TemporaryRef<DrawTarget>
@@ -1040,6 +1019,8 @@ gfxPlatform::BackendTypeForName(const nsCString& aName)
     return BackendType::SKIA;
   if (aName.EqualsLiteral("direct2d"))
     return BackendType::DIRECT2D;
+  if (aName.EqualsLiteral("direct2d1.1"))
+    return BackendType::DIRECT2D1_1;
   if (aName.EqualsLiteral("cg"))
     return BackendType::COREGRAPHICS;
   return BackendType::NONE;
@@ -1132,8 +1113,11 @@ gfxPlatform::UseGraphiteShaping()
 }
 
 gfxFontEntry*
-gfxPlatform::MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
-                              const uint8_t *aFontData,
+gfxPlatform::MakePlatformFont(const nsAString& aFontName,
+                              uint16_t aWeight,
+                              int16_t aStretch,
+                              bool aItalic,
+                              const uint8_t* aFontData,
                               uint32_t aLength)
 {
     // Default implementation does not handle activating downloaded fonts;
@@ -1299,10 +1283,8 @@ gfxPlatform::GetFontPrefLangFor(uint8_t aUnicodeRange)
         case kRangeSetLatin:   return eFontPrefLang_Western;
         case kRangeCyrillic:   return eFontPrefLang_Cyrillic;
         case kRangeGreek:      return eFontPrefLang_Greek;
-        case kRangeTurkish:    return eFontPrefLang_Turkish;
         case kRangeHebrew:     return eFontPrefLang_Hebrew;
         case kRangeArabic:     return eFontPrefLang_Arabic;
-        case kRangeBaltic:     return eFontPrefLang_Baltic;
         case kRangeThai:       return eFontPrefLang_Thai;
         case kRangeKorean:     return eFontPrefLang_Korean;
         case kRangeJapanese:   return eFontPrefLang_Japanese;
@@ -1509,8 +1491,18 @@ gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, BackendType aCanvasDefaul
     if (mPreferredCanvasBackend == BackendType::NONE) {
         mPreferredCanvasBackend = aCanvasDefault;
     }
-    mFallbackCanvasBackend =
-        GetCanvasBackendPref(aCanvasBitmask & ~BackendTypeBit(mPreferredCanvasBackend));
+
+    if (mPreferredCanvasBackend == BackendType::DIRECT2D1_1) {
+      // Falling back to D2D 1.0 won't help us here. When D2D 1.1 DT creation
+      // fails it means the surface was too big or there's something wrong with
+      // the device. D2D 1.0 will encounter a similar situation.
+      mFallbackCanvasBackend =
+          GetCanvasBackendPref(aCanvasBitmask &
+                               ~(BackendTypeBit(mPreferredCanvasBackend) | BackendTypeBit(BackendType::DIRECT2D)));
+    } else {
+      mFallbackCanvasBackend =
+          GetCanvasBackendPref(aCanvasBitmask & ~BackendTypeBit(mPreferredCanvasBackend));
+    }
 
     mContentBackendBitmask = aContentBitmask;
     mContentBackend = GetContentBackendPref(mContentBackendBitmask);
@@ -2000,7 +1992,7 @@ InitLayersAccelerationPrefs()
     MOZ_ASSERT(NS_IsMainThread(), "can only initialize prefs on the main thread");
 
     gfxPrefs::GetSingleton();
-    sPrefBrowserTabsRemoteAutostart = Preferences::GetBool("browser.tabs.remote.autostart", false);
+    sPrefBrowserTabsRemoteAutostart = BrowserTabsRemoteAutostart();
 
 #ifdef XP_WIN
     if (gfxPrefs::LayersAccelerationForceEnabled()) {
@@ -2088,15 +2080,16 @@ gfxPlatform::UsesOffMainThreadCompositing()
       gfxPrefs::LayersOffMainThreadCompositionEnabled() ||
       gfxPrefs::LayersOffMainThreadCompositionForceEnabled() ||
       gfxPrefs::LayersOffMainThreadCompositionTestingEnabled();
-#if defined(MOZ_WIDGET_GTK) && defined(NIGHTLY_BUILD)
+#if defined(MOZ_WIDGET_GTK)
     // Linux users who chose OpenGL are being grandfathered in to OMTC
-    result |=
-      gfxPrefs::LayersAccelerationForceEnabled() ||
-      PR_GetEnv("MOZ_USE_OMTC") ||
-      PR_GetEnv("MOZ_OMTC_ENABLED"); // yeah, these two env vars do the same thing.
-                                    // I'm told that one of them is enabled on some test slaves config.
-                                    // so be slightly careful if you think you can
-                                    // remove one of them.
+    result |= gfxPrefs::LayersAccelerationForceEnabled();
+
+#if !defined(NIGHTLY_BUILD)
+    // Yeah, these two env vars do the same thing.
+    // I'm told that one of them is enabled on some test slaves config,
+    // so be slightly careful if you think you can remove one of them.
+    result &= PR_GetEnv("MOZ_USE_OMTC") || PR_GetEnv("MOZ_OMTC_ENABLED");
+#endif
 #endif
     firstTime = false;
   }

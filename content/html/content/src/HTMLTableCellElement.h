@@ -20,12 +20,11 @@ class HTMLTableCellElement MOZ_FINAL : public nsGenericHTMLElement,
                                        public nsIDOMHTMLTableCellElement
 {
 public:
-  HTMLTableCellElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLTableCellElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
     SetHasWeirdParserInsertionMode();
   }
-  virtual ~HTMLTableCellElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -157,6 +156,8 @@ public:
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLTableCellElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
   HTMLTableElement* GetTable() const;

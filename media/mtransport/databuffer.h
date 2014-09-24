@@ -9,21 +9,11 @@
 #ifndef databuffer_h__
 #define databuffer_h__
 #include <algorithm>
-#include <mozilla/Scoped.h>
+#include <mozilla/UniquePtr.h>
 #include <m_cpp_utils.h>
 #include <nsISupportsImpl.h>
 
 namespace mozilla {
-
-class DataBuffer;
-
-// Temporary whitelist for refcounted class dangerously exposing its destructor.
-// Filed bug 1028139 to address this class.
-template<>
-struct HasDangerousPublicDestructor<DataBuffer>
-{
-  static const bool value = true;
-};
 
 class DataBuffer {
  public:
@@ -33,20 +23,23 @@ class DataBuffer {
   }
 
   void Assign(const uint8_t *data, size_t len) {
-    data_ = new unsigned char[ len ? len : 1];  // Don't depend on new [0].
+    Allocate(len);
     memcpy(static_cast<void *>(data_.get()),
            static_cast<const void *>(data), len);
+  }
+
+  void Allocate(size_t len) {
+    data_.reset(new uint8_t[len ? len : 1]);  // Don't depend on new [0].
     len_ = len;
   }
 
-  const uint8_t *data() const { return data_; }
+  const uint8_t *data() const { return data_.get(); }
+  uint8_t *data() { return data_.get(); }
   size_t len() const { return len_; }
   const bool empty() const { return len_ != 0; }
 
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(DataBuffer)
-
 private:
-  ScopedDeleteArray<uint8_t> data_;
+  UniquePtr<uint8_t[]> data_;
   size_t len_;
 
   DISALLOW_COPY_ASSIGN(DataBuffer);

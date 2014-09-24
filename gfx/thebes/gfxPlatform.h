@@ -12,6 +12,7 @@
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 
+#include "gfxPrefs.h"
 #include "gfxTypes.h"
 #include "gfxFontFamilyList.h"
 #include "gfxBlur.h"
@@ -25,13 +26,11 @@
 #include "mozilla/layers/CompositorTypes.h"
 
 class gfxASurface;
-class gfxImageSurface;
 class gfxFont;
 class gfxFontGroup;
 struct gfxFontStyle;
 class gfxUserFontSet;
 class gfxFontEntry;
-class gfxProxyFontEntry;
 class gfxPlatformFontList;
 class gfxTextRun;
 class nsIURI;
@@ -59,6 +58,13 @@ BackendTypeBit(BackendType b)
 }
 }
 
+#define MOZ_PERFORMANCE_WARNING(module, ...) \
+  do { \
+    if (gfxPrefs::PerfWarnings()) { \
+      printf_stderr("[" module "] " __VA_ARGS__); \
+    } \
+  } while (0)
+
 extern cairo_user_data_key_t kDrawTarget;
 
 // pref lang id's for font prefs
@@ -67,39 +73,36 @@ extern cairo_user_data_key_t kDrawTarget;
 
 enum eFontPrefLang {
     eFontPrefLang_Western     =  0,
-    eFontPrefLang_CentEuro    =  1,
-    eFontPrefLang_Japanese    =  2,
-    eFontPrefLang_ChineseTW   =  3,
-    eFontPrefLang_ChineseCN   =  4,
-    eFontPrefLang_ChineseHK   =  5,
-    eFontPrefLang_Korean      =  6,
-    eFontPrefLang_Cyrillic    =  7,
-    eFontPrefLang_Baltic      =  8,
-    eFontPrefLang_Greek       =  9,
-    eFontPrefLang_Turkish     = 10,
-    eFontPrefLang_Thai        = 11,
-    eFontPrefLang_Hebrew      = 12,
-    eFontPrefLang_Arabic      = 13,
-    eFontPrefLang_Devanagari  = 14,
-    eFontPrefLang_Tamil       = 15,
-    eFontPrefLang_Armenian    = 16,
-    eFontPrefLang_Bengali     = 17,
-    eFontPrefLang_Canadian    = 18,
-    eFontPrefLang_Ethiopic    = 19,
-    eFontPrefLang_Georgian    = 20,
-    eFontPrefLang_Gujarati    = 21,
-    eFontPrefLang_Gurmukhi    = 22,
-    eFontPrefLang_Khmer       = 23,
-    eFontPrefLang_Malayalam   = 24,
-    eFontPrefLang_Oriya       = 25,
-    eFontPrefLang_Telugu      = 26,
-    eFontPrefLang_Kannada     = 27,
-    eFontPrefLang_Sinhala     = 28,
-    eFontPrefLang_Tibetan     = 29,
+    eFontPrefLang_Japanese    =  1,
+    eFontPrefLang_ChineseTW   =  2,
+    eFontPrefLang_ChineseCN   =  3,
+    eFontPrefLang_ChineseHK   =  4,
+    eFontPrefLang_Korean      =  5,
+    eFontPrefLang_Cyrillic    =  6,
+    eFontPrefLang_Greek       =  7,
+    eFontPrefLang_Thai        =  8,
+    eFontPrefLang_Hebrew      =  9,
+    eFontPrefLang_Arabic      = 10,
+    eFontPrefLang_Devanagari  = 11,
+    eFontPrefLang_Tamil       = 12,
+    eFontPrefLang_Armenian    = 13,
+    eFontPrefLang_Bengali     = 14,
+    eFontPrefLang_Canadian    = 15,
+    eFontPrefLang_Ethiopic    = 16,
+    eFontPrefLang_Georgian    = 17,
+    eFontPrefLang_Gujarati    = 18,
+    eFontPrefLang_Gurmukhi    = 19,
+    eFontPrefLang_Khmer       = 20,
+    eFontPrefLang_Malayalam   = 21,
+    eFontPrefLang_Oriya       = 22,
+    eFontPrefLang_Telugu      = 23,
+    eFontPrefLang_Kannada     = 24,
+    eFontPrefLang_Sinhala     = 25,
+    eFontPrefLang_Tibetan     = 26,
 
-    eFontPrefLang_Others      = 30, // x-unicode
+    eFontPrefLang_Others      = 27, // x-unicode
 
-    eFontPrefLang_CJKSet      = 31  // special code for CJK set
+    eFontPrefLang_CJKSet      = 28  // special code for CJK set
 };
 
 enum eCMSMode {
@@ -222,9 +225,6 @@ public:
     virtual mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(mozilla::gfx::DrawTarget* aTarget, gfxFont *aFont);
 
-    virtual already_AddRefed<gfxASurface>
-      GetThebesSurfaceForDrawTarget(mozilla::gfx::DrawTarget *aTarget);
-
     mozilla::TemporaryRef<DrawTarget>
       CreateOffscreenContentDrawTarget(const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
 
@@ -234,6 +234,16 @@ public:
     virtual mozilla::TemporaryRef<DrawTarget>
       CreateDrawTargetForData(unsigned char* aData, const mozilla::gfx::IntSize& aSize, 
                               int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
+
+    /**
+     * Returns true if rendering to data surfaces produces the same results as
+     * rendering to offscreen surfaces on this platform, making it safe to
+     * render content to data surfaces. This is generally false on platforms
+     * which use different backends for each type of DrawTarget.
+     */
+    virtual bool CanRenderContentToDataSurface() const {
+      return false;
+    }
 
     /**
      * Returns true if we should use Azure to render content with aTarget. For
@@ -250,6 +260,8 @@ public:
 
     virtual bool UseAcceleratedSkiaCanvas();
     virtual void InitializeSkiaCacheLimits();
+
+    virtual bool UseTiling() { return gfxPrefs::LayersTilesEnabled(); }
 
     void GetAzureBackendInfo(mozilla::widget::InfoObject &aObj) {
       aObj.DefineProperty("AzureCanvasBackend", GetBackendName(mPreferredCanvasBackend));
@@ -317,8 +329,10 @@ public:
      * Ownership of the returned gfxFontEntry is passed to the caller,
      * who must either AddRef() or delete.
      */
-    virtual gfxFontEntry* LookupLocalFont(const gfxProxyFontEntry *aProxyEntry,
-                                          const nsAString& aFontName)
+    virtual gfxFontEntry* LookupLocalFont(const nsAString& aFontName,
+                                          uint16_t aWeight,
+                                          int16_t aStretch,
+                                          bool aItalic)
     { return nullptr; }
 
     /**
@@ -329,8 +343,11 @@ public:
      * Ownership of the returned gfxFontEntry is passed to the caller,
      * who must either AddRef() or delete.
      */
-    virtual gfxFontEntry* MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
-                                           const uint8_t *aFontData,
+    virtual gfxFontEntry* MakePlatformFont(const nsAString& aFontName,
+                                           uint16_t aWeight,
+                                           int16_t aStretch,
+                                           bool aItalic,
+                                           const uint8_t* aFontData,
                                            uint32_t aLength);
 
     /**
@@ -540,6 +557,7 @@ public:
 
     static bool UsesOffMainThreadCompositing();
 
+    bool HasEnoughTotalSystemMemoryForSkiaGL();
 protected:
     gfxPlatform();
     virtual ~gfxPlatform();
@@ -608,6 +626,8 @@ protected:
 
     // max number of entries in word cache
     int32_t mWordCacheMaxEntries;
+
+    uint32_t mTotalSystemMemory;
 
 private:
     /**

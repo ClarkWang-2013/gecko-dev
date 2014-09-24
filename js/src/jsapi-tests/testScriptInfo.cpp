@@ -36,16 +36,15 @@ BEGIN_TEST(testScriptInfo)
     jsbytecode *start = JS_LineNumberToPC(cx, script, startLine);
     CHECK_EQUAL(JS_GetScriptBaseLineNumber(cx, script), startLine);
     CHECK_EQUAL(JS_PCToLineNumber(cx, script, start), startLine);
-    CHECK_EQUAL(JS_GetScriptLineExtent(cx, script), 11u);
     CHECK(strcmp(JS_GetScriptFilename(script), __FILE__) == 0);
-    const jschar *sourceMap = JS_GetScriptSourceMap(cx, script);
+    const char16_t *sourceMap = JS_GetScriptSourceMap(cx, script);
     CHECK(sourceMap);
     CHECK(CharsMatch(sourceMap, "http://example.com/path/to/source-map.json"));
 
     return true;
 }
 static bool
-CharsMatch(const jschar *p, const char *q)
+CharsMatch(const char16_t *p, const char *q)
 {
     while (*q) {
         if (*p++ != *q++)

@@ -21,7 +21,7 @@ class BodyRule: public nsIStyleRule
   virtual ~BodyRule();
 
 public:
-  BodyRule(HTMLBodyElement* aPart);
+  explicit BodyRule(HTMLBodyElement* aPart);
 
   NS_DECL_ISUPPORTS
 
@@ -41,11 +41,10 @@ public:
   using Element::GetText;
   using Element::SetText;
 
-  HTMLBodyElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLBodyElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLBodyElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -133,6 +132,8 @@ public:
   virtual bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLBodyElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
   nsRefPtr<BodyRule> mContentStyleRule;

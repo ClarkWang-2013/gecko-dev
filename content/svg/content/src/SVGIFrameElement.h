@@ -10,7 +10,6 @@
 #include "nsDOMSettableTokenList.h"
 #include "nsFrameLoader.h"
 #include "nsElementFrameLoaderOwner.h"
-#include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMEventListener.h"
 #include "nsIFrameLoader.h"
@@ -25,6 +24,7 @@ nsresult NS_NewSVGIFrameElement(nsIContent **aResult,
 
 typedef mozilla::dom::SVGGraphicsElement SVGIFrameElementBase;
 
+class nsIDocument;
 class nsSVGIFrameFrame;
 
 namespace mozilla {
@@ -42,6 +42,8 @@ class SVGIFrameElement MOZ_FINAL : public SVGIFrameElementBase,
   SVGIFrameElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
                    mozilla::dom::FromParser aFromParser);
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
+
+  ~SVGIFrameElement();
 
 public:
   // interface

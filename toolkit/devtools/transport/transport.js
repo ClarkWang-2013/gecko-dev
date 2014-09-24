@@ -29,6 +29,7 @@ const { dumpn, dumpv } = DevToolsUtils;
 const StreamUtils = require("devtools/toolkit/transport/stream-utils");
 const { Packet, JSONPacket, BulkPacket } =
   require("devtools/toolkit/transport/packets");
+const promise = require("promise");
 
 DevToolsUtils.defineLazyGetter(this, "Pipe", () => {
   return CC("@mozilla.org/pipe;1", "nsIPipe", "init");
@@ -258,7 +259,7 @@ DebuggerTransport.prototype = {
    * may not complete.
    */
   onOutputStreamReady: DevToolsUtils.makeInfallible(function(stream) {
-    if (this._outgoing.length === 0) {
+    if (!this._outgoingEnabled || this._outgoing.length === 0) {
       return;
     }
 

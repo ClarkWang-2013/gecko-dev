@@ -42,7 +42,7 @@ let connectionCounters = new Map();
  */
 let isClosed = false;
 
-this.Debugging = {
+let Debugging = {
   // Tests should fail if a connection auto closes.  The exception is
   // when finalization itself is tested, in which case this flag
   // should be set to false.
@@ -139,14 +139,14 @@ XPCOMUtils.defineLazyGetter(this, "Barriers", () => {
         // We are waiting for the connections to close. The interesting
         // status is therefore the list of connections still pending.
         return { description: "Waiting for connections to close",
-                 status: Barriers.connections.status };
+                 state: Barriers.connections.state };
       }
 
       // We are still in the first stage: waiting for the barrier
       // to be lifted. The interesting status is therefore that of
       // the barrier.
       return { description: "Waiting for the barrier to be lifted",
-               status: Barriers.shutdown.status };
+               state: Barriers.shutdown.state };
   });
 
   return Barriers;
@@ -201,10 +201,19 @@ function ConnectionData(connection, basename, number, options) {
   }
 
   this._deferredClose = Promise.defer();
+  this._closeRequested = false;
 
   Barriers.connections.client.addBlocker(
     this._connectionIdentifier + ": waiting for shutdown",
-    this._deferredClose.promise
+    this._deferredClose.promise,
+    () =>  ({
+      identifier: this._connectionIdentifier,
+      isCloseRequested: this._closeRequested,
+      hasDbConn: !!this._dbConn,
+      hasInProgressTransaction: !!this._inProgressTransaction,
+      pendingStatements: this._pendingStatements.size,
+      statementCounter: this._statementCounter,
+    })
   );
 }
 
@@ -222,6 +231,8 @@ ConnectionData.byId = new Map();
 
 ConnectionData.prototype = Object.freeze({
   close: function () {
+    this._closeRequested = true;
+
     if (!this._dbConn) {
       return this._deferredClose.promise;
     }
@@ -591,7 +602,7 @@ ConnectionData.prototype = Object.freeze({
             deferred.resolve(result);
             break;
 
-          case Ci.mozIStorageStatementCallback.REASON_CANCELLED:
+          case Ci.mozIStorageStatementCallback.REASON_CANCELED:
             // It is not an error if the user explicitly requested cancel via
             // the onRow handler.
             if (userCancelled) {
@@ -720,16 +731,17 @@ function openConnection(options) {
 
   log.info("Opening database: " + path + " (" + identifier + ")");
   let deferred = Promise.defer();
-  let options = null;
+  let dbOptions = null;
   if (!sharedMemoryCache) {
-    options = Cc["@mozilla.org/hash-property-bag;1"].
+    dbOptions = Cc["@mozilla.org/hash-property-bag;1"].
       createInstance(Ci.nsIWritablePropertyBag);
-    options.setProperty("shared", false);
+    dbOptions.setProperty("shared", false);
   }
-  Services.storage.openAsyncDatabase(file, options, function(status, connection) {
+  Services.storage.openAsyncDatabase(file, dbOptions, function(status, connection) {
     if (!connection) {
       log.warn("Could not open connection: " + status);
       deferred.reject(new Error("Could not open connection: " + status));
+      return;
     }
     log.info("Connection opened");
     try {

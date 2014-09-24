@@ -27,9 +27,9 @@ class MediaKeyMessageEvent MOZ_FINAL : public Event
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(MediaKeyMessageEvent, Event)
-  virtual ~MediaKeyMessageEvent();
 protected:
-  MediaKeyMessageEvent(EventTarget* aOwner);
+  virtual ~MediaKeyMessageEvent();
+  explicit MediaKeyMessageEvent(EventTarget* aOwner);
 
   JS::Heap<JSObject*> mMessage;
   nsString mDestinationURL;

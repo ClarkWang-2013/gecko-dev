@@ -14,14 +14,13 @@ const { indexedDB } = require("sdk/indexed-db");
  * a unique `location` object.
  */
 
-const global = this;
 const IDB = {
   _db: null,
 
   open: function () {
     let deferred = promise.defer();
 
-    let request = global.indexedDB.open("AppProjects", 5);
+    let request = indexedDB.open("AppProjects", 5);
     request.onerror = function(event) {
       deferred.reject("Unable to open AppProjects indexedDB. " +
                       "Error code: " + event.target.errorCode);
@@ -207,6 +206,14 @@ const AppProjects = {
     return IDB.update(project);
   },
 
+  updateLocation: function(project, newLocation) {
+    return IDB.remove(project.location)
+              .then(() => {
+                project.location = newLocation;
+                return IDB.add(project);
+              });
+  },
+
   remove: function(location) {
     return IDB.remove(location).then(function () {
       let projects = store.object.projects;
@@ -236,4 +243,3 @@ const AppProjects = {
 EventEmitter.decorate(AppProjects);
 
 exports.AppProjects = AppProjects;
-

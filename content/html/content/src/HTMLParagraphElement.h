@@ -18,11 +18,10 @@ class HTMLParagraphElement MOZ_FINAL : public nsGenericHTMLElement,
                                        public nsIDOMHTMLParagraphElement
 {
 public:
-  HTMLParagraphElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLParagraphElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLParagraphElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -47,6 +46,8 @@ public:
   }
 
 protected:
+  virtual ~HTMLParagraphElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

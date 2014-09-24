@@ -53,14 +53,18 @@ AllocationIntegrityState::record()
             InstructionInfo &info = instructions[ins->id()];
 
             for (size_t k = 0; k < ins->numTemps(); k++) {
-                uint32_t vreg = ins->getTemp(k)->virtualRegister();
-                virtualRegisters[vreg] = ins->getTemp(k);
+                if (!ins->getTemp(k)->isBogusTemp()) {
+                    uint32_t vreg = ins->getTemp(k)->virtualRegister();
+                    virtualRegisters[vreg] = ins->getTemp(k);
+                }
                 if (!info.temps.append(*ins->getTemp(k)))
                     return false;
             }
             for (size_t k = 0; k < ins->numDefs(); k++) {
-                uint32_t vreg = ins->getDef(k)->virtualRegister();
-                virtualRegisters[vreg] = ins->getDef(k);
+                if (!ins->getDef(k)->isBogusTemp()) {
+                    uint32_t vreg = ins->getDef(k)->virtualRegister();
+                    virtualRegisters[vreg] = ins->getDef(k);
+                }
                 if (!info.outputs.append(*ins->getDef(k)))
                     return false;
             }
@@ -80,7 +84,7 @@ AllocationIntegrityState::check(bool populateSafepoints)
     JS_ASSERT(!instructions.empty());
 
 #ifdef DEBUG
-    if (IonSpewEnabled(IonSpew_RegAlloc))
+    if (JitSpewEnabled(JitSpew_RegAlloc))
         dump();
 
     for (size_t blockIndex = 0; blockIndex < graph.numBlocks(); blockIndex++) {
@@ -95,7 +99,7 @@ AllocationIntegrityState::check(bool populateSafepoints)
 
             for (size_t i = 0; i < ins->numDefs(); i++) {
                 LDefinition *def = ins->getDef(i);
-                JS_ASSERT_IF(def->policy() != LDefinition::PASSTHROUGH, !def->output()->isUse());
+                JS_ASSERT(!def->output()->isUse());
 
                 LDefinition oldDef = instructions[ins->id()].outputs[i];
                 JS_ASSERT_IF(oldDef.policy() == LDefinition::MUST_REUSE_INPUT,
@@ -132,6 +136,8 @@ AllocationIntegrityState::check(bool populateSafepoints)
             LSafepoint *safepoint = ins->safepoint();
             if (safepoint) {
                 for (size_t i = 0; i < ins->numTemps(); i++) {
+                    if (ins->getTemp(i)->isBogusTemp())
+                        continue;
                     uint32_t vreg = info.temps[i].virtualRegister();
                     LAllocation *alloc = ins->getTemp(i)->output();
                     if (!checkSafepointAllocation(ins, vreg, *alloc, populateSafepoints))
@@ -200,7 +206,7 @@ AllocationIntegrityState::checkIntegrity(LBlock *block, LInstruction *ins,
 
         for (size_t i = 0; i < ins->numDefs(); i++) {
             LDefinition *def = ins->getDef(i);
-            if (def->policy() == LDefinition::PASSTHROUGH)
+            if (def->isBogusTemp())
                 continue;
             if (info.outputs[i].virtualRegister() == vreg) {
                 JS_ASSERT(*def->output() == alloc);
@@ -268,6 +274,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
         AnyRegister reg = alloc.toRegister();
         if (populateSafepoints)
             safepoint->addLiveRegister(reg);
+
         JS_ASSERT(safepoint->liveRegs().has(reg));
     }
 
@@ -278,7 +285,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
     switch (type) {
       case LDefinition::OBJECT:
         if (populateSafepoints) {
-            IonSpew(IonSpew_RegAlloc, "Safepoint object v%u i%u %s",
+            JitSpew(JitSpew_RegAlloc, "Safepoint object v%u i%u %s",
                     vreg, ins->id(), alloc.toString());
             if (!safepoint->addGcPointer(alloc))
                 return false;
@@ -287,7 +294,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
         break;
       case LDefinition::SLOTS:
         if (populateSafepoints) {
-            IonSpew(IonSpew_RegAlloc, "Safepoint slots v%u i%u %s",
+            JitSpew(JitSpew_RegAlloc, "Safepoint slots v%u i%u %s",
                     vreg, ins->id(), alloc.toString());
             if (!safepoint->addSlotsOrElementsPointer(alloc))
                 return false;
@@ -301,7 +308,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
       // of payloads must be reflected, however, for generational GC.
       case LDefinition::TYPE:
         if (populateSafepoints) {
-            IonSpew(IonSpew_RegAlloc, "Safepoint type v%u i%u %s",
+            JitSpew(JitSpew_RegAlloc, "Safepoint type v%u i%u %s",
                     vreg, ins->id(), alloc.toString());
             if (!safepoint->addNunboxType(vreg, alloc))
                 return false;
@@ -309,7 +316,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
         break;
       case LDefinition::PAYLOAD:
         if (populateSafepoints) {
-            IonSpew(IonSpew_RegAlloc, "Safepoint payload v%u i%u %s",
+            JitSpew(JitSpew_RegAlloc, "Safepoint payload v%u i%u %s",
                     vreg, ins->id(), alloc.toString());
             if (!safepoint->addNunboxPayload(vreg, alloc))
                 return false;
@@ -319,7 +326,7 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
 #else
       case LDefinition::BOX:
         if (populateSafepoints) {
-            IonSpew(IonSpew_RegAlloc, "Safepoint boxed value v%u i%u %s",
+            JitSpew(JitSpew_RegAlloc, "Safepoint boxed value v%u i%u %s",
                     vreg, ins->id(), alloc.toString());
             if (!safepoint->addBoxedValue(alloc))
                 return false;
@@ -568,8 +575,10 @@ RegisterAllocator::dumpInstructions()
                     fprintf(stderr, " [temp %s]", temp->toString());
             }
 
-            for (LInstruction::InputIterator alloc(*ins); alloc.more(); alloc.next())
-                fprintf(stderr, " [use %s]", alloc->toString());
+            for (LInstruction::InputIterator alloc(*ins); alloc.more(); alloc.next()) {
+                if (!alloc->isBogus())
+                    fprintf(stderr, " [use %s]", alloc->toString());
+            }
 
             fprintf(stderr, "\n");
         }

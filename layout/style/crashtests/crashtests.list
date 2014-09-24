@@ -69,6 +69,7 @@ load 592698-1.html
 load 601437-1.html
 load 601439-1.html
 load 605689-1.html
+load 637242.xhtml
 load 645142.html
 load 611922-1.html
 == 645951-1.html 645951-1-ref.html
@@ -101,7 +102,7 @@ load 927734-1.html
 load 930270-1.html
 load 930270-2.html
 load 945048-1.html
-load 972199-1.html
+pref(layers.offmainthreadcomposition.async-animations,true) load 972199-1.html
 load 989965-1.html
 load 992333-1.html
 pref(dom.webcomponents.enabled,true) load 1017798-1.html

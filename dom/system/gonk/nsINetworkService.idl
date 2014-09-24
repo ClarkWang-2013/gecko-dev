@@ -19,13 +19,13 @@ interface nsIWifiTetheringCallback : nsISupports
   void wifiTetheringEnabledChange(in jsval error);
 };
 
-[scriptable, function, uuid(e079aa2a-ec0a-4bbd-b1a4-d81a9faae464)]
+[scriptable, function, uuid(9c128e68-5e4b-4626-bb88-84ec54cce5d8)]
 interface nsINetworkStatsCallback : nsISupports
 {
   void networkStatsAvailable(in boolean success,
                              in unsigned long rxBytes,
                              in unsigned long txBytes,
-                             in jsval date);
+                             in unsigned long long timestamp);
 };
 
 [scriptable, function, uuid(0706bfa2-ac2d-11e2-9a8d-7b6d988d4767)]
@@ -101,65 +101,10 @@ interface nsIUpdateUpStreamCallback : nsISupports
   void updateUpStreamResult(in boolean success, in DOMString externalIfname);
 };
 
-[scriptable, function, uuid(4a9166f3-7e4f-4d10-bb5c-b49ee21d6184)]
-interface nsIRunDhcpCallback : nsISupports
-{
-  /**
-   * Callback function used to report the result of dhcp request.
-   *
-   * @param success
-   *        Boolean to indicate the operation is successful or not.
-   */
-  void runDhcpResult(in boolean success, in jsval result);
-};
-
-[scriptable, function, uuid(88e3ee22-f1b3-4fa0-8a5d-793fb827c42c)]
-interface nsIGetInterfacesCallback : nsISupports
-{
-  /**
-   * Callback function used to return the list of existing network interfaces.
-   *
-   * @param success
-   *        Boolean to indicate the operation is successful or not.
-   * @param interfaceList
-   *        An array of interface name.
-   */
-  void getInterfacesResult(in boolean success, in jsval interfaceList);
-};
-
-[scriptable, function, uuid(064e02a3-d2c0-42c5-a293-1efa84056100)]
-interface nsIGetInterfaceConfigCallback : nsISupports
-{
-  /**
-   * Callback function used to return the network config of a given interface.
-   *
-   * @param success
-   *        Boolean to indicate the operation is successful or not.
-   * @param result
-   *        .ip: Ip address.
-   *        .prefix: mask length.
-   *        .link: network link properties.
-   *        .mac: mac address.
-   */
-  void getInterfaceConfigResult(in boolean success, in jsval result);
-};
-
-[scriptable, function, uuid(b370f360-6ba8-4517-a4f9-31e8f004ee91)]
-interface nsISetInterfaceConfigCallback : nsISupports
-{
-  /**
-   * Callback function used to set network cofig for a specified interface.
-   *
-   * @param success
-   *        Boolean to indicate the operation is successful or not.
-   */
-  void setInterfaceConfigResult(in boolean success);
-};
-
 /**
  * Provide network services.
  */
-[scriptable, uuid(48c13741-aec9-4a86-8962-432011708261)]
+[scriptable, uuid(ddb38428-0cf2-4c6a-a3c9-5e2f00fc54db)]
 interface nsINetworkService : nsISupports
 {
   /**
@@ -309,18 +254,34 @@ interface nsINetworkService : nsISupports
   /**
    * Add host route.
    *
-   * @param networkInterface
-   *        The network interface we want to add to the host route.
+   * @param interfaceName
+   *        Network interface name for the output of the host route.
+   * @param gateway
+   *        Gateway ip for the output of the host route.
+   * @param host
+   *        Host ip we want to add route for.
+   *
+   * @return A deferred promise that resolves on success or rejects with a
+   *         specified reason otherwise.
    */
-  void addHostRoute(in nsINetworkInterface networkInterface);
+  jsval addHostRoute(in DOMString interfaceName, in DOMString gateway,
+                     in DOMString host);
 
   /**
    * Remove host route.
    *
-   * @param network
-   *        The network interface we want to remove from the host route.
+   * @param interfaceName
+   *        Network interface name for the output of the host route.
+   * @param gateway
+   *        Gateway ip for the output of the host route.
+   * @param host
+   *        Host ip we want to remove route for.
+   *
+   * @return A deferred promise that resolves on success or rejects with a
+   *         specified reason otherwise.
    */
-  void removeHostRoute(in nsINetworkInterface network);
+  jsval removeHostRoute(in DOMString interfaceName, in DOMString gateway,
+                        in DOMString host);
 
   /**
    * Remove all host routes.
@@ -329,26 +290,6 @@ interface nsINetworkService : nsISupports
    *        The interface name we want remove from the routing table.
    */
   void removeHostRoutes(in DOMString interfaceName);
-
-  /**
-   * Add host route with resolve.
-   *
-   * @param network
-   *        The network interface we want to add to the host route.
-   * @param hosts
-   *        The array of host names we want to add.
-   */
-  void addHostRouteWithResolve(in nsINetworkInterface network, in jsval hosts);
-
-  /**
-   * Remove host route with resolve.
-   *
-   * @param network
-   *        The network interface we want to remove from the host route.
-   * @param hosts
-   *        The array of host names we want to remove.
-   */
-  void removeHostRouteWithResolve(in nsINetworkInterface network, in jsval hosts);
 
   /**
    * Add route to secondary routing table.
@@ -400,53 +341,4 @@ interface nsINetworkService : nsISupports
   void updateUpStream(in jsval previous,
                       in jsval current,
                       in nsIUpdateUpStreamCallback callback);
-
-  /**
-   * Run Dhcp request.
-   *
-   * @param ifname
-   *        Target interface.
-   * @param callback
-   *        Callback function to report the result.
-   */
-  void runDhcp(in DOMString ifname, in nsIRunDhcpCallback callback);
-
-  /**
-   * Stop Dhcp daemon.
-   *
-   * @param ifname
-   *        Target interface.
-   */
-  void stopDhcp(in DOMString ifname);
-
-  /*
-   * Obtain interfaces list.
-   *
-   * @param callback
-   *        Callback function to return the result.
-   */
-  void getInterfaces(in nsIGetInterfacesCallback callback);
-
-  /**
-   * Set config for a network interface.
-   *
-   * @param config
-   *        .ifname: Target interface.
-   *        .ip: Ip address.
-   *        .prefix: mask length.
-   *        .link: network link properties.
-   * @param callback
-   *        Callback function to report the result.
-   */
-  void setInterfaceConfig(in jsval config, in nsISetInterfaceConfigCallback callback);
-
-  /**
-   * Get config of a network interface.
-   *
-   * @param ifname
-   *        Target interface.
-   * @param callback
-   *        Callback function to report the result.
-   */
-  void getInterfaceConfig(in DOMString ifname, in nsIGetInterfaceConfigCallback callback);
 };

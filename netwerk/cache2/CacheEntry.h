@@ -20,6 +20,7 @@
 #include "nsString.h"
 #include "nsCOMArray.h"
 #include "nsThreadUtils.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/TimeStamp.h"
 
@@ -46,9 +47,9 @@ class CacheFileOutputStream;
 class CacheOutputCloseListener;
 class CacheEntryHandle;
 
-class CacheEntry : public nsICacheEntry
-                 , public nsIRunnable
-                 , public CacheFileListener
+class CacheEntry MOZ_FINAL : public nsICacheEntry
+                           , public nsIRunnable
+                           , public CacheFileListener
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -69,9 +70,9 @@ public:
   nsIURI* GetURI() const { return mURI; }
   // Accessible at any time
   bool IsUsingDisk() const { return mUseDisk; }
-  bool SetUsingDisk(bool aUsingDisk);
   bool IsReferenced() const;
   bool IsFileDoomed();
+  bool IsDoomed() const { return mIsDoomed; }
 
   // Methods for entry management (eviction from memory),
   // called only on the management thread.
@@ -79,10 +80,13 @@ public:
   // TODO make these inline
   double GetFrecency() const;
   uint32_t GetExpirationTime() const;
+  uint32_t UseCount() const { return mUseCount; }
 
   bool IsRegistered() const;
   bool CanRegister() const;
   void SetRegistered(bool aRegistered);
+
+  TimeStamp const& LoadStart() const { return mLoadStart; }
 
   enum EPurge {
     PURGE_DATA_ONLY_DISK_BACKED,
@@ -94,8 +98,8 @@ public:
   void PurgeAndDoom();
   void DoomAlreadyRemoved();
 
-  nsresult HashingKeyWithStorage(nsACString &aResult);
-  nsresult HashingKey(nsACString &aResult);
+  nsresult HashingKeyWithStorage(nsACString &aResult) const;
+  nsresult HashingKey(nsACString &aResult) const;
 
   static nsresult HashingKey(nsCSubstring const& aStorageID,
                              nsCSubstring const& aEnhanceID,
@@ -133,7 +137,7 @@ private:
   public:
     Callback(CacheEntry* aEntry,
              nsICacheEntryOpenCallback *aCallback,
-             bool aReadOnly, bool aCheckOnAnyThread);
+             bool aReadOnly, bool aCheckOnAnyThread, bool aSecret);
     Callback(Callback const &aThat);
     ~Callback();
 
@@ -151,6 +155,7 @@ private:
     bool mCheckOnAnyThread : 1;
     bool mRecheckAfterWrite : 1;
     bool mNotWanted : 1;
+    bool mSecret : 1;
 
     nsresult OnCheckThread(bool *aOnCheckThread) const;
     nsresult OnAvailThread(bool *aOnAvailThread) const;
@@ -342,6 +347,7 @@ private:
   nsCOMPtr<nsISupports> mSecurityInfo;
   int64_t mPredictedDataSize;
   mozilla::TimeStamp mLoadStart;
+  uint32_t mUseCount;
   nsCOMPtr<nsIThread> mReleaseThread;
 };
 
@@ -349,7 +355,7 @@ private:
 class CacheEntryHandle : public nsICacheEntry
 {
 public:
-  CacheEntryHandle(CacheEntry* aEntry);
+  explicit CacheEntryHandle(CacheEntry* aEntry);
   CacheEntry* Entry() const { return mEntry; }
 
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -360,17 +366,18 @@ private:
 };
 
 
-class CacheOutputCloseListener : public nsRunnable
+class CacheOutputCloseListener MOZ_FINAL : public nsRunnable
 {
 public:
   void OnOutputClosed();
-  virtual ~CacheOutputCloseListener();
 
 private:
   friend class CacheEntry;
 
+  virtual ~CacheOutputCloseListener();
+
   NS_DECL_NSIRUNNABLE
-  CacheOutputCloseListener(CacheEntry* aEntry);
+  explicit CacheOutputCloseListener(CacheEntry* aEntry);
 
 private:
   nsRefPtr<CacheEntry> mEntry;

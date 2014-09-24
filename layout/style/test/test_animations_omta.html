@@ -151,6 +151,9 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=964646
       height: 100px;
       background-color: white;
     }
+
+    #visitedLink:link { background-color: yellow }
+    #visitedLink:visited { background-color: blue }
   </style>
 </head>
 <body>
@@ -1546,13 +1549,6 @@ addAsyncAnimTest(function *() {
 // rules below it in the cascade; we're checking that the animation
 // isn't rebuilt when the restyles happen.
 addAsyncAnimTest(function *() {
-  // Bug 1012527 - ASSERTION: Why did this not get handled while processing
-  // mRestyleRoots? on B2G emulator builds
-  // (Note that we don't expect assertions anywhere else in this file so the
-  // following usage is safe)
-  if (navigator.platform === '') {
-    SimpleTest.expectAssertions(2);
-  }
   new_div("animation: kf3 1s linear forwards");
   yield waitForPaintsFlushed();
   omta_is("transform", { tx: 0 }, RunningOn.Compositor,
@@ -2022,6 +2018,59 @@ addAsyncAnimTest(function *() {
                "empty keyframes rule");
 
   done_div();
+});
+
+// Bug 996796 patch 12 - test for correct visited styles during
+// animation-only style flush.
+addAsyncAnimTest(function *() {
+  var div1 = document.createElement("div");
+  div1.classList.add("target");
+  div1.style.height = "10px";
+  div1.style.animation = "anim2 linear 1s";
+
+  var visitedLink = document.createElement("a");
+  visitedLink.setAttribute("href", "");
+  visitedLink.setAttribute("id", "visitedLink");
+  visitedLink.classList.add("target");
+  visitedLink.style.display = "block";
+  visitedLink.style.height = "10px";
+  visitedLink.style.animation = "anim2 linear 1s";
+
+  gDisplay.appendChild(div1);
+  gDisplay.appendChild(visitedLink);
+
+  // Wait for animations to start and for visited link coloring.
+  yield waitForPaintsFlushed();
+
+  var bgColor = SpecialPowers.DOMWindowUtils
+    .getVisitedDependentComputedStyle(visitedLink, "", "background-color");
+  var isb2g = SpecialPowers.Services.appinfo.name == "B2G";
+  // No global history in B2G.
+  (isb2g ? todo_is : is)(bgColor, "rgb(0, 0, 255)",
+                         "initial visited link background color");
+
+  if (isb2g) {
+    // The above failure makes the rest of the test pointless.
+    div1.remove();
+    visitedLink.remove();
+    return;
+  }
+
+  advance_clock(250);
+
+  // Trigger a style change on div1 that will force us to do a miniflush,
+  // but which will not trigger a style change on visitedLink.
+  div1.style.color = "blue";
+  advance_clock(250);
+
+  bgColor = SpecialPowers.DOMWindowUtils
+    .getVisitedDependentComputedStyle(visitedLink, "", "background-color");
+
+  is(bgColor, "rgb(0, 0, 255)",
+     "visited link background color after animation-only flush");
+
+  div1.remove();
+  visitedLink.remove();
 });
 
 //----------------------------------------------------------------------

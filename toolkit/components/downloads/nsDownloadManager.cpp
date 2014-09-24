@@ -945,31 +945,13 @@ nsDownloadManager::Init()
   // When MOZ_JSDOWNLOADS is undefined, we still check the preference that can
   // be used to enable the JavaScript API during the migration process.
   mUseJSTransfer = Preferences::GetBool(PREF_BD_USEJSTRANSFER, false);
-#else
-
-  nsAutoCString appID;
-  nsCOMPtr<nsIXULAppInfo> info = do_GetService("@mozilla.org/xre/app-info;1");
-  if (info) {
-    rv = info->GetID(appID);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  // The webapp runtime doesn't use the new JS downloads API yet.
-  // The conversion of the webapp runtime to use the JavaScript API for
-  // downloads is tracked in bug 911636.
-  if (appID.EqualsLiteral("webapprt@mozilla.org")) {
-    mUseJSTransfer = false;
-  } else {
-#if !defined(XP_WIN)
-    mUseJSTransfer = true;
-#else
+#elif defined(XP_WIN)
     // When MOZ_JSDOWNLOADS is defined on Windows, this component is disabled
     // unless we are running in Windows Metro.  The conversion of Windows Metro
     // to use the JavaScript API for downloads is tracked in bug 906042.
     mUseJSTransfer = !IsRunningInWindowsMetro();
-#endif
-  }
-
+#else
+    mUseJSTransfer = true;
 #endif
 
   if (mUseJSTransfer)
@@ -2768,7 +2750,7 @@ nsDownload::SetState(DownloadState aState)
                   message, !removeWhenDone,
                   mPrivate ? NS_LITERAL_STRING("private") : NS_LITERAL_STRING("non-private"),
                   mDownloadManager, EmptyString(), NS_LITERAL_STRING("auto"),
-                  EmptyString(), nullptr);
+                  EmptyString(), EmptyString(), nullptr);
             }
         }
       }
@@ -2783,7 +2765,7 @@ nsDownload::SetState(DownloadState aState)
           file &&
           NS_SUCCEEDED(file->GetPath(path))) {
 
-#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID)
         // On Windows and Gtk, add the download to the system's "recent documents"
         // list, with a pref to disable.
         {
@@ -2803,6 +2785,15 @@ nsDownload::SetState(DownloadState aState)
               gtk_recent_manager_add_item(manager, uri);
               g_free(uri);
             }
+#elif defined(MOZ_WIDGET_ANDROID)
+            nsCOMPtr<nsIMIMEInfo> mimeInfo;
+            nsAutoCString contentType;
+            GetMIMEInfo(getter_AddRefs(mimeInfo));
+
+            if (mimeInfo)
+              mimeInfo->GetMIMEType(contentType);
+
+            mozilla::widget::android::GeckoAppShell::ScanMedia(path, NS_ConvertUTF8toUTF16(contentType));
 #endif
           }
 #ifdef MOZ_ENABLE_GIO
@@ -2831,16 +2822,6 @@ nsDownload::SetState(DownloadState aState)
         ::CFNotificationCenterPostNotification(center, CFSTR("com.apple.DownloadFileFinished"),
                                                observedObject, nullptr, TRUE);
         ::CFRelease(observedObject);
-#endif
-#ifdef MOZ_WIDGET_ANDROID
-        nsCOMPtr<nsIMIMEInfo> mimeInfo;
-        nsAutoCString contentType;
-        GetMIMEInfo(getter_AddRefs(mimeInfo));
-
-        if (mimeInfo)
-          mimeInfo->GetMIMEType(contentType);
-
-        mozilla::widget::android::GeckoAppShell::ScanMedia(path, NS_ConvertUTF8toUTF16(contentType));
 #endif
       }
 

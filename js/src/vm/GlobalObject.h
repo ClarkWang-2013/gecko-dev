@@ -208,11 +208,6 @@ class GlobalObject : public JSObject
         return !getConstructor(key).isUndefined();
     }
 
-    bool isStandardClassResolved(const js::Class *clasp) const {
-        JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(clasp);
-        return isStandardClassResolved(key);
-    }
-
   private:
     bool arrayClassInitialized() const {
         return classIsInitialized(JSProto_Array);
@@ -563,8 +558,10 @@ class GlobalObject : public JSObject
     RegExpStatics *getAlreadyCreatedRegExpStatics() const;
 
     JSObject *getThrowTypeError() const {
-        JS_ASSERT(functionObjectClassesInitialized());
-        return &getSlot(THROWTYPEERROR).toObject();
+        const Value v = getReservedSlot(THROWTYPEERROR);
+        MOZ_ASSERT(v.isObject(),
+                   "attempting to access [[ThrowTypeError]] too early");
+        return &v.toObject();
     }
 
     Value createDataViewForThis() const {
@@ -637,8 +634,6 @@ class GlobalObject : public JSObject
         return &forOfPIC.toObject();
     }
     static JSObject *getOrCreateForOfPICObject(JSContext *cx, Handle<GlobalObject*> global);
-
-    static bool addDebugger(JSContext *cx, Handle<GlobalObject*> global, Debugger *dbg);
 };
 
 template<>
@@ -810,6 +805,15 @@ GenericCreatePrototype(JSContext *cx, JSProtoKey key)
         return nullptr;
     JSObject *parentProto = &cx->global()->getPrototype(parentKey).toObject();
     return cx->global()->createBlankPrototypeInheriting(cx, clasp, *parentProto);
+}
+
+inline JSProtoKey
+StandardProtoKeyOrNull(const JSObject *obj)
+{
+    JSProtoKey key = JSCLASS_CACHED_PROTO_KEY(obj->getClass());
+    if (key == JSProto_Error)
+        return GetExceptionProtoKey(obj->as<ErrorObject>().type());
+    return key;
 }
 
 } // namespace js

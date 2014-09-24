@@ -46,7 +46,7 @@ class HTMLFrameSetElement MOZ_FINAL : public nsGenericHTMLElement,
                                       public nsIDOMHTMLFrameSetElement
 {
 public:
-  HTMLFrameSetElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLFrameSetElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo),
       mNumRows(0),
       mNumCols(0),
@@ -54,7 +54,6 @@ public:
   {
     SetHasWeirdParserInsertionMode();
   }
-  virtual ~HTMLFrameSetElement();
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLFrameSetElement, frameset)
 
@@ -138,6 +137,8 @@ public:
   virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
 protected:
+  virtual ~HTMLFrameSetElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

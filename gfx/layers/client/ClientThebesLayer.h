@@ -33,8 +33,8 @@ public:
   typedef RotatedContentBuffer::PaintState PaintState;
   typedef RotatedContentBuffer::ContentType ContentType;
 
-  ClientThebesLayer(ClientLayerManager* aLayerManager,
-                    LayerManager::ThebesLayerCreationHint aCreationHint = LayerManager::NONE) :
+  explicit ClientThebesLayer(ClientLayerManager* aLayerManager,
+                             LayerManager::ThebesLayerCreationHint aCreationHint = LayerManager::NONE) :
     ThebesLayer(aLayerManager,
                 static_cast<ClientLayer*>(MOZ_THIS_IN_INITIALIZER_LIST()),
                 aCreationHint),
@@ -42,6 +42,8 @@ public:
   {
     MOZ_COUNT_CTOR(ClientThebesLayer);
   }
+
+protected:
   virtual ~ClientThebesLayer()
   {
     if (mContentClient) {
@@ -51,6 +53,7 @@ public:
     MOZ_COUNT_DTOR(ClientThebesLayer);
   }
 
+public:
   virtual void SetVisibleRegion(const nsIntRegion& aRegion)
   {
     NS_ASSERTION(ClientManager()->InConstruction(),
@@ -66,7 +69,9 @@ public:
     mValidRegion.Sub(mValidRegion, mInvalidRegion);
   }
 
-  virtual void RenderLayer();
+  virtual void RenderLayer() { RenderLayerWithReadback(nullptr); }
+
+  virtual void RenderLayerWithReadback(ReadbackProcessor *aReadback) MOZ_OVERRIDE;
 
   virtual void ClearCachedResources()
   {

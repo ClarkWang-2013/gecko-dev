@@ -53,6 +53,8 @@ Thus, internally, a key has the following fields:
 
 */
 
+struct JsonWebKey;
+
 class CryptoKey MOZ_FINAL : public nsISupports,
                             public nsWrapperCache,
                             public nsNSSShutDownObject
@@ -86,7 +88,7 @@ public:
     UNWRAPKEY  = 0x00800000
   };
 
-  CryptoKey(nsIGlobalObject* aWindow);
+  explicit CryptoKey(nsIGlobalObject* aWindow);
 
   nsIGlobalObject* GetParentObject() const
   {
@@ -148,6 +150,18 @@ public:
   static nsresult PublicKeyToSpki(SECKEYPublicKey* aPrivKey,
                                   CryptoBuffer& aRetVal,
                                   const nsNSSShutDownPreventionLock& /*proofOfLock*/);
+
+  static SECKEYPrivateKey* PrivateKeyFromJwk(const JsonWebKey& aJwk,
+                                             const nsNSSShutDownPreventionLock& /*proofOfLock*/);
+  static nsresult PrivateKeyToJwk(SECKEYPrivateKey* aPrivKey,
+                                  JsonWebKey& aRetVal,
+                                  const nsNSSShutDownPreventionLock& /*proofOfLock*/);
+
+  static SECKEYPublicKey* PublicKeyFromJwk(const JsonWebKey& aKeyData,
+                                           const nsNSSShutDownPreventionLock& /*proofOfLock*/);
+  static nsresult PublicKeyToJwk(SECKEYPublicKey* aPrivKey,
+                                 JsonWebKey& aRetVal,
+                                 const nsNSSShutDownPreventionLock& /*proofOfLock*/);
 
   // Structured clone methods use these to clone keys
   bool WriteStructuredClone(JSStructuredCloneWriter* aWriter) const;

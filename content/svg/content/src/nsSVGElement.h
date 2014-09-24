@@ -73,7 +73,7 @@ class nsSVGElement : public nsSVGElementBase    // nsIContent
                    , public nsIDOMSVGElement
 {
 protected:
-  nsSVGElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
+  explicit nsSVGElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo);
   friend nsresult NS_NewSVGElement(mozilla::dom::Element **aResult,
                                    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
   nsresult Init();
@@ -113,6 +113,7 @@ public:
   virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
 
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker) MOZ_OVERRIDE;
+  void WalkAnimatedContentStyleRules(nsRuleWalker* aRuleWalker);
 
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const MOZ_OVERRIDE;
 

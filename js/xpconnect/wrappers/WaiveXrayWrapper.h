@@ -15,8 +15,7 @@ namespace xpc {
 
 class WaiveXrayWrapper : public js::CrossCompartmentWrapper {
   public:
-    WaiveXrayWrapper(unsigned flags);
-    virtual ~WaiveXrayWrapper();
+    explicit MOZ_CONSTEXPR WaiveXrayWrapper(unsigned flags) : js::CrossCompartmentWrapper(flags) { }
 
     virtual bool getPropertyDescriptor(JSContext *cx, JS::Handle<JSObject*> wrapper,
                                        JS::Handle<jsid> id,
@@ -26,6 +25,9 @@ class WaiveXrayWrapper : public js::CrossCompartmentWrapper {
                                           JS::MutableHandle<JSPropertyDescriptor> desc) const MOZ_OVERRIDE;
     virtual bool get(JSContext *cx, JS::Handle<JSObject*> wrapper, JS::Handle<JSObject*> receiver,
                      JS::Handle<jsid> id, JS::MutableHandle<JS::Value> vp) const MOZ_OVERRIDE;
+    virtual bool iterate(JSContext *cx, JS::Handle<JSObject*> proxy, unsigned flags,
+                         JS::MutableHandle<JS::Value> vp) const MOZ_OVERRIDE;
+
 
     virtual bool call(JSContext *cx, JS::Handle<JSObject*> wrapper,
                       const JS::CallArgs &args) const MOZ_OVERRIDE;

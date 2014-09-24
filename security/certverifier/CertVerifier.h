@@ -9,6 +9,7 @@
 
 #include "pkix/pkixtypes.h"
 #include "OCSPCache.h"
+#include "ScopedNSSTypes.h"
 
 namespace mozilla { namespace psm {
 
@@ -27,22 +28,23 @@ public:
   // Only one usage per verification is supported.
   SECStatus VerifyCert(CERTCertificate* cert,
                        SECCertificateUsage usage,
-                       PRTime time,
+                       mozilla::pkix::Time time,
                        void* pinArg,
                        const char* hostname,
                        Flags flags = 0,
        /*optional in*/ const SECItem* stapledOCSPResponse = nullptr,
-      /*optional out*/ mozilla::pkix::ScopedCERTCertList* validationChain = nullptr,
+      /*optional out*/ ScopedCERTCertList* builtChain = nullptr,
       /*optional out*/ SECOidTag* evOidPolicy = nullptr);
 
   SECStatus VerifySSLServerCert(
                     CERTCertificate* peerCert,
        /*optional*/ const SECItem* stapledOCSPResponse,
-                    PRTime time,
+                    mozilla::pkix::Time time,
        /*optional*/ void* pinarg,
                     const char* hostname,
                     bool saveIntermediatesInPermanentDatabase = false,
-   /*optional out*/ mozilla::pkix::ScopedCERTCertList* certChainOut = nullptr,
+                    Flags flags = 0,
+   /*optional out*/ ScopedCERTCertList* builtChain = nullptr,
    /*optional out*/ SECOidTag* evOidPolicy = nullptr);
 
   enum pinning_enforcement_config {
@@ -77,6 +79,8 @@ private:
 };
 
 void InitCertVerifierLog();
+SECStatus IsCertBuiltInRoot(CERTCertificate* cert, bool& result);
+
 } } // namespace mozilla::psm
 
 #endif // mozilla_psm__CertVerifier_h

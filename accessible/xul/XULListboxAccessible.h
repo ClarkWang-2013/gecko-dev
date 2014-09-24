@@ -30,8 +30,8 @@ public:
   XULColumAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
   // Accessible
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
 };
 
 /**
@@ -43,16 +43,14 @@ class XULColumnItemAccessible : public LeafAccessible
 public:
   XULColumnItemAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
-  // nsIAccessible
-  NS_IMETHOD GetActionName(uint8_t aIndex, nsAString& aName);
-  NS_IMETHOD DoAction(uint8_t aIndex);
-
   // Accessible
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
 
   // ActionAccessible
-  virtual uint8_t ActionCount();
+  virtual uint8_t ActionCount() MOZ_OVERRIDE;
+  virtual void ActionNameAt(uint8_t aIndex, nsAString& aName) MOZ_OVERRIDE;
+  virtual bool DoAction(uint8_t aIndex) MOZ_OVERRIDE;
 
   enum { eAction_Click = 0 };
 };
@@ -67,7 +65,6 @@ class XULListboxAccessible : public XULSelectControlAccessible,
 {
 public:
   XULListboxAccessible(nsIContent* aContent, DocAccessible* aDoc);
-  virtual ~XULListboxAccessible() {}
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -96,8 +93,8 @@ public:
   virtual void Shutdown();
   virtual void Value(nsString& aValue);
   virtual TableAccessible* AsTable() { return this; }
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
 
   // Widgets
   virtual bool IsWidget() const;
@@ -107,6 +104,8 @@ public:
   virtual Accessible* ContainerWidget() const;
 
 protected:
+  virtual ~XULListboxAccessible() {}
+
   bool IsMulticolumn();
 };
 
@@ -121,23 +120,23 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   XULListitemAccessible(nsIContent* aContent, DocAccessible* aDoc);
-  virtual ~XULListitemAccessible() {}
-
-  // nsIAccessible
-  NS_IMETHOD GetActionName(uint8_t index, nsAString& aName);
-  // Don't use XUL menuitems's description attribute
 
   // Accessible
   virtual void Description(nsString& aDesc);
-  virtual a11y::role NativeRole();
-  virtual uint64_t NativeState();
-  virtual uint64_t NativeInteractiveState() const;
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
+  virtual uint64_t NativeState() MOZ_OVERRIDE;
+  virtual uint64_t NativeInteractiveState() const MOZ_OVERRIDE;
   virtual bool CanHaveAnonChildren();
+
+  // Actions
+  virtual void ActionNameAt(uint8_t index, nsAString& aName) MOZ_OVERRIDE;
 
   // Widgets
   virtual Accessible* ContainerWidget() const;
 
 protected:
+  virtual ~XULListitemAccessible();
+
   // Accessible
   virtual ENameValueFlag NativeName(nsString& aName) MOZ_OVERRIDE;
 
@@ -146,7 +145,7 @@ protected:
   /**
    * Return listbox accessible for the listitem.
    */
-  Accessible* GetListAccessible();
+  Accessible* GetListAccessible() const;
 
 private:
   bool mIsCheckbox;
@@ -173,7 +172,7 @@ public:
   virtual TableCellAccessible* AsTableCell() { return this; }
   virtual void Shutdown();
   virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
-  virtual a11y::role NativeRole();
+  virtual a11y::role NativeRole() MOZ_OVERRIDE;
 
   // TableCellAccessible
   virtual TableAccessible* Table() const MOZ_OVERRIDE;
@@ -181,6 +180,9 @@ public:
   virtual uint32_t RowIdx() const MOZ_OVERRIDE;
   virtual void ColHeaderCells(nsTArray<Accessible*>* aHeaderCells) MOZ_OVERRIDE;
   virtual bool Selected() MOZ_OVERRIDE;
+
+protected:
+  virtual ~XULListCellAccessible() {}
 };
 
 } // namespace a11y

@@ -48,36 +48,13 @@ CodeGeneratorMIPS::generatePrologue()
 }
 
 bool
-CodeGeneratorMIPS::generateAsmJSPrologue(Label *stackOverflowLabel)
-{
-    JS_ASSERT(gen->compilingAsmJS());
-
-    // See comment in Assembler-shared.h about AsmJSFrameSize.
-    masm.push(ra);
-
-    // The asm.js over-recursed handler wants to be able to assume that SP
-    // points to the return address, so perform the check after pushing ra but
-    // before pushing frameDepth.
-    if (!omitOverRecursedCheck()) {
-        masm.branchPtr(Assembler::AboveOrEqual,
-                       AsmJSAbsoluteAddress(AsmJSImm_StackLimit),
-                       StackPointer,
-                       stackOverflowLabel);
-    }
-
-    // Note that this automatically sets MacroAssembler::framePushed().
-    masm.reserveStack(frameDepth_);
-    masm.checkStackAlignment();
-    return true;
-}
-
-bool
 CodeGeneratorMIPS::generateEpilogue()
 {
+    MOZ_ASSERT(!gen->compilingAsmJS());
     masm.bind(&returnLabel_);
 
 #ifdef JS_TRACE_LOGGING
-    if (!gen->compilingAsmJS() && gen->info().executionMode() == SequentialExecution) {
+    if (gen->info().executionMode() == SequentialExecution) {
         if (!emitTracelogStopEvent(TraceLogger::IonMonkey))
             return false;
         if (!emitTracelogScriptStop())
@@ -85,10 +62,7 @@ CodeGeneratorMIPS::generateEpilogue()
     }
 #endif
 
-    if (gen->compilingAsmJS())
-        masm.freeStack(frameDepth_);
-    else
-        masm.freeStack(frameSize());
+    masm.freeStack(frameSize());
     JS_ASSERT(masm.framePushed() == 0);
     masm.ret();
     return true;
@@ -114,7 +88,7 @@ CodeGeneratorMIPS::branchToBlock(Assembler::FloatFormat fmt, FloatRegister lhs, 
         else
             masm.ma_bc1s(lhs, rhs, &skip, Assembler::InvertCondition(cond), ShortJump);
 
-        backedge = masm.jumpWithPatch(&rejoin);
+        backedge = masm.backedgeJump(&rejoin);
         masm.bind(&rejoin);
         masm.bind(&skip);
 
@@ -223,8 +197,9 @@ CodeGeneratorMIPS::bailoutFrom(Label *label, LSnapshot *snapshot)
                   frameClass_.frameSize() == masm.framePushed());
 
     // We don't use table bailouts because retargeting is easier this way.
+    InlineScriptTree *tree = snapshot->mir()->block()->trackedTree();
     OutOfLineBailout *ool = new(alloc()) OutOfLineBailout(snapshot, masm.framePushed());
-    if (!addOutOfLineCode(ool)) {
+    if (!addOutOfLineCode(ool, BytecodeSite(tree, tree->script()->code()))) {
         return false;
     }
 
@@ -847,7 +822,7 @@ CodeGeneratorMIPS::visitBitOpI(LBitOpI *ins)
             masm.ma_and(ToRegister(dest), ToRegister(lhs), ToRegister(rhs));
         break;
       default:
-        MOZ_ASSUME_UNREACHABLE("unexpected binary opcode");
+        MOZ_CRASH("unexpected binary opcode");
     }
 
     return true;
@@ -888,7 +863,7 @@ CodeGeneratorMIPS::visitShiftI(LShiftI *ins)
             }
             break;
           default:
-            MOZ_ASSUME_UNREACHABLE("Unexpected shift op");
+            MOZ_CRASH("Unexpected shift op");
         }
     } else {
         // The shift amounts should be AND'ed into the 0-31 range
@@ -910,7 +885,7 @@ CodeGeneratorMIPS::visitShiftI(LShiftI *ins)
             }
             break;
           default:
-            MOZ_ASSUME_UNREACHABLE("Unexpected shift op");
+            MOZ_CRASH("Unexpected shift op");
         }
     }
 
@@ -933,6 +908,16 @@ CodeGeneratorMIPS::visitUrshD(LUrshD *ins)
     }
 
     masm.convertUInt32ToDouble(temp, out);
+    return true;
+}
+
+bool
+CodeGeneratorMIPS::visitClzI(LClzI *ins)
+{
+    Register input = ToRegister(ins->input());
+    Register output = ToRegister(ins->output());
+
+    masm.as_clz(output, input);
     return true;
 }
 
@@ -1044,7 +1029,7 @@ CodeGeneratorMIPS::emitTableSwitchDispatch(MTableSwitch *mir, Register index,
     // generate the case entries (we don't yet know their offsets in the
     // instruction stream).
     OutOfLineTableSwitch *ool = new(alloc()) OutOfLineTableSwitch(mir);
-    if (!addOutOfLineCode(ool))
+    if (!addOutOfLineCode(ool, mir))
         return false;
 
     // Compute the position where a pointer to the right case stands.
@@ -1077,7 +1062,7 @@ CodeGeneratorMIPS::visitMathD(LMathD *math)
         masm.as_divd(ToFloatRegister(output), ToFloatRegister(src1), ToFloatRegister(src2));
         break;
       default:
-        MOZ_ASSUME_UNREACHABLE("unexpected opcode");
+        MOZ_CRASH("unexpected opcode");
     }
     return true;
 }
@@ -1103,7 +1088,7 @@ CodeGeneratorMIPS::visitMathF(LMathF *math)
         masm.as_divs(ToFloatRegister(output), ToFloatRegister(src1), ToFloatRegister(src2));
         break;
       default:
-        MOZ_ASSUME_UNREACHABLE("unexpected opcode");
+        MOZ_CRASH("unexpected opcode");
     }
     return true;
 }
@@ -1391,13 +1376,15 @@ CodeGeneratorMIPS::visitRoundF(LRoundF *lir)
 bool
 CodeGeneratorMIPS::visitTruncateDToInt32(LTruncateDToInt32 *ins)
 {
-    return emitTruncateDouble(ToFloatRegister(ins->input()), ToRegister(ins->output()));
+    return emitTruncateDouble(ToFloatRegister(ins->input()), ToRegister(ins->output()),
+                              ins->mir());
 }
 
 bool
 CodeGeneratorMIPS::visitTruncateFToInt32(LTruncateFToInt32 *ins)
 {
-    return emitTruncateFloat32(ToFloatRegister(ins->input()), ToRegister(ins->output()));
+    return emitTruncateFloat32(ToFloatRegister(ins->input()), ToRegister(ins->output()),
+                               ins->mir());
 }
 
 static const uint32_t FrameSizes[] = { 128, 256, 512, 1024 };
@@ -1862,7 +1849,7 @@ CodeGeneratorMIPS::generateInvalidateEpilogue()
     // Ensure that there is enough space in the buffer for the OsiPoint
     // patching to occur. Otherwise, we could overwrite the invalidation
     // epilogue.
-    for (size_t i = 0; i < sizeof(void *); i += Assembler::nopSize())
+    for (size_t i = 0; i < sizeof(void *); i += Assembler::NopSize())
         masm.nop();
 
     masm.bind(&invalidate_);
@@ -1893,13 +1880,20 @@ DispatchIonCache::initializeAddCacheState(LInstruction *ins, AddCacheState *addS
 bool
 CodeGeneratorMIPS::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic *ins)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
 }
 
 bool
 CodeGeneratorMIPS::visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic *ins)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
+}
+
+bool
+CodeGeneratorMIPS::visitAsmJSCall(LAsmJSCall *ins)
+{
+    emitAsmJSCall(ins);
+    return true;
 }
 
 bool
@@ -1913,15 +1907,15 @@ CodeGeneratorMIPS::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
     int size;
     bool isFloat = false;
     switch (mir->viewType()) {
-      case ArrayBufferView::TYPE_INT8:    isSigned = true;  size =  8; break;
-      case ArrayBufferView::TYPE_UINT8:   isSigned = false; size =  8; break;
-      case ArrayBufferView::TYPE_INT16:   isSigned = true;  size = 16; break;
-      case ArrayBufferView::TYPE_UINT16:  isSigned = false; size = 16; break;
-      case ArrayBufferView::TYPE_INT32:   isSigned = true;  size = 32; break;
-      case ArrayBufferView::TYPE_UINT32:  isSigned = false; size = 32; break;
-      case ArrayBufferView::TYPE_FLOAT64: isFloat  = true;  size = 64; break;
-      case ArrayBufferView::TYPE_FLOAT32: isFloat  = true;  size = 32; break;
-      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
+      case Scalar::Int8:    isSigned = true;  size =  8; break;
+      case Scalar::Uint8:   isSigned = false; size =  8; break;
+      case Scalar::Int16:   isSigned = true;  size = 16; break;
+      case Scalar::Uint16:  isSigned = false; size = 16; break;
+      case Scalar::Int32:   isSigned = true;  size = 32; break;
+      case Scalar::Uint32:  isSigned = false; size = 32; break;
+      case Scalar::Float64: isFloat  = true;  size = 64; break;
+      case Scalar::Float32: isFloat  = true;  size = 32; break;
+      default: MOZ_CRASH("unexpected array type");
     }
 
     if (ptr->isConstant()) {
@@ -1977,9 +1971,11 @@ CodeGeneratorMIPS::visitAsmJSLoadHeap(LAsmJSLoadHeap *ins)
     // Offset is out of range. Load default values.
     if (isFloat) {
         if (size == 32)
-            masm.convertDoubleToFloat32(NANReg, ToFloatRegister(out));
+            masm.loadFloat32(Address(GlobalReg, AsmJSNaN32GlobalDataOffset - AsmJSGlobalRegBias),
+                             ToFloatRegister(out));
         else
-            masm.moveDouble(NANReg, ToFloatRegister(out));
+            masm.loadDouble(Address(GlobalReg, AsmJSNaN64GlobalDataOffset - AsmJSGlobalRegBias),
+                            ToFloatRegister(out));
     } else {
         masm.move32(Imm32(0), ToRegister(out));
     }
@@ -2000,15 +1996,15 @@ CodeGeneratorMIPS::visitAsmJSStoreHeap(LAsmJSStoreHeap *ins)
     int size;
     bool isFloat = false;
     switch (mir->viewType()) {
-      case ArrayBufferView::TYPE_INT8:    isSigned = true;  size = 8;  break;
-      case ArrayBufferView::TYPE_UINT8:   isSigned = false; size = 8;  break;
-      case ArrayBufferView::TYPE_INT16:   isSigned = true;  size = 16; break;
-      case ArrayBufferView::TYPE_UINT16:  isSigned = false; size = 16; break;
-      case ArrayBufferView::TYPE_INT32:   isSigned = true;  size = 32; break;
-      case ArrayBufferView::TYPE_UINT32:  isSigned = false; size = 32; break;
-      case ArrayBufferView::TYPE_FLOAT64: isFloat  = true;  size = 64; break;
-      case ArrayBufferView::TYPE_FLOAT32: isFloat  = true;  size = 32; break;
-      default: MOZ_ASSUME_UNREACHABLE("unexpected array type");
+      case Scalar::Int8:    isSigned = true;  size =  8; break;
+      case Scalar::Uint8:   isSigned = false; size =  8; break;
+      case Scalar::Int16:   isSigned = true;  size = 16; break;
+      case Scalar::Uint16:  isSigned = false; size = 16; break;
+      case Scalar::Int32:   isSigned = true;  size = 32; break;
+      case Scalar::Uint32:  isSigned = false; size = 32; break;
+      case Scalar::Float64: isFloat  = true;  size = 64; break;
+      case Scalar::Float32: isFloat  = true;  size = 32; break;
+      default: MOZ_CRASH("unexpected array type");
     }
 
     if (ptr->isConstant()) {
@@ -2076,7 +2072,8 @@ CodeGeneratorMIPS::visitAsmJSPassStackArg(LAsmJSPassStackArg *ins)
         if (ins->arg()->isGeneralReg()) {
             masm.storePtr(ToRegister(ins->arg()), Address(StackPointer, mir->spOffset()));
         } else {
-            masm.storeDouble(ToFloatRegister(ins->arg()), Address(StackPointer, mir->spOffset()));
+            masm.storeDouble(ToFloatRegister(ins->arg()).doubleOverlay(0),
+                             Address(StackPointer, mir->spOffset()));
         }
     }
 
@@ -2169,7 +2166,7 @@ bool
 CodeGeneratorMIPS::visitAsmJSLoadGlobalVar(LAsmJSLoadGlobalVar *ins)
 {
     const MAsmJSLoadGlobalVar *mir = ins->mir();
-    unsigned addr = mir->globalDataOffset();
+    unsigned addr = mir->globalDataOffset() - AsmJSGlobalRegBias;
     if (mir->type() == MIRType_Int32)
         masm.load32(Address(GlobalReg, addr), ToRegister(ins->output()));
     else if (mir->type() == MIRType_Float32)
@@ -2186,7 +2183,7 @@ CodeGeneratorMIPS::visitAsmJSStoreGlobalVar(LAsmJSStoreGlobalVar *ins)
 
     MIRType type = mir->value()->type();
     MOZ_ASSERT(IsNumberType(type));
-    unsigned addr = mir->globalDataOffset();
+    unsigned addr = mir->globalDataOffset() - AsmJSGlobalRegBias;
     if (mir->value()->type() == MIRType_Int32)
         masm.store32(ToRegister(ins->value()), Address(GlobalReg, addr));
     else if (mir->value()->type() == MIRType_Float32)
@@ -2202,9 +2199,8 @@ CodeGeneratorMIPS::visitAsmJSLoadFuncPtr(LAsmJSLoadFuncPtr *ins)
     const MAsmJSLoadFuncPtr *mir = ins->mir();
 
     Register index = ToRegister(ins->index());
-    Register tmp = ToRegister(ins->temp());
     Register out = ToRegister(ins->output());
-    unsigned addr = mir->globalDataOffset();
+    unsigned addr = mir->globalDataOffset() - AsmJSGlobalRegBias;
 
     BaseIndex source(GlobalReg, index, TimesFour, addr);
     masm.load32(source, out);
@@ -2215,7 +2211,8 @@ bool
 CodeGeneratorMIPS::visitAsmJSLoadFFIFunc(LAsmJSLoadFFIFunc *ins)
 {
     const MAsmJSLoadFFIFunc *mir = ins->mir();
-    masm.loadPtr(Address(GlobalReg, mir->globalDataOffset()), ToRegister(ins->output()));
+    masm.loadPtr(Address(GlobalReg, mir->globalDataOffset() - AsmJSGlobalRegBias),
+                 ToRegister(ins->output()));
     return true;
 }
 
@@ -2252,11 +2249,11 @@ CodeGeneratorMIPS::visitNegF(LNegF *ins)
 bool
 CodeGeneratorMIPS::visitForkJoinGetSlice(LForkJoinGetSlice *ins)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
 }
 
 JitCode *
 JitRuntime::generateForkJoinGetSliceStub(JSContext *cx)
 {
-    MOZ_ASSUME_UNREACHABLE("NYI");
+    MOZ_CRASH("NYI");
 }

@@ -6,16 +6,16 @@ such as an Android- or FirefoxOS-based phone. It allows you to push
 files to these types of devices, launch processes, and more. There are
 currently two available interfaces:
 
-* DeviceManager: an interface to a device that works either via ADB or
-  a custom TCP protocol (the latter requires an agent application
-  running on the device).
-* ADB: a similar interface that uses Android Debugger Protocol
-  explicitly
+* :ref:`DeviceManager`: Works either via ADB or a custom TCP protocol
+  (the latter requires an agent application running on the device).
+* :ref:`ADB`: Uses the Android Debugger Protocol explicitly
 
 In general, new code should use the ADB abstraction where possible as
 it is simpler and more reliable.
 
 .. automodule:: mozdevice
+
+.. _DeviceManager:
 
 DeviceManager interface
 -----------------------
@@ -47,6 +47,8 @@ Informational methods
 
 File management methods
 ```````````````````````
+.. autoattribute:: DeviceManager.deviceRoot
+.. automethod:: DeviceManager.getDeviceRoot(self)
 .. automethod:: DeviceManager.pushFile(self, localFilename, remoteFilename, retryLimit=1)
 .. automethod:: DeviceManager.pushDir(self, localDirname, remoteDirname, retryLimit=1)
 .. automethod:: DeviceManager.pullFile(self, remoteFilename)
@@ -61,9 +63,6 @@ File management methods
 .. automethod:: DeviceManager.removeFile(self, filename)
 .. automethod:: DeviceManager.removeDir(self, remoteDirname)
 .. automethod:: DeviceManager.chmodDir(self, remoteDirname, mask="777")
-.. automethod:: DeviceManager.getDeviceRoot(self)
-.. automethod:: DeviceManager.getAppRoot(self, packageName=None)
-.. automethod:: DeviceManager.getTestRoot(self, harnessName)
 .. automethod:: DeviceManager.getTempDir(self)
 
 Process management methods
@@ -86,12 +85,10 @@ Application management methods
 .. automethod:: DeviceManager.updateApp(self, appBundlePath, processName=None, destPath=None, ipAddr=None, port=30000)
 
 DeviceManagerADB implementation
--------------------------------
+```````````````````````````````
 
 .. autoclass:: mozdevice.DeviceManagerADB
 
-ADB-specific methods
-````````````````````
 DeviceManagerADB has several methods that are not present in all
 DeviceManager implementations. Please do not use them in code that
 is meant to be interoperable.
@@ -101,12 +98,10 @@ is meant to be interoperable.
 .. automethod:: DeviceManagerADB.devices
 
 DeviceManagerSUT implementation
--------------------------------
+```````````````````````````````
 
 .. autoclass:: mozdevice.DeviceManagerSUT
 
-SUT-specific methods
-````````````````````
 DeviceManagerSUT has several methods that are only used in specific
 tests and are not present in all DeviceManager implementations. Please
 do not use them in code that is meant to be interoperable.
@@ -115,7 +110,7 @@ do not use them in code that is meant to be interoperable.
 .. automethod:: DeviceManagerSUT.adjustResolution
 
 Android extensions
-------------------
+``````````````````
 
 For Android, we provide two variants of the `DeviceManager` interface
 with extensions useful for that platform. These classes are called
@@ -125,8 +120,11 @@ and DeviceManagerSUT. Here is the interface for DroidADB:
 .. automethod:: mozdevice.DroidADB.launchApplication
 .. automethod:: mozdevice.DroidADB.launchFennec
 .. automethod:: mozdevice.DroidADB.getInstalledApps
+.. automethod:: mozdevice.DroidADB.getAppRoot
 
 These methods are also found in the DroidSUT class.
+
+.. _ADB:
 
 ADB Interface
 -------------
@@ -199,6 +197,10 @@ Process management methods
 ADBAndroid
 ``````````
 .. autoclass:: ADBAndroid
+
+Informational methods
++++++++++++++++++++++
+.. automethod:: ADBAndroid.get_battery_percentage(self, timeout=None)
 
 System control methods
 ++++++++++++++++++++++

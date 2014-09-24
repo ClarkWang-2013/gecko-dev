@@ -15,8 +15,10 @@
 #include "mozilla/dom/MediaSource.h"
 #include "nsIMemoryReporter.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/LoadInfo.h"
 
 using mozilla::dom::DOMFileImpl;
+using mozilla::LoadInfo;
 
 // -----------------------------------------------------------------------
 // Hash table
@@ -299,7 +301,7 @@ nsHostObjectProtocolHandler::AddDataEntry(const nsACString& aScheme,
 {
   Init();
 
-  nsresult rv = GenerateURIString(aScheme, aUri);
+  nsresult rv = GenerateURIString(aScheme, aPrincipal, aUri);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!gDataTable) {
@@ -338,6 +340,7 @@ nsHostObjectProtocolHandler::RemoveDataEntry(const nsACString& aUri)
 
 nsresult
 nsHostObjectProtocolHandler::GenerateURIString(const nsACString &aScheme,
+                                               nsIPrincipal* aPrincipal,
                                                nsACString& aUri)
 {
   nsresult rv;
@@ -352,8 +355,20 @@ nsHostObjectProtocolHandler::GenerateURIString(const nsACString &aScheme,
   char chars[NSID_LENGTH];
   id.ToProvidedString(chars);
 
-  aUri += aScheme;
-  aUri += NS_LITERAL_CSTRING(":");
+  aUri = aScheme;
+  aUri.Append(':');
+
+  if (aPrincipal) {
+    nsAutoString origin;
+    rv = nsContentUtils::GetUTFOrigin(aPrincipal, origin);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    AppendUTF16toUTF8(origin, aUri);
+    aUri.Append('/');
+  }
+
   aUri += Substring(chars + 1, chars + NSID_LENGTH - 2);
 
   return NS_OK;
@@ -506,8 +521,6 @@ nsHostObjectProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
                                 stream);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISupports> owner = do_QueryInterface(info->mPrincipal);
-
   nsString type;
   rv = blob->GetType(type);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -523,7 +536,10 @@ nsHostObjectProtocolHandler::NewChannel(nsIURI* uri, nsIChannel* *result)
   rv = blob->GetSize(&size);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  channel->SetOwner(owner);
+  nsCOMPtr<nsILoadInfo> loadInfo =
+    new mozilla::LoadInfo(info->mPrincipal, LoadInfo::eInheritPrincipal,
+                          LoadInfo::eNotSandboxed);
+  channel->SetLoadInfo(loadInfo);
   channel->SetOriginalURI(uri);
   channel->SetContentType(NS_ConvertUTF16toUTF8(type));
   channel->SetContentLength(size);

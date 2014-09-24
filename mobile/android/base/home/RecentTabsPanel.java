@@ -27,15 +27,12 @@ import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.MatrixCursor.RowBuilder;
 import android.os.Bundle;
 import android.support.v4.app.LoaderManager.LoaderCallbacks;
 import android.support.v4.content.Loader;
-import android.support.v4.widget.CursorAdapter;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -50,6 +47,7 @@ import android.widget.TextView;
 public class RecentTabsPanel extends HomeFragment
                              implements NativeEventListener {
     // Logging tag name
+    @SuppressWarnings("unused")
     private static final String LOGTAG = "GeckoRecentTabsPanel";
 
     // Cursor loader ID for the loader that loads recent tabs
@@ -184,19 +182,6 @@ public class RecentTabsPanel extends HomeFragment
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-
-        // Detach and reattach the fragment as the layout changes.
-        if (isVisible()) {
-            getFragmentManager().beginTransaction()
-                                .detach(this)
-                                .attach(this)
-                                .commitAllowingStateLoss();
-        }
-    }
-
-    @Override
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
 
@@ -251,8 +236,10 @@ public class RecentTabsPanel extends HomeFragment
             public void run() {
                 mClosedTabs = closedTabs;
 
-                // Reload the cursor to show recently closed tabs.
-                if (mClosedTabs.length > 0 && canLoad()) {
+                // The fragment might have been detached before this code
+                // runs in the UI thread.
+                if (getActivity() != null) {
+                    // Reload the cursor to show recently closed tabs.
                     getLoaderManager().restartLoader(LOADER_ID_RECENT_TABS, null, mCursorLoaderCallbacks);
                 }
             }
@@ -310,8 +297,8 @@ public class RecentTabsPanel extends HomeFragment
                 for (int i = 0; i < length; i++) {
                     final String url = closedTabs[i].url;
 
-                    // Don't show recent tabs for about:home.
-                    if (!AboutPages.isAboutHome(url)) {
+                    // Don't show recent tabs for about:home or about:privatebrowsing.
+                    if (!AboutPages.isTitlelessAboutPage(url)) {
                         // If this is the first closed tab we're adding, add a header for the section.
                         if (visibleClosedTabs == 0) {
                             addRow(c, null, context.getString(R.string.home_closed_tabs_title), RecentTabs.TYPE_HEADER);

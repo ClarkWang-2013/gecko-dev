@@ -34,7 +34,7 @@ public:
 
   // TextureClient
 
-  virtual bool IsAllocated() const MOZ_OVERRIDE { return !!mTexture; }
+  virtual bool IsAllocated() const MOZ_OVERRIDE { return mTexture || mTexture10; }
 
   virtual bool Lock(OpenMode aOpenMode) MOZ_OVERRIDE;
 
@@ -59,9 +59,14 @@ public:
   virtual bool AllocateForSurface(gfx::IntSize aSize,
                                   TextureAllocationFlags aFlags = ALLOC_DEFAULT) MOZ_OVERRIDE;
 
+  virtual TemporaryRef<TextureClient>
+  CreateSimilar(TextureFlags aFlags = TextureFlags::DEFAULT,
+                TextureAllocationFlags aAllocFlags = ALLOC_DEFAULT) const MOZ_OVERRIDE;
+
 protected:
   gfx::IntSize mSize;
-  RefPtr<ID3D10Texture2D> mTexture;
+  RefPtr<ID3D10Texture2D> mTexture10;
+  RefPtr<ID3D11Texture2D> mTexture;
   RefPtr<gfx::DrawTarget> mDrawTarget;
   gfx::SurfaceFormat mFormat;
   bool mIsLocked;
@@ -193,6 +198,9 @@ public:
 protected:
   ID3D11Device* GetDevice();
 
+  bool OpenSharedHandle();
+
+  RefPtr<ID3D11Texture2D> mTexture;
   RefPtr<DataTextureSourceD3D11> mTextureSource;
   RefPtr<CompositorD3D11> mCompositor;
   gfx::IntSize mSize;

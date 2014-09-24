@@ -15,7 +15,8 @@
 const {Cc, Ci, Cu} = require("chrome");
 const {
   Tooltip,
-  SwatchColorPickerTooltip
+  SwatchColorPickerTooltip,
+  SwatchCubicBezierTooltip
 } = require("devtools/shared/widgets/Tooltip");
 const {CssLogic} = require("devtools/styleinspector/css-logic");
 const {Promise:promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
@@ -30,8 +31,10 @@ const TOOLTIP_FONTFAMILY_TYPE = "font-family";
 
 // Types of existing highlighters
 const HIGHLIGHTER_TRANSFORM_TYPE = "CssTransformHighlighter";
+const HIGHLIGHTER_SELECTOR_TYPE = "SelectorHighlighter";
 const HIGHLIGHTER_TYPES = [
-  HIGHLIGHTER_TRANSFORM_TYPE
+  HIGHLIGHTER_TRANSFORM_TYPE,
+  HIGHLIGHTER_SELECTOR_TYPE
 ];
 
 // Types of nodes in the rule/computed-view
@@ -120,16 +123,26 @@ HighlightersOverlay.prototype = {
     }
 
     // Choose the type of highlighter required for the hovered node
-    let type;
+    let type, options;
     if (this._isRuleViewTransform(nodeInfo) ||
         this._isComputedViewTransform(nodeInfo)) {
       type = HIGHLIGHTER_TRANSFORM_TYPE;
+    } else if (nodeInfo.type === VIEW_NODE_SELECTOR_TYPE) {
+      type = HIGHLIGHTER_SELECTOR_TYPE;
+      options = {
+        selector: nodeInfo.value,
+        hideInfoBar: true,
+        showOnly: "border",
+        region: "border"
+      };
     }
 
     if (type) {
       this.highlighterShown = type;
       let node = this.view.inspector.selection.nodeFront;
-      this._getHighlighter(type).then(highlighter => highlighter.show(node));
+      this._getHighlighter(type).then(highlighter => {
+        highlighter.show(node, options);
+      });
     }
   },
 
@@ -237,6 +250,12 @@ function TooltipsOverlay(view) {
 exports.TooltipsOverlay = TooltipsOverlay;
 
 TooltipsOverlay.prototype = {
+  get isEditing() {
+    return this.colorPicker.tooltip.isShown() ||
+           this.colorPicker.eyedropperOpen ||
+           this.cubicBezier.tooltip.isShown();
+  },
+
   /**
    * Add the tooltips overlay to the view. This will start tracking mouse
    * movements and display tooltips when needed
@@ -251,9 +270,11 @@ TooltipsOverlay.prototype = {
     this.previewTooltip.startTogglingOnHover(this.view.element,
       this._onPreviewTooltipTargetHover.bind(this));
 
-    // Color picker tooltip
     if (this.isRuleView) {
+      // Color picker tooltip
       this.colorPicker = new SwatchColorPickerTooltip(this.view.inspector.panelDoc);
+      // Cubic bezier tooltip
+      this.cubicBezier = new SwatchCubicBezierTooltip(this.view.inspector.panelDoc);
     }
 
     this._isStarted = true;
@@ -273,6 +294,10 @@ TooltipsOverlay.prototype = {
 
     if (this.colorPicker) {
       this.colorPicker.destroy();
+    }
+
+    if (this.cubicBezier) {
+      this.cubicBezier.destroy();
     }
 
     this._isStarted = false;
@@ -329,6 +354,11 @@ TooltipsOverlay.prototype = {
       this.colorPicker.hide();
     }
 
+    if (this.isRuleView && this.cubicBezier.tooltip.isShown()) {
+      this.cubicBezier.revert();
+      this.cubicBezier.hide();
+    }
+
     let inspector = this.view.inspector;
 
     if (type === TOOLTIP_IMAGE_TYPE) {
@@ -352,6 +382,10 @@ TooltipsOverlay.prototype = {
 
     if (this.colorPicker) {
       this.colorPicker.hide();
+    }
+
+    if (this.cubicBezier) {
+      this.cubicBezier.hide();
     }
   },
 

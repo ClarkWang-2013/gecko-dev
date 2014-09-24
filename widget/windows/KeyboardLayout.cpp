@@ -280,12 +280,12 @@ ModifierKeyState::InitInputEvent(WidgetInputEvent& aInputEvent) const
 {
   aInputEvent.modifiers = mModifiers;
 
-  switch(aInputEvent.eventStructType) {
-    case NS_MOUSE_EVENT:
-    case NS_MOUSE_SCROLL_EVENT:
-    case NS_WHEEL_EVENT:
-    case NS_DRAG_EVENT:
-    case NS_SIMPLE_GESTURE_EVENT:
+  switch(aInputEvent.mClass) {
+    case eMouseEventClass:
+    case eMouseScrollEventClass:
+    case eWheelEventClass:
+    case eDragEventClass:
+    case eSimpleGestureEventClass:
       InitMouseEvent(aInputEvent);
       break;
     default:
@@ -296,10 +296,10 @@ ModifierKeyState::InitInputEvent(WidgetInputEvent& aInputEvent) const
 void
 ModifierKeyState::InitMouseEvent(WidgetInputEvent& aMouseEvent) const
 {
-  NS_ASSERTION(aMouseEvent.eventStructType == NS_MOUSE_EVENT ||
-               aMouseEvent.eventStructType == NS_WHEEL_EVENT ||
-               aMouseEvent.eventStructType == NS_DRAG_EVENT ||
-               aMouseEvent.eventStructType == NS_SIMPLE_GESTURE_EVENT,
+  NS_ASSERTION(aMouseEvent.mClass == eMouseEventClass ||
+               aMouseEvent.mClass == eWheelEventClass ||
+               aMouseEvent.mClass == eDragEventClass ||
+               aMouseEvent.mClass == eSimpleGestureEventClass,
                "called with non-mouse event");
 
   if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
@@ -606,7 +606,7 @@ UniCharsAndModifiers
 VirtualKey::GetNativeUniChars(ShiftState aShiftState) const
 {
 #ifdef DEBUG
-  if (aShiftState < 0 || aShiftState >= ArrayLength(mShiftStates)) {
+  if (aShiftState >= ArrayLength(mShiftStates)) {
     nsPrintfCString warning("Shift state is out of range: "
                             "aShiftState=%d, ArrayLength(mShiftState)=%d",
                             aShiftState, ArrayLength(mShiftStates));
@@ -1099,7 +1099,7 @@ NativeKey::DispatchKeyEvent(WidgetKeyboardEvent& aKeyEvent,
     pluginEvent.event = aMsgSentToPlugin->message;
     pluginEvent.wParam = aMsgSentToPlugin->wParam;
     pluginEvent.lParam = aMsgSentToPlugin->lParam;
-    aKeyEvent.pluginEvent = static_cast<void*>(&pluginEvent);
+    aKeyEvent.mPluginEvent.Copy(pluginEvent);
   }
 
   return (mWidget->DispatchKeyboardEvent(&aKeyEvent) || mWidget->Destroyed());
@@ -2259,8 +2259,8 @@ KeyboardLayout::LoadLayout(HKL aLayout)
     static const UINT kMapType =
       IsVistaOrLater() ? MAPVK_VSC_TO_VK_EX : MAPVK_VSC_TO_VK;
     PR_LOG(sKeyboardLayoutLogger, PR_LOG_DEBUG,
-           ("Logging virtual keycode values for scancode (0x%08X)...",
-            reinterpret_cast<const uint32_t>(mKeyboardLayout)));
+           ("Logging virtual keycode values for scancode (0x%p)...",
+            mKeyboardLayout));
     for (uint32_t i = 0; i < ArrayLength(kExtendedScanCode); i++) {
       for (uint32_t j = 1; j <= 0xFF; j++) {
         UINT scanCode = kExtendedScanCode[i] + j;

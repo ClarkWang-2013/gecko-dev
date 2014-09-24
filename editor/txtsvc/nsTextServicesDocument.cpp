@@ -1979,37 +1979,21 @@ nsTextServicesDocument::DidJoinNodes(nsIDOMNode  *aLeftNode,
 nsresult
 nsTextServicesDocument::CreateContentIterator(nsIDOMRange *aRange, nsIContentIterator **aIterator)
 {
-  nsresult result;
-
   NS_ENSURE_TRUE(aRange && aIterator, NS_ERROR_NULL_POINTER);
 
-  *aIterator = 0;
+  *aIterator = nullptr;
 
   // Create a nsFilteredContentIterator
-  // This class wraps the ContentIterator in order to give itself a chance 
+  // This class wraps the ContentIterator in order to give itself a chance
   // to filter out certain content nodes
-  nsFilteredContentIterator* filter = new nsFilteredContentIterator(mTxtSvcFilter);
-  *aIterator = static_cast<nsIContentIterator *>(filter);
-  if (*aIterator) {
-    NS_IF_ADDREF(*aIterator);
-    result = filter ? NS_OK : NS_ERROR_FAILURE;
-  } else {
-    delete filter;
-    result = NS_ERROR_FAILURE;
-  }
-  NS_ENSURE_SUCCESS(result, result);
+  nsRefPtr<nsFilteredContentIterator> filter = new nsFilteredContentIterator(mTxtSvcFilter);
 
-  NS_ENSURE_TRUE(*aIterator, NS_ERROR_NULL_POINTER);
-
-  result = (*aIterator)->Init(aRange);
-
-  if (NS_FAILED(result))
-  {
-    NS_RELEASE((*aIterator));
-    *aIterator = 0;
+  nsresult result = filter->Init(aRange);
+  if (NS_FAILED(result)) {
     return result;
   }
 
+  filter.forget(aIterator);
   return NS_OK;
 }
 
@@ -3726,44 +3710,6 @@ nsTextServicesDocument::FindWordBounds(nsTArray<OffsetEntry*> *aOffsetTable,
 
   return NS_OK;
 }
-
-#ifdef DEBUG_kin
-void
-nsTextServicesDocument::PrintOffsetTable()
-{
-  OffsetEntry *entry;
-  uint32_t i;
-
-  for (i = 0; i < mOffsetTable.Length(); i++)
-  {
-    entry = mOffsetTable[i];
-    printf("ENTRY %4d: %p  %c  %c  %4d  %4d  %4d\n",
-           i, entry->mNode,  entry->mIsValid ? 'V' : 'N',
-           entry->mIsInsertedText ? 'I' : 'B',
-           entry->mNodeOffset, entry->mStrOffset, entry->mLength);
-  }
-
-  fflush(stdout);
-}
-
-void
-nsTextServicesDocument::PrintContentNode(nsIContent *aContent)
-{
-  nsString tmpStr, str;
-
-  aContent->Tag()->ToString(tmpStr);
-  printf("%s", NS_LossyConvertUTF16toASCII(tmpStr).get());
-
-  if (nsIDOMNode::TEXT_NODE == aContent->NodeType())
-  {
-    aContent->AppendTextTo(str);
-    printf(":  \"%s\"", NS_LossyConvertUTF16toASCII(str).get());
-  }
-
-  printf("\n");
-  fflush(stdout);
-}
-#endif
 
 NS_IMETHODIMP
 nsTextServicesDocument::WillInsertNode(nsIDOMNode *aNode,

@@ -24,10 +24,11 @@ namespace dom {
 
 class OwningTelephonyCallOrTelephonyCallGroup;
 
-class Telephony MOZ_FINAL : public DOMEventTargetHelper
+class Telephony MOZ_FINAL : public DOMEventTargetHelper,
+                            private nsITelephonyListener
 {
   /**
-   * Class Telephony doesn't actually inherit nsITelephonyListener.
+   * Class Telephony doesn't actually expose nsITelephonyListener.
    * Instead, it owns an nsITelephonyListener derived instance mListener
    * and passes it to nsITelephonyService. The onreceived events are first
    * delivered to mListener and then forwarded to its owner, Telephony. See
@@ -70,10 +71,12 @@ public:
 
   // WebIDL
   already_AddRefed<Promise>
-  Dial(const nsAString& aNumber, const Optional<uint32_t>& aServiceId);
+  Dial(const nsAString& aNumber, const Optional<uint32_t>& aServiceId,
+       ErrorResult& aRv);
 
   already_AddRefed<Promise>
-  DialEmergency(const nsAString& aNumber, const Optional<uint32_t>& aServiceId);
+  DialEmergency(const nsAString& aNumber, const Optional<uint32_t>& aServiceId,
+                ErrorResult& aRv);
 
   void
   StartTone(const nsAString& aDTMFChar, const Optional<uint32_t>& aServiceId,
@@ -103,6 +106,7 @@ public:
   already_AddRefed<TelephonyCallGroup>
   ConferenceGroup() const;
 
+  IMPL_EVENT_HANDLER(ready)
   IMPL_EVENT_HANDLER(incoming)
   IMPL_EVENT_HANDLER(callschanged)
   IMPL_EVENT_HANDLER(remoteheld)
@@ -142,7 +146,7 @@ public:
   virtual void EventListenerAdded(nsIAtom* aType) MOZ_OVERRIDE;
 
 private:
-  Telephony(nsPIDOMWindow* aOwner);
+  explicit Telephony(nsPIDOMWindow* aOwner);
   ~Telephony();
 
   void
@@ -167,7 +171,8 @@ private:
   HasDialingCall();
 
   already_AddRefed<Promise>
-  DialInternal(uint32_t aServiceId, const nsAString& aNumber, bool aEmergency);
+  DialInternal(uint32_t aServiceId, const nsAString& aNumber, bool aEmergency,
+               ErrorResult& aRv);
 
   already_AddRefed<TelephonyCallId>
   CreateCallId(const nsAString& aNumber,
@@ -182,13 +187,16 @@ private:
              bool aSwitchable = true, bool aMergeable = true);
 
   nsresult
+  NotifyEvent(const nsAString& aType);
+
+  nsresult
   NotifyCallsChanged(TelephonyCall* aCall);
 
   nsresult
   DispatchCallEvent(const nsAString& aType, TelephonyCall* aCall);
 
   void
-  EnqueueEnumerationAck();
+  EnqueueEnumerationAck(const nsAString& aType);
 
   already_AddRefed<TelephonyCall>
   GetCall(uint32_t aServiceId, uint32_t aCallIndex);

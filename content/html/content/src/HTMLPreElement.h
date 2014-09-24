@@ -18,11 +18,10 @@ class HTMLPreElement MOZ_FINAL : public nsGenericHTMLElement,
                                  public nsIDOMHTMLPreElement
 {
 public:
-  HTMLPreElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
+  explicit HTMLPreElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
   }
-  virtual ~HTMLPreElement();
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -51,6 +50,8 @@ public:
   }
 
 protected:
+  virtual ~HTMLPreElement();
+
   virtual JSObject* WrapNode(JSContext *aCx) MOZ_OVERRIDE;
 
 private:

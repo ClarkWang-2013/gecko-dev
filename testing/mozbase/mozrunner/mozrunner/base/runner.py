@@ -20,7 +20,7 @@ class BaseRunner(object):
     The base runner class for all mozrunner objects, both local and remote.
     """
     __metaclass__ = ABCMeta
-    last_test = 'automation'
+    last_test = 'mozrunner-startup'
     process_handler = None
     timeout = None
     output_timeout = None
@@ -44,6 +44,8 @@ class BaseRunner(object):
         self.process_class = process_class or ProcessHandler
         self.process_args = process_args or {}
         self.symbols_path = symbols_path
+
+        self.crashed = False
 
     def __del__(self):
         self.cleanup()
@@ -177,17 +179,18 @@ class BaseRunner(object):
         if not dump_directory:
             dump_directory = os.path.join(self.profile.profile, 'minidumps')
 
-        crashed = False
+        self.crashed = False
         try:
-            crashed = mozcrash.check_for_crashes(dump_directory,
-                                                 self.symbols_path,
-                                                 dump_save_path=dump_save_path,
-                                                 test_name=test_name,
-                                                 quiet=quiet)
+            self.crashed = mozcrash.check_for_crashes(
+                dump_directory,
+                self.symbols_path,
+                dump_save_path=dump_save_path,
+                test_name=test_name,
+                quiet=quiet)
         except:
             traceback.print_exc()
 
-        return crashed
+        return self.crashed
 
     def cleanup(self):
         """

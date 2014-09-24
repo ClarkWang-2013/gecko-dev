@@ -43,6 +43,7 @@
 #if defined(XP_WIN)
 #define TARGET_SANDBOX_EXPORTS
 #include "mozilla/sandboxTarget.h"
+#include "nsDirectoryServiceDefs.h"
 #elif defined(XP_LINUX)
 #include "mozilla/Sandbox.h"
 #endif
@@ -59,6 +60,7 @@
 #include "nsIMutable.h"
 #include "nsIObserverService.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsScreenManagerProxy.h"
 #include "nsMemoryInfoDumper.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStyleSheetService.h"
@@ -151,6 +153,12 @@
 #include "mozilla/dom/telephony/PTelephonyChild.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
 #include "mozilla/net/NeckoMessageUtils.h"
+#include "mozilla/RemoteSpellCheckEngineChild.h"
+
+#ifdef MOZ_B2G_RIL
+#include "mozilla/dom/mobileconnection/MobileConnectionChild.h"
+using namespace mozilla::dom::mobileconnection;
+#endif
 
 using namespace base;
 using namespace mozilla;
@@ -169,6 +177,7 @@ using namespace mozilla::jsipc;
 #if defined(MOZ_WIDGET_GONK)
 using namespace mozilla::system;
 #endif
+using namespace mozilla::widget;
 
 #ifdef MOZ_NUWA_PROCESS
 static bool sNuwaForking = false;
@@ -358,7 +367,7 @@ private:
 class ConsoleListener MOZ_FINAL : public nsIConsoleListener
 {
 public:
-    ConsoleListener(ContentChild* aChild)
+    explicit ConsoleListener(ContentChild* aChild)
     : mChild(aChild) {}
 
     NS_DECL_ISUPPORTS
@@ -489,17 +498,15 @@ ContentChild* ContentChild::sSingleton;
 // Performs initialization that is not fork-safe, i.e. that must be done after
 // forking from the Nuwa process.
 static void
-InitOnContentProcessCreated(bool aAfterNuwaFork)
+InitOnContentProcessCreated()
 {
 #ifdef MOZ_NUWA_PROCESS
     // Wait until we are forked from Nuwa
-    if (!aAfterNuwaFork &&
-        Preferences::GetBool("dom.ipc.processPrelaunch.enabled", false)) {
+    if (IsNuwaProcess()) {
         return;
     }
-#else
-    unused << aAfterNuwaFork;
 #endif
+
     // This will register cross-process observer.
     mozilla::dom::time::InitializeDateCacheCleaner();
 }
@@ -562,6 +569,10 @@ ContentChild::Init(MessageLoop* aIOLoop,
     Open(aChannel, aParentHandle, aIOLoop);
     sSingleton = this;
 
+    // Make sure there's an nsAutoScriptBlocker on the stack when dispatching
+    // urgent messages.
+    GetIPCChannel()->BlockScripts();
+
 #ifdef MOZ_X11
     // Send the parent our X socket to act as a proxy reference for our X
     // resources.
@@ -585,6 +596,7 @@ ContentChild::Init(MessageLoop* aIOLoop,
 void
 ContentChild::InitProcessAttributes()
 {
+#ifdef MOZ_WIDGET_GONK
 #ifdef MOZ_NUWA_PROCESS
     if (IsNuwaProcess()) {
         SetProcessName(NS_LITERAL_STRING("(Nuwa)"), false);
@@ -596,7 +608,9 @@ ContentChild::InitProcessAttributes()
     } else {
         SetProcessName(NS_LITERAL_STRING("Browser"), false);
     }
-
+#else
+    SetProcessName(NS_LITERAL_STRING("Web Content"), true);
+#endif
 }
 
 void
@@ -686,7 +700,7 @@ ContentChild::InitXPCOM()
         new SystemMessageHandledObserver();
     sysMsgObserver->Init();
 
-    InitOnContentProcessCreated(/* aAfterNuwaFork = */false);
+    InitOnContentProcessCreated();
 }
 
 PMemoryReportRequestChild*
@@ -707,7 +721,7 @@ class MemoryReportsWrapper MOZ_FINAL : public nsISupports {
     ~MemoryReportsWrapper() {}
 public:
     NS_DECL_ISUPPORTS
-    MemoryReportsWrapper(InfallibleTArray<MemoryReport> *r) : mReports(r) { }
+    explicit MemoryReportsWrapper(InfallibleTArray<MemoryReport>* r) : mReports(r) { }
     InfallibleTArray<MemoryReport> *mReports;
 };
 NS_IMPL_ISUPPORTS0(MemoryReportsWrapper)
@@ -717,7 +731,7 @@ class MemoryReportCallback MOZ_FINAL : public nsIMemoryReporterCallback
 public:
     NS_DECL_ISUPPORTS
 
-    MemoryReportCallback(const nsACString &aProcess)
+    explicit MemoryReportCallback(const nsACString& aProcess)
     : mProcess(aProcess)
     {
     }
@@ -908,16 +922,95 @@ ContentChild::AllocPBackgroundChild(Transport* aTransport,
     return BackgroundChild::Alloc(aTransport, aOtherProcess);
 }
 
+#if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
+static void
+SetUpSandboxEnvironment()
+{
+    // Set up a low integrity temp directory. This only makes sense if the
+    // delayed integrity level for the content process is INTEGRITY_LEVEL_LOW.
+    nsresult rv;
+    nsCOMPtr<nsIProperties> directoryService =
+        do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    nsCOMPtr<nsIFile> lowIntegrityTemp;
+    rv = directoryService->Get(NS_WIN_LOW_INTEGRITY_TEMP, NS_GET_IID(nsIFile),
+                               getter_AddRefs(lowIntegrityTemp));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    // Undefine returns a failure if the property is not already set.
+    unused << directoryService->Undefine(NS_OS_TEMP_DIR);
+    rv = directoryService->Set(NS_OS_TEMP_DIR, lowIntegrityTemp);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    // Set TEMP and TMP environment variables.
+    nsAutoString lowIntegrityTempPath;
+    rv = lowIntegrityTemp->GetPath(lowIntegrityTempPath);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    bool setOK = SetEnvironmentVariableW(L"TEMP", lowIntegrityTempPath.get());
+    NS_WARN_IF_FALSE(setOK, "Failed to set TEMP to low integrity temp path");
+    setOK = SetEnvironmentVariableW(L"TMP", lowIntegrityTempPath.get());
+    NS_WARN_IF_FALSE(setOK, "Failed to set TMP to low integrity temp path");
+}
+
+void
+ContentChild::CleanUpSandboxEnvironment()
+{
+    nsresult rv;
+    nsCOMPtr<nsIProperties> directoryService =
+        do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    nsCOMPtr<nsIFile> lowIntegrityTemp;
+    rv = directoryService->Get(NS_WIN_LOW_INTEGRITY_TEMP, NS_GET_IID(nsIFile),
+                               getter_AddRefs(lowIntegrityTemp));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return;
+    }
+
+    // Don't check the return value as the directory will only have been created
+    // if it has been used.
+    unused << lowIntegrityTemp->Remove(/* aRecursive */ true);
+}
+#endif
+
 bool
 ContentChild::RecvSetProcessSandbox()
 {
-  // We may want to move the sandbox initialization somewhere else
-  // at some point; see bug 880808.
+    // We may want to move the sandbox initialization somewhere else
+    // at some point; see bug 880808.
 #if defined(MOZ_CONTENT_SANDBOX)
 #if defined(XP_LINUX)
-    SetCurrentProcessSandbox();
+#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 19
+    // For B2G >= KitKat, sandboxing is mandatory; this has already
+    // been enforced by ContentParent::StartUp().
+    MOZ_ASSERT(CanSandboxContentProcess());
+#else
+    // Otherwise, sandboxing is best-effort.
+    if (!CanSandboxContentProcess()) {
+        return true;
+    }
+#endif
+    SetContentProcessSandbox();
 #elif defined(XP_WIN)
-    mozilla::SandboxTarget::Instance()->StartSandbox();
+    nsAdoptingString contentSandboxPref =
+        Preferences::GetString("browser.tabs.remote.sandbox");
+    if (contentSandboxPref.EqualsLiteral("on")
+        || contentSandboxPref.EqualsLiteral("warn")) {
+        mozilla::SandboxTarget::Instance()->StartSandbox();
+        SetUpSandboxEnvironment();
+    }
 #endif
 #endif
     return true;
@@ -927,6 +1020,7 @@ bool
 ContentChild::RecvSpeakerManagerNotify()
 {
 #ifdef MOZ_WIDGET_GONK
+    // Only notify the process which has the SpeakerManager instance.
     nsRefPtr<SpeakerManagerService> service =
         SpeakerManagerService::GetSpeakerManagerService();
     if (service) {
@@ -1050,6 +1144,20 @@ PBlobChild*
 ContentChild::AllocPBlobChild(const BlobConstructorParams& aParams)
 {
     return nsIContentChild::AllocPBlobChild(aParams);
+}
+
+mozilla::PRemoteSpellcheckEngineChild *
+ContentChild::AllocPRemoteSpellcheckEngineChild()
+{
+    NS_NOTREACHED("Default Constructor for PRemoteSpellcheckEngineChilf should never be called");
+    return nullptr;
+}
+
+bool
+ContentChild::DeallocPRemoteSpellcheckEngineChild(PRemoteSpellcheckEngineChild *child)
+{
+    delete child;
+    return true;
 }
 
 bool
@@ -1187,6 +1295,43 @@ ContentChild::DeallocPFileSystemRequestChild(PFileSystemRequestChild* aFileSyste
     return true;
 }
 
+PMobileConnectionChild*
+ContentChild::SendPMobileConnectionConstructor(PMobileConnectionChild* aActor,
+                                               const uint32_t& aClientId)
+{
+#ifdef MOZ_B2G_RIL
+    // Add an extra ref for IPDL. Will be released in
+    // ContentChild::DeallocPMobileConnectionChild().
+    static_cast<MobileConnectionChild*>(aActor)->AddRef();
+    return PContentChild::SendPMobileConnectionConstructor(aActor, aClientId);
+#else
+    MOZ_CRASH("No support for mobileconnection on this platform!");;
+#endif
+}
+
+PMobileConnectionChild*
+ContentChild::AllocPMobileConnectionChild(const uint32_t& aClientId)
+{
+#ifdef MOZ_B2G_RIL
+    NS_NOTREACHED("No one should be allocating PMobileConnectionChild actors");
+    return nullptr;
+#else
+    MOZ_CRASH("No support for mobileconnection on this platform!");;
+#endif
+}
+
+bool
+ContentChild::DeallocPMobileConnectionChild(PMobileConnectionChild* aActor)
+{
+#ifdef MOZ_B2G_RIL
+    // MobileConnectionChild is refcounted, must not be freed manually.
+    static_cast<MobileConnectionChild*>(aActor)->Release();
+    return true;
+#else
+    MOZ_CRASH("No support for mobileconnection on this platform!");
+#endif
+}
+
 PNeckoChild*
 ContentChild::AllocPNeckoChild()
 {
@@ -1197,6 +1342,28 @@ bool
 ContentChild::DeallocPNeckoChild(PNeckoChild* necko)
 {
     delete necko;
+    return true;
+}
+
+PScreenManagerChild*
+ContentChild::AllocPScreenManagerChild(uint32_t* aNumberOfScreens,
+                                       float* aSystemDefaultScale,
+                                       bool* aSuccess)
+{
+    // The ContentParent should never attempt to allocate the
+    // nsScreenManagerProxy. Instead, the nsScreenManagerProxy
+    // service is requested and instantiated via XPCOM, and the
+    // constructor of nsScreenManagerProxy sets up the IPC connection.
+    NS_NOTREACHED("Should never get here!");
+    return nullptr;
+}
+
+bool
+ContentChild::DeallocPScreenManagerChild(PScreenManagerChild* aService)
+{
+    // nsScreenManagerProxy is AddRef'd in its constructor.
+    nsScreenManagerProxy *child = static_cast<nsScreenManagerProxy*>(aService);
+    child->Release();
     return true;
 }
 
@@ -1335,12 +1502,37 @@ bool
 ContentChild::RecvRegisterChrome(const InfallibleTArray<ChromePackage>& packages,
                                  const InfallibleTArray<ResourceMapping>& resources,
                                  const InfallibleTArray<OverrideMapping>& overrides,
-                                 const nsCString& locale)
+                                 const nsCString& locale,
+                                 const bool& reset)
 {
     nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
     nsChromeRegistryContent* chromeRegistry =
         static_cast<nsChromeRegistryContent*>(registrySvc.get());
-    chromeRegistry->RegisterRemoteChrome(packages, resources, overrides, locale);
+    chromeRegistry->RegisterRemoteChrome(packages, resources, overrides,
+                                         locale, reset);
+    return true;
+}
+
+bool
+ContentChild::RecvRegisterChromeItem(const ChromeRegistryItem& item)
+{
+    nsCOMPtr<nsIChromeRegistry> registrySvc = nsChromeRegistry::GetService();
+    nsChromeRegistryContent* chromeRegistry =
+        static_cast<nsChromeRegistryContent*>(registrySvc.get());
+    switch (item.type()) {
+        case ChromeRegistryItem::TChromePackage:
+            chromeRegistry->RegisterPackage(item.get_ChromePackage());
+            break;
+
+        case ChromeRegistryItem::TOverrideMapping:
+            chromeRegistry->RegisterOverride(item.get_OverrideMapping());
+            break;
+
+        default:
+            MOZ_ASSERT(false, "bad chrome item");
+            return false;
+    }
+
     return true;
 }
 
@@ -1536,12 +1728,16 @@ ContentChild::RecvAddPermission(const IPC::Permission& permission)
                                                 getter_AddRefs(principal));
     NS_ENSURE_SUCCESS(rv, true);
 
+    // child processes don't care about modification time.
+    int64_t modificationTime = 0;
+
     permissionManager->AddInternal(principal,
                                    nsCString(permission.type),
                                    permission.capability,
                                    0,
                                    permission.expireType,
                                    permission.expireTime,
+                                   modificationTime,
                                    nsPermissionManager::eNotify,
                                    nsPermissionManager::eNoDBOperation);
 #endif
@@ -1582,8 +1778,8 @@ ContentChild::RecvActivateA11y()
 #ifdef ACCESSIBILITY
     // Start accessibility in content process if it's running in chrome
     // process.
-    nsCOMPtr<nsIAccessibilityService> accService =
-        do_GetService("@mozilla.org/accessibilityService;1");
+	nsCOMPtr<nsIAccessibilityService> accService =
+        services::GetAccessibilityService();
 #endif
     return true;
 }
@@ -1860,7 +2056,7 @@ public:
         }
 
         // Perform other after-fork initializations.
-        InitOnContentProcessCreated(/* aAfterNuwaFork = */true);
+        InitOnContentProcessCreated();
 
         return NS_OK;
     }
@@ -1927,6 +2123,16 @@ ContentChild::RecvNuwaFork()
 #else
     return false; // Makes the underlying IPC channel abort.
 #endif
+}
+
+bool
+ContentChild::RecvOnAppThemeChanged()
+{
+    nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+    if (os) {
+        os->NotifyObservers(nullptr, "app-theme-changed", nullptr);
+    }
+    return true;
 }
 
 } // namespace dom
