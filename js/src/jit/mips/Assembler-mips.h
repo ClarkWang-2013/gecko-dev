@@ -143,21 +143,22 @@ static MOZ_CONSTEXPR_VAR Register JSReturnReg_Data = a2;
 static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = InvalidReg;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnSimdReg = InvalidFloatReg;
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchSimdReg = InvalidFloatReg;
+#if defined(USES_O32_ABI)
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32Reg = { FloatRegisters::f0, FloatRegister::Single };
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnDoubleReg = { FloatRegisters::f0, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister ReturnSimdReg = InvalidFloatReg;
-#if defined(USES_O32_ABI)
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg = { FloatRegisters::f18, FloatRegister::Single };
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg = { FloatRegisters::f18, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchSimdReg = InvalidFloatReg;
 static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloat32Reg = { FloatRegisters::f16, FloatRegister::Single };
 static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchDoubleReg = { FloatRegisters::f16, FloatRegister::Double };
 #elif defined(USES_N32_ABI)
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg = { FloatRegisters::f23, FloatRegister::Single };
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg = { FloatRegisters::f23, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister ScratchSimdReg = InvalidFloatReg;
-static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloat32Reg = { FloatRegisters::f21, FloatRegister::Single };
-static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchDoubleReg = { FloatRegisters::f21, FloatRegister::Double };
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32Reg = { FloatRegisters::f0 };
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnDoubleReg = { FloatRegisters::f0 };
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloat32Reg = { FloatRegisters::f23 };
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchDoubleReg = { FloatRegisters::f23 };
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchFloat32Reg = { FloatRegisters::f21 };
+static MOZ_CONSTEXPR_VAR FloatRegister SecondScratchDoubleReg = { FloatRegisters::f21 };
 #endif
 
 // A bias applied to the GlobalReg to allow the use of instructions with small
@@ -180,6 +181,7 @@ static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD0 = a0;
 static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD1 = a1;
 static MOZ_CONSTEXPR_VAR Register AsmJSIonExitRegD2 = t0;
 
+#if defined(USES_O32_ABI)
 static MOZ_CONSTEXPR_VAR FloatRegister f0  = { FloatRegisters::f0, FloatRegister::Double };
 static MOZ_CONSTEXPR_VAR FloatRegister f2  = { FloatRegisters::f2, FloatRegister::Double };
 static MOZ_CONSTEXPR_VAR FloatRegister f4  = { FloatRegisters::f4, FloatRegister::Double };
@@ -196,23 +198,39 @@ static MOZ_CONSTEXPR_VAR FloatRegister f24 = { FloatRegisters::f24, FloatRegiste
 static MOZ_CONSTEXPR_VAR FloatRegister f26 = { FloatRegisters::f26, FloatRegister::Double };
 static MOZ_CONSTEXPR_VAR FloatRegister f28 = { FloatRegisters::f28, FloatRegister::Double };
 static MOZ_CONSTEXPR_VAR FloatRegister f30 = { FloatRegisters::f30, FloatRegister::Double };
-#if defined(USES_N32_ABI)
-static MOZ_CONSTEXPR_VAR FloatRegister f1  = { FloatRegisters::f1, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f3  = { FloatRegisters::f3, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f5  = { FloatRegisters::f5, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f7  = { FloatRegisters::f7, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f9  = { FloatRegisters::f9, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f11 = { FloatRegisters::f11, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f13 = { FloatRegisters::f13, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f15 = { FloatRegisters::f15, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f17 = { FloatRegisters::f17, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f19 = { FloatRegisters::f19, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f21 = { FloatRegisters::f21, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f23 = { FloatRegisters::f23, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f25 = { FloatRegisters::f25, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f27 = { FloatRegisters::f27, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f29 = { FloatRegisters::f29, FloatRegister::Double };
-static MOZ_CONSTEXPR_VAR FloatRegister f31 = { FloatRegisters::f31, FloatRegister::Double };
+#elif defined(USES_N32_ABI)
+static MOZ_CONSTEXPR_VAR FloatRegister f0  = { FloatRegisters::f0 };
+static MOZ_CONSTEXPR_VAR FloatRegister f1  = { FloatRegisters::f1 };
+static MOZ_CONSTEXPR_VAR FloatRegister f2  = { FloatRegisters::f2 };
+static MOZ_CONSTEXPR_VAR FloatRegister f3  = { FloatRegisters::f3 };
+static MOZ_CONSTEXPR_VAR FloatRegister f4  = { FloatRegisters::f4 };
+static MOZ_CONSTEXPR_VAR FloatRegister f5  = { FloatRegisters::f5 };
+static MOZ_CONSTEXPR_VAR FloatRegister f6  = { FloatRegisters::f6 };
+static MOZ_CONSTEXPR_VAR FloatRegister f7  = { FloatRegisters::f7 };
+static MOZ_CONSTEXPR_VAR FloatRegister f8  = { FloatRegisters::f8 };
+static MOZ_CONSTEXPR_VAR FloatRegister f9  = { FloatRegisters::f9 };
+static MOZ_CONSTEXPR_VAR FloatRegister f10 = { FloatRegisters::f10 };
+static MOZ_CONSTEXPR_VAR FloatRegister f11 = { FloatRegisters::f11 };
+static MOZ_CONSTEXPR_VAR FloatRegister f12 = { FloatRegisters::f12 };
+static MOZ_CONSTEXPR_VAR FloatRegister f13 = { FloatRegisters::f13 };
+static MOZ_CONSTEXPR_VAR FloatRegister f14 = { FloatRegisters::f14 };
+static MOZ_CONSTEXPR_VAR FloatRegister f15 = { FloatRegisters::f15 };
+static MOZ_CONSTEXPR_VAR FloatRegister f16 = { FloatRegisters::f16 };
+static MOZ_CONSTEXPR_VAR FloatRegister f17 = { FloatRegisters::f17 };
+static MOZ_CONSTEXPR_VAR FloatRegister f18 = { FloatRegisters::f18 };
+static MOZ_CONSTEXPR_VAR FloatRegister f19 = { FloatRegisters::f19 };
+static MOZ_CONSTEXPR_VAR FloatRegister f20 = { FloatRegisters::f20 };
+static MOZ_CONSTEXPR_VAR FloatRegister f21 = { FloatRegisters::f21 };
+static MOZ_CONSTEXPR_VAR FloatRegister f22 = { FloatRegisters::f22 };
+static MOZ_CONSTEXPR_VAR FloatRegister f23 = { FloatRegisters::f23 };
+static MOZ_CONSTEXPR_VAR FloatRegister f24 = { FloatRegisters::f24 };
+static MOZ_CONSTEXPR_VAR FloatRegister f25 = { FloatRegisters::f25 };
+static MOZ_CONSTEXPR_VAR FloatRegister f26 = { FloatRegisters::f26 };
+static MOZ_CONSTEXPR_VAR FloatRegister f27 = { FloatRegisters::f27 };
+static MOZ_CONSTEXPR_VAR FloatRegister f28 = { FloatRegisters::f28 };
+static MOZ_CONSTEXPR_VAR FloatRegister f29 = { FloatRegisters::f29 };
+static MOZ_CONSTEXPR_VAR FloatRegister f30 = { FloatRegisters::f30 };
+static MOZ_CONSTEXPR_VAR FloatRegister f31 = { FloatRegisters::f31 };
 #endif
 
 // MIPS CPUs can only load multibyte data that is "naturally"
@@ -1000,6 +1018,7 @@ class Assembler : public AssemblerShared
     BufferOffset as_dmtc1(Register rt, FloatRegister fs);
     BufferOffset as_dmfc1(Register rt, FloatRegister fs);
 
+#if defined(USES_O32_ABI)
   protected:
     // This is used to access the odd register form the pair of single
     // precision registers that make one double register.
@@ -1007,6 +1026,7 @@ class Assembler : public AssemblerShared
         MOZ_ASSERT(reg.isDouble());
         return reg.singleOverlay(1);
     }
+#endif
 
   public:
     // FP convert instructions
@@ -1385,6 +1405,18 @@ GetIntArgReg(uint32_t usedArgSlots, Register *out)
     }
     return false;
 }
+
+#if defined(USES_N32_ABI)
+static inline bool
+GetFloatArgReg(uint32_t usedArgSlots, FloatRegister *out)
+{
+    if (usedArgSlots < NumFloatArgRegs) {
+        *out = FloatRegister::FromCode(f12.code() + usedArgSlots);
+        return true;
+    }
+    return false;
+}
+#endif
 
 // Get a register in which we plan to put a quantity that will be used as an
 // integer argument. This differs from GetIntArgReg in that if we have no more

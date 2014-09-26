@@ -365,47 +365,6 @@ class FloatRegisters
         (1ULL << FloatRegisters::f17) |
         (1ULL << FloatRegisters::f18) |
         (1ULL << FloatRegisters::f19);
-#elif defined(USES_N32_ABI)
-    static const uint32_t Total = 64;
-    static const uint32_t TotalDouble = 32;
-    static const uint32_t TotalSingle = 32;
-    static const uint32_t Allocatable = 60;
-    // When saving all registers we only need to do is save double registers.
-    static const uint32_t TotalPhys = 32;
-    static const uint64_t AllDoubleMask = ((1ULL << TotalDouble) - 1) << 32;
-    static const uint64_t AllMask = AllDoubleMask | ((1ULL << TotalSingle) - 1);
-
-    static const uint64_t NonVolatileDoubleMask =
-        ((1ULL << FloatRegisters::f20) |
-         (1ULL << FloatRegisters::f22) |
-         (1ULL << FloatRegisters::f24) |
-         (1ULL << FloatRegisters::f26) |
-         (1ULL << FloatRegisters::f28) |
-         (1ULL << FloatRegisters::f30)) << 32;
-
-    static const uint64_t NonVolatileMask =
-        NonVolatileDoubleMask |
-        (1ULL << FloatRegisters::f20) |
-        (1ULL << FloatRegisters::f22) |
-        (1ULL << FloatRegisters::f24) |
-        (1ULL << FloatRegisters::f26) |
-        (1ULL << FloatRegisters::f28) |
-        (1ULL << FloatRegisters::f30);
-
-    static const uint64_t VolatileMask = AllMask & ~NonVolatileMask;
-
-    static const uint64_t WrapperMask = VolatileMask;
-
-    static const uint64_t NonAllocatableDoubleMask =
-        ((1ULL << FloatRegisters::f21) |
-         (1ULL << FloatRegisters::f23)) << 32;
-
-    static const uint64_t NonAllocatableMask =
-        NonAllocatableDoubleMask |
-        // f21 and f23 are MIPS scratch float registers.
-        (1ULL << FloatRegisters::f21) |
-        (1ULL << FloatRegisters::f23);
-#endif
 
     // Registers that can be allocated without being saved, generally.
     static const uint64_t TempMask = VolatileMask & ~NonAllocatableMask;
@@ -413,11 +372,44 @@ class FloatRegisters
     static const uint64_t AllocatableMask = AllMask & ~NonAllocatableMask;
 
     typedef uint64_t SetType;
+#elif defined(USES_N32_ABI)
+    static const uint32_t Total = 32;
+    static const uint32_t Allocatable = 30;
+    // When saving all registers we only need to do is save double registers.
+    static const uint32_t TotalPhys = 32;
+    static const uint32_t AllMask = (1 << Total) - 1;
+    static const uint32_t AllDoubleMask = AllMask;
+
+    static const uint32_t NonVolatileMask =
+        (1 << FloatRegisters::f20) |
+        (1 << FloatRegisters::f22) |
+        (1 << FloatRegisters::f24) |
+        (1 << FloatRegisters::f26) |
+        (1 << FloatRegisters::f28) |
+        (1 << FloatRegisters::f30);
+
+    static const uint32_t VolatileMask = AllMask & ~NonVolatileMask;
+
+    static const uint32_t WrapperMask = VolatileMask;
+
+    static const uint32_t NonAllocatableMask =
+        // f21 and f23 are MIPS scratch float registers.
+        (1 << FloatRegisters::f21) |
+        (1 << FloatRegisters::f23);
+
+    // Registers that can be allocated without being saved, generally.
+    static const uint32_t TempMask = VolatileMask & ~NonAllocatableMask;
+
+    static const uint32_t AllocatableMask = AllMask & ~NonAllocatableMask;
+
+    typedef uint32_t SetType;
+#endif
 };
 
 template <typename T>
 class TypedRegisterSet;
 
+#if defined(USES_O32_ABI)
 class FloatRegister
 {
   public:
@@ -473,10 +465,8 @@ class FloatRegister
     }
     // This is similar to FromCode except for double registers on O32.
     static FloatRegister FromIndex(uint32_t index, RegType kind) {
-#if defined(USES_O32_ABI)
         if (kind == Double)
             return FloatRegister(index * 2, RegType(kind));
-#endif
         return FloatRegister(index, RegType(kind));
     }
 
@@ -559,6 +549,95 @@ class FloatRegister
         return 63 - mozilla::CountLeadingZeroes64(x);
     }
 };
+#elif defined(USES_N32_ABI)
+class FloatRegister
+{
+  public:
+    typedef FloatRegisters Codes;
+    typedef Codes::Code Code;
+
+    Code code_;
+
+    MOZ_CONSTEXPR FloatRegister(uint32_t code)
+      : code_ (Code(code))
+    { }
+    MOZ_CONSTEXPR FloatRegister()
+      : code_(Code(FloatRegisters::invalid_freg))
+    { }
+
+    bool operator==(const FloatRegister &other) const {
+        JS_ASSERT(!isInvalid());
+        JS_ASSERT(!other.isInvalid());
+        return code_ == other.code_;
+    }
+    bool equiv(const FloatRegister &other) const { return true; }
+    size_t size() const { return sizeof(double); }
+    bool isInvalid() const {
+        return code_ == FloatRegisters::invalid_freg;
+    }
+
+    FloatRegister doubleOverlay(unsigned int which = 0) const;
+    FloatRegister singleOverlay(unsigned int which = 0) const;
+
+    Code code() const {
+        JS_ASSERT(!isInvalid());
+        return Code(code_);
+    }
+    uint32_t id() const {
+        return code_;
+    }
+    static FloatRegister FromCode(uint32_t i) {
+        JS_ASSERT(i < FloatRegisters::Total);
+        FloatRegister r = { (FloatRegisters::Code)i };
+        return r;
+    }
+
+    bool volatile_() const {
+        return !!((1 << code_) & FloatRegisters::VolatileMask);
+    }
+    const char *name() const {
+        return FloatRegisters::GetName(code_);
+    }
+    bool operator != (const FloatRegister &other) const {
+        return code_ != other.code_;
+    }
+    bool aliases(const FloatRegister &other) {
+        return code_ == other.code_;
+    }
+    uint32_t numAliased() const {
+        return 1;
+    }
+    void aliased(uint32_t aliasIdx, FloatRegister *ret) {
+        JS_ASSERT(aliasIdx == 0);
+        *ret = *this;
+    }
+    uint32_t numAlignedAliased() const {
+        return 1;
+    }
+    void alignedAliased(uint32_t aliasIdx, FloatRegister *ret) {
+        JS_ASSERT(aliasIdx == 0);
+        *ret = *this;
+    }
+    typedef FloatRegisters::SetType SetType;
+    static uint32_t SetSize(SetType x) {
+        static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
+        return mozilla::CountPopulation32(x);
+    }
+    static Code FromName(const char *name) {
+        return FloatRegisters::FromName(name);
+    }
+    static TypedRegisterSet<FloatRegister> ReduceSetForPush(const TypedRegisterSet<FloatRegister> &s);
+    static uint32_t GetSizeInBytes(const TypedRegisterSet<FloatRegister> &s);
+    static uint32_t GetPushSizeInBytes(const TypedRegisterSet<FloatRegister> &s);
+    uint32_t getRegisterDumpOffsetInBytes();
+    static uint32_t FirstBit(SetType x) {
+        return mozilla::CountTrailingZeroes32(x);
+    }
+    static uint32_t LastBit(SetType x) {
+        return 31 - mozilla::CountLeadingZeroes32(x);
+    }
+};
+#endif
 
 uint32_t GetMIPSFlags();
 bool hasFPU();
@@ -574,7 +653,11 @@ hasUnaliasedDouble() {
 // double register.
 inline bool
 hasMultiAlias() {
+#if defined(USES_O32_ABI)
     return true;
+#elif defined(USES_N32_ABI)
+    return false;
+#endif
 }
 
 // Some MIPS CPUs can raise SIGBUS on mprotect instead of SIGSEGV.

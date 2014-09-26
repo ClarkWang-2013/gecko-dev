@@ -3288,20 +3288,22 @@ MacroAssemblerMIPSCompat::passABIArg(const MoveOperand &from, MoveOp::Type type)
 #elif defined(USES_N32_ABI)
       case MoveOp::FLOAT32:
       case MoveOp::DOUBLE:
-        if (usedArgSlots_ < NumFloatArgRegs) {
+        {
+            FloatRegister destFReg;
             if (!usedArgSlots_)
               firstArgType = type;
-            FloatRegister destFReg = FloatRegister(FloatRegisters::f12 + usedArgSlots_);
-            if (from.isFloatReg() && from.floatReg() == destFReg) {
-                // Nothing to do; the value is in the right register already
+            if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+                if (from.isFloatReg() && from.floatReg() == destFReg) {
+                    // Nothing to do; the value is in the right register already
+                } else {
+                    enoughMemory_ = moveResolver_.addMove(from, MoveOperand(destFReg), type);
+                }
             } else {
-                enoughMemory_ = moveResolver_.addMove(from, MoveOperand(destFReg), type);
+                uint32_t disp = GetArgStackDisp(usedArgSlots_);
+                enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
             }
-        } else {
-            uint32_t disp = GetArgStackDisp(usedArgSlots_);
-            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
+            usedArgSlots_++;
         }
-        usedArgSlots_++;
         break;
 #endif
       case MoveOp::GENERAL:

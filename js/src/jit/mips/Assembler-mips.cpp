@@ -30,7 +30,6 @@ ABIArgGenerator::ABIArgGenerator()
 ABIArg
 ABIArgGenerator::next(MIRType type)
 {
-    FloatRegister::RegType regType;
     switch (type) {
       case MIRType_Int32:
       case MIRType_Pointer:
@@ -43,33 +42,36 @@ ABIArgGenerator::next(MIRType type)
         break;
       case MIRType_Float32:
       case MIRType_Double:
-        regType = (type == MIRType_Double ? FloatRegister::Double : FloatRegister::Single);
+        {
 #if defined(USES_O32_ABI)
-        if (!usedArgSlots_) {
-            current_ = ABIArg(FloatRegister(FloatRegisters::f12, regType));
-            usedArgSlots_ += 2;
-            firstArgFloat = true;
-        } else if (usedArgSlots_ <= 2) {
-            // NOTE: We will use f14 always. This is not compatible with
-            // system ABI. We will have to introduce some infrastructure
-            // changes if we have to use system ABI here.
-            current_ = ABIArg(FloatRegister(FloatRegisters::f14, regType));
-            usedArgSlots_ = 4;
-        } else {
-            usedArgSlots_ += usedArgSlots_ % 2;
-            current_ = ABIArg(usedArgSlots_ * sizeof(intptr_t));
-            usedArgSlots_ += 2;
-        }
+            FloatRegister::RegType regType = (type == MIRType_Double ? FloatRegister::Double : FloatRegister::Single);
+            if (!usedArgSlots_) {
+                current_ = ABIArg(FloatRegister(FloatRegisters::f12, regType));
+                usedArgSlots_ += 2;
+                firstArgFloat = true;
+            } else if (usedArgSlots_ <= 2) {
+                // NOTE: We will use f14 always. This is not compatible with
+                // system ABI. We will have to introduce some infrastructure
+                // changes if we have to use system ABI here.
+                current_ = ABIArg(FloatRegister(FloatRegisters::f14, regType));
+                usedArgSlots_ = 4;
+            } else {
+                usedArgSlots_ += usedArgSlots_ % 2;
+                current_ = ABIArg(usedArgSlots_ * sizeof(intptr_t));
+                usedArgSlots_ += 2;
+            }
 #elif defined(USES_N32_ABI)
-        if (usedArgSlots_ < NumFloatArgRegs) {
-            current_ = ABIArg(FloatRegister(FloatRegisters::f12 + usedArgSlots_, regType));
+            FloatRegister destFReg;
             if (!usedArgSlots_)
               firstArgFloat = true;
-        } else {
-            current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
-        }
-        usedArgSlots_++;
+            if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+                current_ = ABIArg(destFReg);
+            } else {
+                current_ = ABIArg(GetArgStackDisp(usedArgSlots_));
+            }
+            usedArgSlots_++;
 #endif
+        }
         break;
       default:
         MOZ_CRASH("Unexpected argument type");

@@ -80,8 +80,10 @@ FloatRegister
 FloatRegister::doubleOverlay(unsigned int which) const
 {
     MOZ_ASSERT(!isInvalid());
+#if defined(USES_O32_ABI)
     if (kind_ != Double)
         return FloatRegister(code_ & ~1, Double);
+#endif
     return *this;
 }
 
@@ -89,6 +91,7 @@ FloatRegister
 FloatRegister::singleOverlay(unsigned int which) const
 {
     MOZ_ASSERT(!isInvalid());
+#if defined(USES_O32_ABI)
     if (kind_ == Double) {
         // Only even registers are double
         MOZ_ASSERT(code_ % 2 == 0);
@@ -97,11 +100,15 @@ FloatRegister::singleOverlay(unsigned int which) const
     }
     MOZ_ASSERT(which == 0);
     return FloatRegister(code_, Single);
+#else
+    return *this;
+#endif
 }
 
 FloatRegisterSet
 FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
 {
+#if defined(USES_O32_ABI)
     FloatRegisterSet mod;
     for (TypedRegisterIterator<FloatRegister> iter(s); iter.more(); iter++) {
         if ((*iter).isSingle()) {
@@ -112,34 +119,49 @@ FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
         }
     }
     return mod;
+#else
+    return s;
+#endif
 }
 
 uint32_t
 FloatRegister::GetSizeInBytes(const FloatRegisterSet &s)
 {
+#if defined(USES_O32_ABI)
     uint64_t bits = s.bits();
     uint32_t ret = mozilla::CountPopulation32(bits & 0xffffffff) * sizeof(float);
     ret +=  mozilla::CountPopulation32(bits >> 32) * sizeof(double);
     return ret;
+#else
+    return s.size() * sizeof(double);
+#endif
 }
 uint32_t
 FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
 {
     FloatRegisterSet ss = s.reduceSetForPush();
+#if defined(USES_O32_ABI)
     uint64_t bits = ss.bits();
     // We are only pushing double registers.
     MOZ_ASSERT((bits & 0xffffffff) == 0);
     uint32_t ret =  mozilla::CountPopulation32(bits >> 32) * sizeof(double);
     return ret;
+#else
+    return ss.size() * sizeof(double);
+#endif
 }
 uint32_t
 FloatRegister::getRegisterDumpOffsetInBytes()
 {
+#if defined(USES_O32_ABI)
     if (isSingle())
         return id() * sizeof(float);
     if (isDouble())
         return id() * sizeof(double);
     MOZ_CRASH();
+#else
+    return code() * sizeof(double);
+#endif
 }
 
 } // namespace ion
