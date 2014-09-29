@@ -374,6 +374,8 @@ class FloatRegisters
     typedef uint64_t SetType;
 #elif defined(USES_N32_ABI)
     static const uint32_t Total = 32;
+    static const uint32_t TotalDouble = Total;
+    static const uint32_t TotalSingle = Total;
     static const uint32_t Allocatable = 30;
     // When saving all registers we only need to do is save double registers.
     static const uint32_t TotalPhys = 32;
