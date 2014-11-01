@@ -41,14 +41,13 @@
 #include "nsDocShellCID.h"
 #include "nsIContentSecurityPolicy.h"
 #include "prlog.h"
-#include "nsIChannelPolicy.h"
-#include "nsChannelPolicy.h"
 #include "nsCRT.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsCrossSiteListenerProxy.h"
 #include "nsSandboxFlags.h"
 #include "nsContentTypeParser.h"
 #include "nsINetworkPredictor.h"
+#include "ImportManager.h"
 #include "mozilla/dom/EncodingUtils.h"
 
 #include "mozilla/CORSMode.h"
@@ -291,7 +290,8 @@ nsScriptLoader::StartLoad(nsScriptLoadRequest *aRequest, const nsAString &aType,
 
   nsCOMPtr<nsILoadGroup> loadGroup = mDocument->GetDocumentLoadGroup();
 
-  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mDocument->GetWindow()));
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mDocument->MasterDocument()->GetWindow()));
+
   if (!window) {
     return NS_ERROR_NULL_POINTER;
   }
@@ -305,25 +305,12 @@ nsScriptLoader::StartLoad(nsScriptLoadRequest *aRequest, const nsAString &aType,
     return NS_OK;
   }
 
-  // check for a Content Security Policy to pass down to the channel
-  // that will be created to load the script
-  nsCOMPtr<nsIChannelPolicy> channelPolicy;
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
-  rv = mDocument->NodePrincipal()->GetCsp(getter_AddRefs(csp));
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (csp) {
-    channelPolicy = do_CreateInstance("@mozilla.org/nschannelpolicy;1");
-    channelPolicy->SetContentSecurityPolicy(csp);
-    channelPolicy->SetLoadType(nsIContentPolicy::TYPE_SCRIPT);
-  }
-
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel),
                      aRequest->mURI,
                      mDocument,
                      nsILoadInfo::SEC_NORMAL,
                      nsIContentPolicy::TYPE_SCRIPT,
-                     channelPolicy,
                      loadGroup,
                      prompter,
                      nsIRequest::LOAD_NORMAL |
@@ -1057,7 +1044,9 @@ nsScriptLoader::FillCompileOptionsForRequest(const AutoJSAPI &jsapi,
     aOptions->setSourceMapURL(aRequest->mSourceMapURL.get());
   }
   if (aRequest->mOriginPrincipal) {
-    aOptions->setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
+    nsIPrincipal* scriptPrin = nsContentUtils::ObjectPrincipal(aScopeChain);
+    bool subsumes = scriptPrin->Subsumes(aRequest->mOriginPrincipal);
+    aOptions->setMutedErrors(!subsumes);
   }
 
   JSContext* cx = jsapi.cx();
@@ -1234,7 +1223,7 @@ nsScriptLoader::ReadyToExecuteScripts()
   if (!SelfReadyToExecuteScripts()) {
     return false;
   }
-  
+
   for (nsIDocument* doc = mDocument; doc; doc = doc->GetParentDocument()) {
     nsScriptLoader* ancestor = doc->ScriptLoader();
     if (!ancestor->SelfReadyToExecuteScripts() &&
@@ -1244,9 +1233,43 @@ nsScriptLoader::ReadyToExecuteScripts()
     }
   }
 
+  if (mDocument && !mDocument->IsMasterDocument()) {
+    nsRefPtr<ImportManager> im = mDocument->ImportManager();
+    nsRefPtr<ImportLoader> loader = im->Find(mDocument);
+    MOZ_ASSERT(loader, "How can we have an import document without a loader?");
+
+    // The referring link that counts in the execution order calculation
+    // (in spec: flagged as branch)
+    nsCOMPtr<nsINode> referrer = loader->GetMainReferrer();
+    MOZ_ASSERT(referrer, "There has to be a main referring link for each imports");
+
+    // Import documents are blocked by their import predecessors. We need to
+    // wait with script execution until all the predecessors are done.
+    // Technically it means we have to wait for the last one to finish,
+    // which is the neares one to us in the order.
+    nsRefPtr<ImportLoader> lastPred = im->GetNearestPredecessor(referrer);
+    if (!lastPred) {
+      // If there is no predecessor we can run.
+      return true;
+    }
+
+    nsCOMPtr<nsIDocument> doc = lastPred->GetDocument();
+    if (lastPred->IsBlocking() || !doc || (doc && !doc->ScriptLoader()->SelfReadyToExecuteScripts())) {
+      // Document has not been created yet or it was created but not ready.
+      // Either case we are blocked by it. The ImportLoader will take care
+      // of blocking us, and adding the pending child loader to the blocking
+      // ScriptLoader when it's possible (at this point the blocking loader
+      // might not have created the document/ScriptLoader)
+      lastPred->AddBlockedScriptLoader(this);
+      // As more imports are parsed, this can change, let's cache what we
+      // blocked, so it can be later updated if needed (see: ImportLoader::Updater).
+      loader->SetBlockingPredecessor(lastPred);
+      return false;
+    }
+  }
+
   return true;
 }
-
 
 // This function was copied from nsParser.cpp. It was simplified a bit.
 static bool

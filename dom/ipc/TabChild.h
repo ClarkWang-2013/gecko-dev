@@ -138,6 +138,11 @@ public:
   virtual nsIPrincipal* GetPrincipal() MOZ_OVERRIDE;
   virtual JSObject* GetGlobalJSObject() MOZ_OVERRIDE;
 
+  virtual JSObject* WrapObject(JSContext* cx) MOZ_OVERRIDE
+  {
+    MOZ_CRASH("TabChildGlobal doesn't use DOM bindings!");
+  }
+
   nsCOMPtr<nsIContentFrameMessageManager> mMessageManager;
   nsRefPtr<TabChildBase> mTabChild;
 
@@ -360,7 +365,6 @@ public:
                               const int32_t&  aModifiers,
                               const bool&     aPreventDefault) MOZ_OVERRIDE;
     virtual bool RecvCompositionEvent(const mozilla::WidgetCompositionEvent& event) MOZ_OVERRIDE;
-    virtual bool RecvTextEvent(const mozilla::WidgetTextEvent& event) MOZ_OVERRIDE;
     virtual bool RecvSelectionEvent(const mozilla::WidgetSelectionEvent& event) MOZ_OVERRIDE;
     virtual bool RecvActivateFrameEvent(const nsString& aType, const bool& capture) MOZ_OVERRIDE;
     virtual bool RecvLoadRemoteScript(const nsString& aURL,
@@ -369,6 +373,8 @@ public:
                                   const ClonedMessageData& aData,
                                   const InfallibleTArray<CpowEntry>& aCpows,
                                   const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
+
+    virtual bool RecvAppOfflineStatus(const uint32_t& aId, const bool& aOffline) MOZ_OVERRIDE;
 
     virtual PDocumentRendererChild*
     AllocPDocumentRendererChild(const nsRect& documentRect, const gfx::Matrix& transform,
@@ -398,6 +404,15 @@ public:
     AllocPFilePickerChild(const nsString& aTitle, const int16_t& aMode) MOZ_OVERRIDE;
     virtual bool
     DeallocPFilePickerChild(PFilePickerChild* actor) MOZ_OVERRIDE;
+
+    virtual PIndexedDBPermissionRequestChild*
+    AllocPIndexedDBPermissionRequestChild(const Principal& aPrincipal)
+                                          MOZ_OVERRIDE;
+
+    virtual bool
+    DeallocPIndexedDBPermissionRequestChild(
+                                       PIndexedDBPermissionRequestChild* aActor)
+                                       MOZ_OVERRIDE;
 
     virtual POfflineCacheUpdateChild* AllocPOfflineCacheUpdateChild(
             const URIParams& manifestURI,
@@ -489,12 +504,6 @@ protected:
     virtual bool RecvDestroy() MOZ_OVERRIDE;
     virtual bool RecvSetUpdateHitRegion(const bool& aEnabled) MOZ_OVERRIDE;
     virtual bool RecvSetIsDocShellActive(const bool& aIsActive) MOZ_OVERRIDE;
-
-    virtual PIndexedDBChild* AllocPIndexedDBChild(const nsCString& aGroup,
-                                                  const nsCString& aASCIIOrigin,
-                                                  bool* /* aAllowed */) MOZ_OVERRIDE;
-
-    virtual bool DeallocPIndexedDBChild(PIndexedDBChild* aActor) MOZ_OVERRIDE;
 
     virtual bool RecvRequestNotifyAfterRemotePaint();
 

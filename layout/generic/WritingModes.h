@@ -34,7 +34,7 @@
 // the writing modes.)
 
 #define CHECK_WRITING_MODE(param) \
-   NS_ASSERTION(param == mWritingMode, "writing-mode mismatch")
+   NS_ASSERTION(param == GetWritingMode(), "writing-mode mismatch")
 
 namespace mozilla {
 // Logical side constants for use in various places.
@@ -507,6 +507,12 @@ public:
                            aContainerWidth);
   }
 
+  bool operator==(LogicalPoint aOther) const
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    return mPoint == aOther.mPoint;
+  }
+
   LogicalPoint operator+(const LogicalPoint& aOther) const
   {
     CHECK_WRITING_MODE(aOther.GetWritingMode());
@@ -516,6 +522,33 @@ public:
     return LogicalPoint(GetWritingMode(),
                         mPoint.x + aOther.mPoint.x,
                         mPoint.y + aOther.mPoint.y);
+  }
+
+  LogicalPoint& operator+=(const LogicalPoint& aOther)
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    I() += aOther.I();
+    B() += aOther.B();
+    return *this;
+  }
+
+  LogicalPoint operator-(const LogicalPoint& aOther) const
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    // In non-debug builds, LogicalPoint does not store the WritingMode,
+    // so the first parameter here (which will always be eUnknownWritingMode)
+    // is ignored.
+    return LogicalPoint(GetWritingMode(),
+                        mPoint.x - aOther.mPoint.x,
+                        mPoint.y - aOther.mPoint.y);
+  }
+
+  LogicalPoint& operator-=(const LogicalPoint& aOther)
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    I() -= aOther.I();
+    B() -= aOther.B();
+    return *this;
   }
 
 private:
@@ -563,7 +596,9 @@ private:
     return mPoint.y;
   }
 
+#ifdef DEBUG
   WritingMode mWritingMode;
+#endif
 
   // We use an nsPoint to hold the coordinates, but reinterpret its .x and .y
   // fields as the inline and block directions. Hence, this is not exposed
@@ -683,21 +718,35 @@ public:
       *this : LogicalSize(aToMode, GetPhysicalSize(aFromMode));
   }
 
+  /**
+   * Test if a size is (0, 0).
+   */
+  bool IsAllZero() const
+  {
+    return ISize() == 0 && BSize() == 0;
+  }
+
+  /**
+   * Various binary operators on LogicalSize. These are valid ONLY for operands
+   * that share the same writing mode.
+   */
   bool operator==(const LogicalSize& aOther) const
   {
-    return mWritingMode == aOther.mWritingMode && mSize == aOther.mSize;
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    return mSize == aOther.mSize;
   }
 
   bool operator!=(const LogicalSize& aOther) const
   {
-    return mWritingMode != aOther.mWritingMode || mSize != aOther.mSize;
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    return mSize != aOther.mSize;
   }
 
   LogicalSize operator+(const LogicalSize& aOther) const
   {
     CHECK_WRITING_MODE(aOther.GetWritingMode());
-    return LogicalSize(mWritingMode, ISize() + aOther.ISize(),
-                                     BSize() + aOther.BSize());
+    return LogicalSize(GetWritingMode(), ISize() + aOther.ISize(),
+                                         BSize() + aOther.BSize());
   }
   LogicalSize& operator+=(const LogicalSize& aOther)
   {
@@ -710,8 +759,8 @@ public:
   LogicalSize operator-(const LogicalSize& aOther) const
   {
     CHECK_WRITING_MODE(aOther.GetWritingMode());
-    return LogicalSize(mWritingMode, ISize() - aOther.ISize(),
-                                     BSize() - aOther.BSize());
+    return LogicalSize(GetWritingMode(), ISize() - aOther.ISize(),
+                                         BSize() - aOther.BSize());
   }
   LogicalSize& operator-=(const LogicalSize& aOther)
   {
@@ -750,7 +799,9 @@ private:
     return mSize.height;
   }
 
+#ifdef DEBUG
   WritingMode mWritingMode;
+#endif
   nsSize      mSize;
 };
 
@@ -968,7 +1019,7 @@ public:
     }
   }
 
-  bool IsEmpty() const
+  bool IsAllZero() const
   {
     return (mMargin.left == 0 && mMargin.top == 0 &&
             mMargin.right == 0 && mMargin.bottom == 0);
@@ -1046,7 +1097,9 @@ private:
     return mMargin.TopBottom();
   }
 
+#ifdef DEBUG
   WritingMode mWritingMode;
+#endif
   nsMargin    mMargin;
 };
 
@@ -1284,6 +1337,11 @@ public:
 
   bool IsEmpty() const
   {
+    return mRect.IsEmpty();
+  }
+
+  bool IsAllZero() const
+  {
     return (mRect.x == 0 && mRect.y == 0 &&
             mRect.width == 0 && mRect.height == 0);
   }
@@ -1294,6 +1352,12 @@ public:
   }
 
   void SetEmpty() { mRect.SetEmpty(); }
+
+  bool IsEqualEdges(const LogicalRect aOther) const
+  {
+    CHECK_WRITING_MODE(aOther.GetWritingMode());
+    return mRect.IsEqualEdges(aOther.mRect);
+  }
 
 /* XXX are these correct?
   nscoord ILeft(WritingMode aWritingMode) const
@@ -1407,17 +1471,17 @@ public:
     }
   }
 
-#if 0 // XXX this would require aContainerWidth as well
   /**
    * Return a LogicalRect representing this rect in a different writing mode
    */
-  LogicalRect ConvertTo(WritingMode aToMode, WritingMode aFromMode) const
+  LogicalRect ConvertTo(WritingMode aToMode, WritingMode aFromMode,
+                        nscoord aContainerWidth) const
   {
     CHECK_WRITING_MODE(aFromMode);
     return aToMode == aFromMode ?
-      *this : LogicalRect(aToMode, GetPhysicalRect(aFromMode));
+      *this : LogicalRect(aToMode, GetPhysicalRect(aFromMode, aContainerWidth),
+                          aContainerWidth);
   }
-#endif
 
 private:
   LogicalRect() MOZ_DELETE;
@@ -1471,7 +1535,9 @@ private:
     return mRect.height;
   }
 
+#ifdef DEBUG
   WritingMode mWritingMode;
+#endif
   nsRect      mRect;
 };
 

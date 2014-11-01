@@ -43,7 +43,7 @@
 
 #include "xpcpublic.h"
 
-#include "js/OldDebugAPI.h"
+#include "jsapi.h"
 #include "jswrapper.h"
 #include "nsIArray.h"
 #include "nsIObjectInputStream.h"
@@ -73,10 +73,6 @@
 #endif
 #include "AccessCheck.h"
 
-#ifdef MOZ_LOGGING
-// Force PR_LOGGING so we can get JS strict warnings even in release builds
-#define FORCE_PR_LOG 1
-#endif
 #include "prlog.h"
 #include "prthread.h"
 
@@ -177,6 +173,7 @@ static uint32_t sPendingLoadCount;
 static bool sLoadingInProgress;
 
 static uint32_t sCCollectedWaitingForGC;
+static uint32_t sCCollectedZonesWaitingForGC;
 static uint32_t sLikelyShortLivingObjectsNeedingGC;
 static bool sPostGCEventsToConsole;
 static bool sPostGCEventsToObserver;
@@ -250,6 +247,7 @@ static bool
 NeedsGCAfterCC()
 {
   return sCCollectedWaitingForGC > 250 ||
+    sCCollectedZonesWaitingForGC > 0 ||
     sLikelyShortLivingObjectsNeedingGC > 2500 ||
     sNeedsGCAfterCC;
 }
@@ -284,7 +282,8 @@ nsJSEnvironmentObserver::Observe(nsISupports* aSubject, const char* aTopic,
                                      nsJSContext::NonIncrementalGC,
                                      nsJSContext::ShrinkingGC);
     }
-  } else if (!nsCRT::strcmp(aTopic, "quit-application")) {
+  } else if (!nsCRT::strcmp(aTopic, "quit-application") ||
+             !nsCRT::strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
     sShuttingDown = true;
     KillTimers();
   }
@@ -351,28 +350,23 @@ NS_HandleScriptError(nsIScriptGlobalObject *aScriptGlobal,
 class ScriptErrorEvent : public nsRunnable
 {
 public:
-  ScriptErrorEvent(JSRuntime* aRuntime,
+  ScriptErrorEvent(nsPIDOMWindow* aWindow,
+                   JSRuntime* aRuntime,
                    xpc::ErrorReport* aReport,
-                   nsIPrincipal* aScriptOriginPrincipal,
-                   JS::Handle<JS::Value> aError,
-                   bool aDispatchEvent)
-    : mReport(aReport)
-    , mOriginPrincipal(aScriptOriginPrincipal)
-    , mDispatchEvent(aDispatchEvent)
+                   JS::Handle<JS::Value> aError)
+    : mWindow(aWindow)
+    , mReport(aReport)
     , mError(aRuntime, aError)
   {}
 
   NS_IMETHOD Run()
   {
     nsEventStatus status = nsEventStatus_eIgnore;
-    nsPIDOMWindow* win = mReport->mWindow;
+    nsPIDOMWindow* win = mWindow;
     MOZ_ASSERT(win);
     // First, notify the DOM that we have a script error, but only if
     // our window is still the current inner.
-    if (mDispatchEvent && win->IsCurrentInnerWindow() &&
-        win->GetDocShell() && !JSREPORT_IS_WARNING(mReport->mFlags) &&
-        !sHandlingScriptError)
-    {
+    if (win->IsCurrentInnerWindow() && win->GetDocShell() && !sHandlingScriptError) {
       AutoRestore<bool> recursionGuard(sHandlingScriptError);
       sHandlingScriptError = true;
 
@@ -385,21 +379,8 @@ public:
       init.mFilename = mReport->mFileName;
       init.mBubbles = true;
 
-      nsCOMPtr<nsIScriptObjectPrincipal> sop(do_QueryInterface(win));
-      NS_ENSURE_STATE(sop);
-      nsIPrincipal* p = sop->GetPrincipal();
-      NS_ENSURE_STATE(p);
-
-      bool sameOrigin = !mOriginPrincipal;
-
-      if (p && !sameOrigin) {
-        if (NS_FAILED(p->Subsumes(mOriginPrincipal, &sameOrigin))) {
-          sameOrigin = false;
-        }
-      }
-
       NS_NAMED_LITERAL_STRING(xoriginMsg, "Script error.");
-      if (sameOrigin) {
+      if (!mReport->mIsMuted) {
         init.mMessage = mReport->mErrorMsg;
         init.mLineno = mReport->mLineNumber;
         init.mColno = mReport->mColumn;
@@ -427,9 +408,8 @@ public:
   }
 
 private:
+  nsCOMPtr<nsPIDOMWindow>         mWindow;
   nsRefPtr<xpc::ErrorReport>      mReport;
-  nsCOMPtr<nsIPrincipal>          mOriginPrincipal;
-  bool                            mDispatchEvent;
   JS::PersistentRootedValue       mError;
 
   static bool sHandlingScriptError;
@@ -489,31 +469,31 @@ SystemErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
 
   if (globalObject) {
     nsRefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
-    xpcReport->Init(report, message, globalObject);
+    bool isChrome = nsContentUtils::IsSystemPrincipal(globalObject->PrincipalOrNull());
+    nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(globalObject);
+    xpcReport->Init(report, message, isChrome, win ? win->WindowID() : 0);
 
-    // If there's no window to fire an event at, report it to the console
-    // directly.
-    if (!xpcReport->mWindow) {
+    // If we can't dispatch an event to a window, report it to the console
+    // directly. This includes the case where the error was an OOM, because
+    // triggering a scripted event handler is likely to generate further OOMs.
+    if (!win || JSREPORT_IS_WARNING(xpcReport->mFlags) ||
+        report->errorNumber == JSMSG_OUT_OF_MEMORY)
+    {
       xpcReport->LogToConsole();
       return;
     }
 
     // Otherwise, we need to asynchronously invoke onerror before we can decide
     // whether or not to report the error to the console.
-    nsContentUtils::AddScriptRunner(
-      new ScriptErrorEvent(JS_GetRuntime(cx),
-                           xpcReport,
-                           nsJSPrincipals::get(report->originPrincipals),
-                           exception,
-                           /* We do not try to report Out Of Memory via a dom
-                            * event because the dom event handler would
-                            * encounter an OOM exception trying to process the
-                            * event, and then we'd need to generate a new OOM
-                            * event for that new OOM instance -- this isn't
-                            * pretty.
-                            */
-                           report->errorNumber != JSMSG_OUT_OF_MEMORY));
+    DispatchScriptErrorEvent(win, JS_GetRuntime(cx), xpcReport, exception);
   }
+}
+
+void
+DispatchScriptErrorEvent(nsPIDOMWindow *win, JSRuntime *rt, xpc::ErrorReport *xpcReport,
+                         JS::Handle<JS::Value> exception)
+{
+  nsContentUtils::AddScriptRunner(new ScriptErrorEvent(win, rt, xpcReport, exception));
 }
 
 } /* namespace xpc */
@@ -1829,7 +1809,8 @@ nsJSContext::EndCycleCollectionCallback(CycleCollectorResults &aResults)
   // CCs, this won't happen.
   gCCStats.FinishCycleCollectionSlice();
 
-  sCCollectedWaitingForGC += aResults.mFreedRefCounted + aResults.mFreedGCed;
+  sCCollectedWaitingForGC += aResults.mFreedGCed;
+  sCCollectedZonesWaitingForGC += aResults.mFreedJSZones;
 
   TimeStamp endCCTimeStamp = TimeStamp::Now();
   uint32_t ccNowDuration = TimeBetween(gCCStats.mBeginTime, endCCTimeStamp);
@@ -1878,7 +1859,7 @@ nsJSContext::EndCycleCollectionCallback(CycleCollectorResults &aResults)
     }
 
     NS_NAMED_MULTILINE_LITERAL_STRING(kFmt,
-      MOZ_UTF16("CC(T+%.1f) max pause: %lums, total time: %lums, slices: %lu, suspected: %lu, visited: %lu RCed and %lu%s GCed, collected: %lu RCed and %lu GCed (%lu|%lu waiting for GC)%s\n")
+      MOZ_UTF16("CC(T+%.1f) max pause: %lums, total time: %lums, slices: %lu, suspected: %lu, visited: %lu RCed and %lu%s GCed, collected: %lu RCed and %lu GCed (%lu|%lu|%lu waiting for GC)%s\n")
       MOZ_UTF16("ForgetSkippable %lu times before CC, min: %lu ms, max: %lu ms, avg: %lu ms, total: %lu ms, max sync: %lu ms, removed: %lu"));
     nsString msg;
     msg.Adopt(nsTextFormatter::smprintf(kFmt.get(), double(delta) / PR_USEC_PER_SEC,
@@ -1886,7 +1867,7 @@ nsJSContext::EndCycleCollectionCallback(CycleCollectorResults &aResults)
                                         aResults.mNumSlices, gCCStats.mSuspected,
                                         aResults.mVisitedRefCounted, aResults.mVisitedGCed, mergeMsg.get(),
                                         aResults.mFreedRefCounted, aResults.mFreedGCed,
-                                        sCCollectedWaitingForGC, sLikelyShortLivingObjectsNeedingGC,
+                                        sCCollectedWaitingForGC, sCCollectedZonesWaitingForGC, sLikelyShortLivingObjectsNeedingGC,
                                         gcMsg.get(),
                                         sForgetSkippableBeforeCC,
                                         minForgetSkippableTime / PR_USEC_PER_MSEC,
@@ -1918,6 +1899,7 @@ nsJSContext::EndCycleCollectionCallback(CycleCollectorResults &aResults)
              MOZ_UTF16("\"RCed\": %lu, ")
              MOZ_UTF16("\"GCed\": %lu }, ")
          MOZ_UTF16("\"waiting_for_gc\": %lu, ")
+         MOZ_UTF16("\"zones_waiting_for_gc\": %lu, ")
          MOZ_UTF16("\"short_living_objects_waiting_for_gc\": %lu, ")
          MOZ_UTF16("\"forced_gc\": %d, ")
          MOZ_UTF16("\"forget_skippable\": { ")
@@ -1938,6 +1920,7 @@ nsJSContext::EndCycleCollectionCallback(CycleCollectorResults &aResults)
                                          aResults.mVisitedRefCounted, aResults.mVisitedGCed,
                                          aResults.mFreedRefCounted, aResults.mFreedGCed,
                                          sCCollectedWaitingForGC,
+                                         sCCollectedZonesWaitingForGC,
                                          sLikelyShortLivingObjectsNeedingGC,
                                          aResults.mForcedGC,
                                          sForgetSkippableBeforeCC,
@@ -2393,6 +2376,7 @@ DOMGCSliceCallback(JSRuntime *aRt, JS::GCProgress aProgress, const JS::GCDescrip
     nsJSContext::KillInterSliceGCTimer();
 
     sCCollectedWaitingForGC = 0;
+    sCCollectedZonesWaitingForGC = 0;
     sLikelyShortLivingObjectsNeedingGC = 0;
     sCleanupsSinceLastGC = 0;
     sNeedsFullCC = true;
@@ -2475,6 +2459,7 @@ mozilla::dom::StartupJSEnvironment()
   sPendingLoadCount = 0;
   sLoadingInProgress = false;
   sCCollectedWaitingForGC = 0;
+  sCCollectedZonesWaitingForGC = 0;
   sLikelyShortLivingObjectsNeedingGC = 0;
   sPostGCEventsToConsole = false;
   sNeedsFullCC = false;
@@ -2864,6 +2849,7 @@ nsJSContext::EnsureStatics()
   nsIObserver* observer = new nsJSEnvironmentObserver();
   obs->AddObserver(observer, "memory-pressure", false);
   obs->AddObserver(observer, "quit-application", false);
+  obs->AddObserver(observer, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
 
   // Bug 907848 - We need to explicitly get the nsIDOMScriptObjectFactory
   // service in order to force its constructor to run, which registers a

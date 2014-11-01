@@ -27,7 +27,9 @@ describe("loop.shared.models", function() {
       apiKey:         "apiKey",
       callType:       "callType",
       websocketToken: 123,
-      callToken:    "callToken"
+      callToken:      "callToken",
+      callUrl:        "http://invalid/callToken",
+      callerId:       "mrssmith"
     };
     fakeSession = _.extend({
       connect: function () {},
@@ -76,6 +78,19 @@ describe("loop.shared.models", function() {
       });
 
       describe("#setupOutgoingCall", function() {
+        it("should set the a custom selected call type", function() {
+          conversation.setupOutgoingCall("audio");
+
+          expect(conversation.get("selectedCallType")).eql("audio");
+        });
+
+        it("should respect the default selected call type when none is passed",
+          function() {
+            conversation.setupOutgoingCall();
+
+            expect(conversation.get("selectedCallType")).eql("audio-video");
+          });
+
         it("should trigger a `call:outgoing:setup` event", function(done) {
           conversation.once("call:outgoing:setup", function() {
             done();
@@ -347,6 +362,38 @@ describe("loop.shared.models", function() {
           expect(model.hasVideoStream("outgoing")).to.eql(true);
         });
       });
+
+      describe("#getCallIdentifier", function() {
+        var model;
+
+        beforeEach(function() {
+          model = new sharedModels.ConversationModel(fakeSessionData, {
+            sdk: fakeSDK
+          });
+          model.startSession();
+        });
+
+        it("should return the callerId", function() {
+          expect(model.getCallIdentifier()).eql("mrssmith");
+        });
+
+        it("should return the shorted callUrl if the callerId does not exist",
+          function() {
+            model.set({callerId: ""});
+
+            expect(model.getCallIdentifier()).eql("invalid/callToken");
+          });
+
+        it("should return an empty string if neither callerId nor callUrl exist",
+          function() {
+            model.set({
+              callerId: undefined,
+              callUrl: undefined
+            });
+
+            expect(model.getCallIdentifier()).eql("");
+          });
+      });
     });
   });
 
@@ -355,8 +402,8 @@ describe("loop.shared.models", function() {
 
     beforeEach(function() {
       collection = new sharedModels.NotificationCollection();
-      sandbox.stub(l10n, "get", function(x) {
-        return "translated:" + x;
+      sandbox.stub(l10n, "get", function(x, y) {
+        return "translated:" + x + (y ? ':' + y : '');
       });
       notifData = {level: "error", message: "plop"};
       testNotif = new sharedModels.NotificationModel(notifData);
@@ -399,6 +446,15 @@ describe("loop.shared.models", function() {
         expect(collection).to.have.length.of(1);
         expect(collection.at(0).get("level")).eql("error");
         expect(collection.at(0).get("message")).eql("translated:fakeId");
+      });
+
+      it("should notify an error using a l10n string id + l10n properties",
+        function() {
+          collection.errorL10n("fakeId", "fakeProp");
+
+          expect(collection).to.have.length.of(1);
+          expect(collection.at(0).get("level")).eql("error");
+          expect(collection.at(0).get("message")).eql("translated:fakeId:fakeProp");
       });
     });
 

@@ -36,8 +36,9 @@
 #include "jscntxtinlines.h"
 #include "jsobjinlines.h"
 
+#include "vm/NativeObject-inl.h"
+
 using namespace js;
-using namespace JS;
 
 using mozilla::ArrayLength;
 using mozilla::Move;
@@ -249,12 +250,12 @@ GC(JSContext *cx, unsigned argc, jsval *vp)
     if (compartment)
         PrepareForDebugGC(cx->runtime());
     else
-        PrepareForFullGC(cx->runtime());
+        JS::PrepareForFullGC(cx->runtime());
 
     if (shrinking)
-        ShrinkingGC(cx->runtime(), gcreason::API);
+        JS::ShrinkingGC(cx->runtime(), JS::gcreason::API);
     else
-        GCForReason(cx->runtime(), gcreason::API);
+        JS::GCForReason(cx->runtime(), JS::gcreason::API);
 
     char buf[256] = { '\0' };
 #ifndef JS_MORE_DETERMINISTIC
@@ -276,7 +277,7 @@ MinorGC(JSContext *cx, unsigned argc, jsval *vp)
     if (args.get(0) == BooleanValue(true))
         cx->runtime()->gc.storeBuffer.setAboutToOverflow();
 
-    cx->minorGC(gcreason::API);
+    cx->minorGC(JS::gcreason::API);
 #endif
     args.rval().setUndefined();
     return true;
@@ -347,7 +348,7 @@ GCParameter(JSContext *cx, unsigned argc, Value *vp)
         return false;
     }
 
-    if (param == JSGC_MARK_STACK_LIMIT && IsIncrementalGCInProgress(cx->runtime())) {
+    if (param == JSGC_MARK_STACK_LIMIT && JS::IsIncrementalGCInProgress(cx->runtime())) {
         JS_ReportError(cx, "attempt to set markStackLimit while a GC is in progress");
         return false;
     }
@@ -726,7 +727,7 @@ class CountHeapTracer
 static void
 CountHeapNotify(JSTracer *trc, void **thingp, JSGCTraceKind kind)
 {
-    JS_ASSERT(trc->callback == CountHeapNotify);
+    MOZ_ASSERT(trc->callback == CountHeapNotify);
 
     CountHeapTracer *countTracer = (CountHeapTracer *)trc;
     void *thing = *thingp;
@@ -1164,7 +1165,7 @@ js::testingFunc_inParallelSection(JSContext *cx, unsigned argc, jsval *vp)
 
     // If we were actually *in* a parallel section, then this function
     // would be inlined to TRUE in ion-generated code.
-    JS_ASSERT(!InParallelSection());
+    MOZ_ASSERT(!InParallelSection());
     args.rval().setBoolean(false);
     return true;
 }
@@ -1369,7 +1370,7 @@ SetIonCheckGraphCoherency(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-class CloneBufferObject : public JSObject {
+class CloneBufferObject : public NativeObject {
     static const JSPropertySpec props_[2];
     static const size_t DATA_SLOT   = 0;
     static const size_t LENGTH_SLOT = 1;
@@ -1382,8 +1383,8 @@ class CloneBufferObject : public JSObject {
         RootedObject obj(cx, JS_NewObject(cx, Jsvalify(&class_), JS::NullPtr(), JS::NullPtr()));
         if (!obj)
             return nullptr;
-        obj->setReservedSlot(DATA_SLOT, PrivateValue(nullptr));
-        obj->setReservedSlot(LENGTH_SLOT, Int32Value(0));
+        obj->as<CloneBufferObject>().setReservedSlot(DATA_SLOT, PrivateValue(nullptr));
+        obj->as<CloneBufferObject>().setReservedSlot(LENGTH_SLOT, Int32Value(0));
 
         if (!JS_DefineProperties(cx, obj, props_))
             return nullptr;
@@ -1408,7 +1409,7 @@ class CloneBufferObject : public JSObject {
     }
 
     void setData(uint64_t *aData) {
-        JS_ASSERT(!data());
+        MOZ_ASSERT(!data());
         setReservedSlot(DATA_SLOT, PrivateValue(aData));
     }
 
@@ -1417,7 +1418,7 @@ class CloneBufferObject : public JSObject {
     }
 
     void setNBytes(size_t nbytes) {
-        JS_ASSERT(nbytes <= UINT32_MAX);
+        MOZ_ASSERT(nbytes <= UINT32_MAX);
         setReservedSlot(LENGTH_SLOT, Int32Value(nbytes));
     }
 
@@ -1472,7 +1473,7 @@ class CloneBufferObject : public JSObject {
     static bool
     getCloneBuffer_impl(JSContext* cx, CallArgs args) {
         Rooted<CloneBufferObject*> obj(cx, &args.thisv().toObject().as<CloneBufferObject>());
-        JS_ASSERT(args.length() == 0);
+        MOZ_ASSERT(args.length() == 0);
 
         if (!obj->data()) {
             args.rval().setUndefined();
@@ -1976,7 +1977,7 @@ FindPath(JSContext *cx, unsigned argc, jsval *vp)
     //
     //   { node: undefined, edge: <string> }
     size_t length = nodes.length();
-    RootedObject result(cx, NewDenseFullyAllocatedArray(cx, length));
+    RootedArrayObject result(cx, NewDenseFullyAllocatedArray(cx, length));
     if (!result)
         return false;
     result->ensureDenseInitializedLength(cx, 0, length);
@@ -2069,7 +2070,7 @@ ByteSize(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     mozilla::MallocSizeOf mallocSizeOf = cx->runtime()->debuggerMallocSizeOf;
-    JS::ubi::Node node(args.get(0));
+    JS::ubi::Node node = args.get(0);
     if (node)
         args.rval().set(NumberValue(node.size(mallocSizeOf)));
     else
@@ -2155,24 +2156,8 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 
 #ifdef JS_GC_ZEAL
     JS_FN_HELP("gczeal", GCZeal, 2, 0,
-"gczeal(level, [period])",
-"  Specifies how zealous the garbage collector should be. Values for level:\n"
-"    0: Normal amount of collection\n"
-"    1: Collect when roots are added or removed\n"
-"    2: Collect when memory is allocated\n"
-"    3: Collect when the window paints (browser only)\n"
-"    4: Verify pre write barriers between instructions\n"
-"    5: Verify pre write barriers between paints\n"
-"    6: Verify stack rooting\n"
-"    7: Collect the nursery every N nursery allocations\n"
-"    8: Incremental GC in two slices: 1) mark roots 2) finish collection\n"
-"    9: Incremental GC in two slices: 1) mark all 2) new marking and finish\n"
-"   10: Incremental GC in multiple slices\n"
-"   11: Verify post write barriers between instructions\n"
-"   12: Verify post write barriers between paints\n"
-"   13: Check internal hashtables on minor GC\n"
-"   14: Always compact arenas after GC\n"
-"  Period specifies that collection happens every n allocations.\n"),
+"gczeal(level, [N])",
+gc::ZealModeHelpText),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
 "schedulegc(num | obj)",

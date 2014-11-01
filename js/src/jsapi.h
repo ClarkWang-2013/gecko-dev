@@ -98,11 +98,11 @@ class AutoValueArray : public AutoGCRooter
     Value *begin() { return elements_; }
 
     HandleValue operator[](unsigned i) const {
-        JS_ASSERT(i < N);
+        MOZ_ASSERT(i < N);
         return HandleValue::fromMarkedLocation(&elements_[i]);
     }
     MutableHandleValue operator[](unsigned i) {
-        JS_ASSERT(i < N);
+        MOZ_ASSERT(i < N);
         return MutableHandleValue::fromMarkedLocation(&elements_[i]);
     }
 
@@ -596,7 +596,7 @@ class HandleValueArray
     }
 
     static HandleValueArray subarray(const HandleValueArray& values, size_t startIndex, size_t len) {
-        JS_ASSERT(startIndex + len <= values.length());
+        MOZ_ASSERT(startIndex + len <= values.length());
         return HandleValueArray(len, values.begin() + startIndex);
     }
 
@@ -608,7 +608,7 @@ class HandleValueArray
     const Value *begin() const { return elements_; }
 
     HandleValue operator[](size_t i) const {
-        JS_ASSERT(i < length_);
+        MOZ_ASSERT(i < length_);
         return HandleValue::fromMarkedLocation(&elements_[i]);
     }
 };
@@ -879,7 +879,7 @@ class MOZ_STACK_CLASS SourceBufferHolder MOZ_FINAL
     // the buffer.  Taking and then free'ing an unowned buffer will have dire
     // consequences.
     char16_t *take() {
-        JS_ASSERT(ownsChars_);
+        MOZ_ASSERT(ownsChars_);
         ownsChars_ = false;
         return const_cast<char16_t *>(data_);
     }
@@ -1353,14 +1353,14 @@ class JSAutoCheckRequest
     {
 #ifdef JS_DEBUG
         mContext = cx;
-        JS_ASSERT(JS_IsInRequest(JS_GetRuntime(cx)));
+        MOZ_ASSERT(JS_IsInRequest(JS_GetRuntime(cx)));
 #endif
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     ~JSAutoCheckRequest() {
 #ifdef JS_DEBUG
-        JS_ASSERT(JS_IsInRequest(JS_GetRuntime(mContext)));
+        MOZ_ASSERT(JS_IsInRequest(JS_GetRuntime(mContext)));
 #endif
     }
 
@@ -2252,7 +2252,7 @@ class AutoIdArray : private AutoGCRooter
         return !idArray;
     }
     jsid operator[](size_t i) const {
-        JS_ASSERT(idArray);
+        MOZ_ASSERT(idArray);
         return JS_IdArrayGet(context, idArray, unsigned(i));
     }
     size_t length() const {
@@ -2475,15 +2475,27 @@ struct JSFunctionSpec {
  * JSFUN_STUB_GSOPS. JS_FNINFO allows the simple adding of
  * JSJitInfos. JS_SELF_HOSTED_FN declares a self-hosted function. Finally
  * JS_FNSPEC has slots for all the fields.
+ *
+ * The _SYM variants allow defining a function with a symbol key rather than a
+ * string key. For example, use JS_SYM_FN(iterator, ...) to define an
+ * @@iterator method.
  */
 #define JS_FS(name,call,nargs,flags)                                          \
     JS_FNSPEC(name, call, nullptr, nargs, flags, nullptr)
 #define JS_FN(name,call,nargs,flags)                                          \
     JS_FNSPEC(name, call, nullptr, nargs, (flags) | JSFUN_STUB_GSOPS, nullptr)
+#define JS_SYM_FN(name,call,nargs,flags)                                      \
+    JS_SYM_FNSPEC(symbol, call, nullptr, nargs, (flags) | JSFUN_STUB_GSOPS, nullptr)
 #define JS_FNINFO(name,call,info,nargs,flags)                                 \
     JS_FNSPEC(name, call, info, nargs, flags, nullptr)
 #define JS_SELF_HOSTED_FN(name,selfHostedName,nargs,flags)                    \
     JS_FNSPEC(name, nullptr, nullptr, nargs, flags, selfHostedName)
+#define JS_SELF_HOSTED_SYM_FN(symbol, selfHostedName, nargs, flags)           \
+    JS_SYM_FNSPEC(symbol, nullptr, nullptr, nargs, flags, selfHostedName)
+#define JS_SYM_FNSPEC(symbol, call, info, nargs, flags, selfHostedName)       \
+    JS_FNSPEC(reinterpret_cast<const char *>(                                 \
+                  uint32_t(::JS::SymbolCode::symbol) + 1),                    \
+              call, info, nargs, flags, selfHostedName)
 #define JS_FNSPEC(name,call,info,nargs,flags,selfHostedName)                  \
     {name, {call, info}, nargs, flags, selfHostedName}
 
@@ -2633,7 +2645,7 @@ class JS_PUBLIC_API(CompartmentOptions)
     Override &extraWarningsOverride() { return extraWarningsOverride_; }
 
     void *zonePointer() const {
-        JS_ASSERT(uintptr_t(zone_.pointer) > uintptr_t(JS::SystemZone));
+        MOZ_ASSERT(uintptr_t(zone_.pointer) > uintptr_t(JS::SystemZone));
         return zone_.pointer;
     }
     ZoneSpecifier zoneSpecifier() const { return zone_.spec; }
@@ -3305,22 +3317,6 @@ JS_ReleaseMappedArrayBufferContents(void *contents, size_t length);
 extern JS_PUBLIC_API(JSIdArray *)
 JS_Enumerate(JSContext *cx, JS::HandleObject obj);
 
-/*
- * Create an object to iterate over enumerable properties of obj, in arbitrary
- * property definition order.  NB: This differs from longstanding for..in loop
- * order, which uses order of property definition in obj.
- */
-extern JS_PUBLIC_API(JSObject *)
-JS_NewPropertyIterator(JSContext *cx, JS::Handle<JSObject*> obj);
-
-/*
- * Return true on success with *idp containing the id of the next enumerable
- * property to visit using iterobj, or JSID_IS_VOID if there is no such property
- * left to visit.  Return false on error.
- */
-extern JS_PUBLIC_API(bool)
-JS_NextProperty(JSContext *cx, JS::HandleObject iterobj, JS::MutableHandleId idp);
-
 extern JS_PUBLIC_API(jsval)
 JS_GetReservedSlot(JSObject *obj, uint32_t index);
 
@@ -3381,6 +3377,20 @@ extern JS_PUBLIC_API(uint16_t)
 JS_GetFunctionArity(JSFunction *fun);
 
 /*
+ * API for determining callability and constructability. This does the right
+ * thing for proxies.
+ */
+namespace JS {
+
+extern JS_PUBLIC_API(bool)
+IsCallable(JSObject *obj);
+
+extern JS_PUBLIC_API(bool)
+IsConstructor(JSObject *obj);
+
+} /* namespace JS */
+
+/*
  * Infallible predicate to test whether obj is a function object (faster than
  * comparing obj's class name to "Function", but equivalent unless someone has
  * overwritten the "Function" identifier with a different constructor and then
@@ -3388,9 +3398,6 @@ JS_GetFunctionArity(JSFunction *fun);
  */
 extern JS_PUBLIC_API(bool)
 JS_ObjectIsFunction(JSContext *cx, JSObject *obj);
-
-extern JS_PUBLIC_API(bool)
-JS_ObjectIsCallable(JSContext *cx, JSObject *obj);
 
 extern JS_PUBLIC_API(bool)
 JS_IsNativeFunction(JSObject *funobj, JSNative call);
@@ -3461,6 +3468,15 @@ JS_CompileUCScript(JSContext *cx, JS::HandleObject obj,
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetGlobalFromScript(JSScript *script);
+
+extern JS_PUBLIC_API(const char *)
+JS_GetScriptFilename(JSScript *script);
+
+extern JS_PUBLIC_API(unsigned)
+JS_GetScriptBaseLineNumber(JSContext *cx, JSScript *script);
+
+extern JS_PUBLIC_API(JSScript *)
+JS_GetFunctionScript(JSContext *cx, JS::HandleFunction fun);
 
 /*
  * |fun| will always be set. On failure, it will be set to nullptr.
@@ -3533,7 +3549,18 @@ class JS_FRIEND_API(ReadOnlyCompileOptions)
     friend class CompileOptions;
 
   protected:
-    JSPrincipals *originPrincipals_;
+    // The Web Platform allows scripts to be loaded from arbitrary cross-origin
+    // sources. This allows an attack by which a malicious website loads a
+    // sensitive file (say, a bank statement) cross-origin (using the user's
+    // cookies), and sniffs the generated syntax errors (via a window.onerror
+    // handler) for juicy morsels of its contents.
+    //
+    // To counter this attack, HTML5 specifies that script errors should be
+    // sanitized ("muted") when the script is not same-origin with the global
+    // for which it is loaded. Callers should set this flag for cross-origin
+    // scripts, and it will be propagated appropriately to child scripts and
+    // passed back in JSErrorReports.
+    bool mutedErrors_;
     const char *filename_;
     const char *introducerFilename_;
     const char16_t *sourceMapURL_;
@@ -3543,7 +3570,7 @@ class JS_FRIEND_API(ReadOnlyCompileOptions)
     // classes' constructors take care of that, in ways appropriate to their
     // purpose.
     ReadOnlyCompileOptions()
-      : originPrincipals_(nullptr),
+      : mutedErrors_(false),
         filename_(nullptr),
         introducerFilename_(nullptr),
         sourceMapURL_(nullptr),
@@ -3578,7 +3605,7 @@ class JS_FRIEND_API(ReadOnlyCompileOptions)
   public:
     // Read-only accessors for non-POD options. The proper way to set these
     // depends on the derived type.
-    JSPrincipals *originPrincipals(js::ExclusiveContext *cx) const;
+    bool mutedErrors() const { return mutedErrors_; }
     const char *filename() const { return filename_; }
     const char *introducerFilename() const { return introducerFilename_; }
     const char16_t *sourceMapURL() const { return sourceMapURL_; }
@@ -3673,10 +3700,8 @@ class JS_FRIEND_API(OwningCompileOptions) : public ReadOnlyCompileOptions
         introductionScriptRoot = s;
         return *this;
     }
-    OwningCompileOptions &setOriginPrincipals(JSPrincipals *p) {
-        if (p) JS_HoldPrincipals(p);
-        if (originPrincipals_) JS_DropPrincipals(runtime, originPrincipals_);
-        originPrincipals_ = p;
+    OwningCompileOptions &setMutedErrors(bool mute) {
+        mutedErrors_ = mute;
         return *this;
     }
     OwningCompileOptions &setVersion(JSVersion v) {
@@ -3732,7 +3757,7 @@ class MOZ_STACK_CLASS JS_FRIEND_API(CompileOptions) : public ReadOnlyCompileOpti
     {
         copyPODOptions(rhs);
 
-        originPrincipals_ = rhs.originPrincipals_;
+        mutedErrors_ = rhs.mutedErrors_;
         filename_ = rhs.filename();
         sourceMapURL_ = rhs.sourceMapURL();
         elementRoot = rhs.element();
@@ -3759,8 +3784,8 @@ class MOZ_STACK_CLASS JS_FRIEND_API(CompileOptions) : public ReadOnlyCompileOpti
         introductionScriptRoot = s;
         return *this;
     }
-    CompileOptions &setOriginPrincipals(JSPrincipals *p) {
-        originPrincipals_ = p;
+    CompileOptions &setMutedErrors(bool mute) {
+        mutedErrors_ = mute;
         return *this;
     }
     CompileOptions &setVersion(JSVersion v) {
@@ -4030,7 +4055,7 @@ static inline bool
 Call(JSContext *cx, JS::HandleValue thisv, JS::HandleObject funObj, const JS::HandleValueArray& args,
      MutableHandleValue rval)
 {
-    JS_ASSERT(funObj);
+    MOZ_ASSERT(funObj);
     JS::RootedValue fun(cx, JS::ObjectValue(*funObj));
     return Call(cx, thisv, fun, args, rval);
 }
@@ -4177,12 +4202,12 @@ JS_FileEscapedString(FILE *fp, JSString *str, char quote);
  *   JSFlatString *fstr = JS_FlattenString(cx, str);
  *   if (!fstr)
  *     return false;
- *   JS_ASSERT(fstr == JS_ASSERT_STRING_IS_FLAT(str));
+ *   MOZ_ASSERT(fstr == JS_ASSERT_STRING_IS_FLAT(str));
  *
  *   // in an infallible context, for the same 'str'
  *   AutoCheckCannotGC nogc;
  *   const char16_t *chars = JS_GetTwoByteFlatStringChars(nogc, fstr)
- *   JS_ASSERT(chars);
+ *   MOZ_ASSERT(chars);
  *
  * Flat strings and interned strings are always null-terminated, so
  * JS_FlattenString can be used to get a null-terminated string.
@@ -4242,14 +4267,14 @@ JS_GetTwoByteFlatStringChars(const JS::AutoCheckCannotGC &nogc, JSFlatString *st
 static MOZ_ALWAYS_INLINE JSFlatString *
 JSID_TO_FLAT_STRING(jsid id)
 {
-    JS_ASSERT(JSID_IS_STRING(id));
+    MOZ_ASSERT(JSID_IS_STRING(id));
     return (JSFlatString *)(JSID_BITS(id));
 }
 
 static MOZ_ALWAYS_INLINE JSFlatString *
 JS_ASSERT_STRING_IS_FLAT(JSString *str)
 {
-    JS_ASSERT(JS_StringIsFlat(str));
+    MOZ_ASSERT(JS_StringIsFlat(str));
     return (JSFlatString *)str;
 }
 
@@ -4341,7 +4366,7 @@ class JSAutoByteString
                      MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : mBytes(JS_EncodeString(cx, str))
     {
-        JS_ASSERT(cx);
+        MOZ_ASSERT(cx);
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
@@ -4357,13 +4382,13 @@ class JSAutoByteString
 
     /* Take ownership of the given byte array. */
     void initBytes(char *bytes) {
-        JS_ASSERT(!mBytes);
+        MOZ_ASSERT(!mBytes);
         mBytes = bytes;
     }
 
     char *encodeLatin1(JSContext *cx, JSString *str) {
-        JS_ASSERT(!mBytes);
-        JS_ASSERT(cx);
+        MOZ_ASSERT(!mBytes);
+        MOZ_ASSERT(cx);
         mBytes = JS_EncodeString(cx, str);
         return mBytes;
     }
@@ -4371,8 +4396,8 @@ class JSAutoByteString
     char *encodeLatin1(js::ExclusiveContext *cx, JSString *str);
 
     char *encodeUtf8(JSContext *cx, JS::HandleString str) {
-        JS_ASSERT(!mBytes);
-        JS_ASSERT(cx);
+        MOZ_ASSERT(!mBytes);
+        MOZ_ASSERT(cx);
         mBytes = JS_EncodeStringToUTF8(cx, str);
         return mBytes;
     }
@@ -4480,6 +4505,31 @@ GetSymbolCode(Handle<Symbol*> symbol);
  */
 JS_PUBLIC_API(Symbol *)
 GetWellKnownSymbol(JSContext *cx, SymbolCode which);
+
+/*
+ * Return true if the given JSPropertySpec::name or JSFunctionSpec::name value
+ * is actually a symbol code and not a string. See JS_SYM_FN.
+ */
+inline bool
+PropertySpecNameIsSymbol(const char *name)
+{
+    uintptr_t u = reinterpret_cast<uintptr_t>(name);
+    return u != 0 && u - 1 < WellKnownSymbolLimit;
+}
+
+JS_PUBLIC_API(bool)
+PropertySpecNameEqualsId(const char *name, HandleId id);
+
+/*
+ * Create a jsid that does not need to be marked for GC.
+ *
+ * 'name' is a JSPropertySpec::name or JSFunctionSpec::name value. The
+ * resulting jsid, on success, is either an interned string or a well-known
+ * symbol; either way it is immune to GC so there is no need to visit *idp
+ * during GC marking.
+ */
+JS_PUBLIC_API(bool)
+PropertySpecNameToPermanentId(JSContext *cx, const char *name, jsid *idp);
 
 } /* namespace JS */
 
@@ -4625,10 +4675,19 @@ JS_ReportOutOfMemory(JSContext *cx);
 extern JS_PUBLIC_API(void)
 JS_ReportAllocationOverflow(JSContext *cx);
 
-struct JSErrorReport {
+class JSErrorReport
+{
+  public:
+    JSErrorReport()
+      : filename(nullptr), lineno(0), column(0), isMuted(false), linebuf(nullptr),
+        tokenptr(nullptr), uclinebuf(nullptr), uctokenptr(nullptr), flags(0), errorNumber(0),
+        ucmessage(nullptr), messageArgs(nullptr), exnType(0)
+    {}
+
     const char      *filename;      /* source file name, URL, etc., or null */
-    JSPrincipals    *originPrincipals; /* see 'originPrincipals' comment above */
     unsigned        lineno;         /* source line number */
+    unsigned        column;         /* zero-based column index in line */
+    bool            isMuted;        /* See the comment in ReadOnlyCompileOptions. */
     const char      *linebuf;       /* offending source line without final \n */
     const char      *tokenptr;      /* pointer to error token in linebuf */
     const char16_t  *uclinebuf;     /* unicode (original) line buffer */
@@ -4638,7 +4697,6 @@ struct JSErrorReport {
     const char16_t  *ucmessage;     /* the (default) error message */
     const char16_t  **messageArgs;  /* arguments for the error message */
     int16_t         exnType;        /* One of the JSExnType constants */
-    unsigned        column;         /* zero-based column index in line */
 };
 
 /*
@@ -4739,11 +4797,11 @@ JS_ClearDateCaches(JSContext *cx);
 #define JSREG_STICKY    0x08u   /* only match starting at lastIndex */
 
 extern JS_PUBLIC_API(JSObject *)
-JS_NewRegExpObject(JSContext *cx, JS::HandleObject obj, char *bytes, size_t length,
+JS_NewRegExpObject(JSContext *cx, JS::HandleObject obj, const char *bytes, size_t length,
                    unsigned flags);
 
 extern JS_PUBLIC_API(JSObject *)
-JS_NewUCRegExpObject(JSContext *cx, JS::HandleObject obj, char16_t *chars, size_t length,
+JS_NewUCRegExpObject(JSContext *cx, JS::HandleObject obj, const char16_t *chars, size_t length,
                      unsigned flags);
 
 extern JS_PUBLIC_API(bool)
@@ -5053,11 +5111,10 @@ extern JS_PUBLIC_API(void *)
 JS_EncodeInterpretedFunction(JSContext *cx, JS::HandleObject funobj, uint32_t *lengthp);
 
 extern JS_PUBLIC_API(JSScript *)
-JS_DecodeScript(JSContext *cx, const void *data, uint32_t length, JSPrincipals *originPrincipals);
+JS_DecodeScript(JSContext *cx, const void *data, uint32_t length);
 
 extern JS_PUBLIC_API(JSObject *)
-JS_DecodeInterpretedFunction(JSContext *cx, const void *data, uint32_t length,
-                             JSPrincipals *originPrincipals);
+JS_DecodeInterpretedFunction(JSContext *cx, const void *data, uint32_t length);
 
 namespace JS {
 
@@ -5172,10 +5229,10 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(ForOfIterator) {
     };
 
     /*
-     * Initialize the iterator.  If AllowNonIterable is passed then if iterable
-     * does not have a callable @@iterator init() will just return true instead
-     * of throwing.  Callers should then check valueIsIterable() before
-     * continuing with the iteration.
+     * Initialize the iterator.  If AllowNonIterable is passed then if getting
+     * the @@iterator property from iterable returns undefined init() will just
+     * return true instead of throwing.  Callers must then check
+     * valueIsIterable() before continuing with the iteration.
      */
     bool init(JS::HandleValue iterable,
               NonIterableBehavior nonIterableBehavior = ThrowOnNonIterable);

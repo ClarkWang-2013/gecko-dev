@@ -11,7 +11,6 @@
 #include "AccessCheck.h"
 #include "jsfriendapi.h"
 #include "jsproxy.h"
-#include "js/OldDebugAPI.h"
 #include "js/StructuredClone.h"
 #include "nsContentUtils.h"
 #include "nsGlobalWindow.h"
@@ -30,8 +29,10 @@
 #include "XPCWrapper.h"
 #include "XrayWrapper.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/CSSBinding.h"
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
+#include "mozilla/dom/FileBinding.h"
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/TextDecoderBinding.h"
@@ -601,9 +602,9 @@ const xpc::SandboxCallableProxyHandler xpc::sandboxCallableProxyHandler;
  * "this" we will instead call it with newThisObj as the this.
  */
 static JSObject*
-WrapCallable(JSContext *cx, JSObject *callable, JSObject *sandboxProtoProxy)
+WrapCallable(JSContext *cx, HandleObject callable, HandleObject sandboxProtoProxy)
 {
-    MOZ_ASSERT(JS_ObjectIsCallable(cx, callable));
+    MOZ_ASSERT(JS::IsCallable(callable));
     // Our proxy is wrapping the callable.  So we need to use the
     // callable as the private.  We use the given sandboxProtoProxy as
     // the parent, and our call() hook depends on that.
@@ -618,38 +619,25 @@ WrapCallable(JSContext *cx, JSObject *callable, JSObject *sandboxProtoProxy)
 }
 
 template<typename Op>
-bool BindPropertyOp(JSContext *cx, Op &op, JSPropertyDescriptor *desc, HandleId id,
-                    unsigned attrFlag, HandleObject sandboxProtoProxy)
+bool WrapAccessorFunction(JSContext *cx, Op &op, JSPropertyDescriptor *desc,
+                          unsigned attrFlag, HandleObject sandboxProtoProxy)
 {
     if (!op) {
         return true;
     }
 
-    RootedObject func(cx);
-    if (desc->attrs & attrFlag) {
-        // Already an object
-        func = JS_FUNC_TO_DATA_PTR(JSObject *, op);
-    } else {
-        // We have an actual property op.  For getters, we use 0
-        // args, for setters we use 1 arg.
-        uint32_t args = (attrFlag == JSPROP_GETTER) ? 0 : 1;
-        RootedObject obj(cx, desc->obj);
-        func = GeneratePropertyOp(cx, obj, id, args, op);
-        if (!func)
-            return false;
+    if (!(desc->attrs & attrFlag)) {
+        XPCThrower::Throw(NS_ERROR_UNEXPECTED, cx);
+        return false;
     }
+
+    RootedObject func(cx, JS_FUNC_TO_DATA_PTR(JSObject *, op));
     func = WrapCallable(cx, func, sandboxProtoProxy);
     if (!func)
         return false;
     op = JS_DATA_TO_FUNC_PTR(Op, func.get());
-    desc->attrs |= attrFlag;
     return true;
 }
-
-extern bool
-XPC_WN_Helper_GetProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue vp);
-extern bool
-XPC_WN_Helper_SetProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, MutableHandleValue vp);
 
 bool
 xpc::SandboxProxyHandler::getPropertyDescriptor(JSContext *cx,
@@ -667,18 +655,15 @@ xpc::SandboxProxyHandler::getPropertyDescriptor(JSContext *cx,
         return true; // No property, nothing to do
 
     // Now fix up the getter/setter/value as needed to be bound to desc->obj.
-    //
-    // Don't mess with XPC_WN_Helper_GetProperty and XPC_WN_Helper_SetProperty,
-    // because that could confuse our access to expandos.
-    if (desc.getter() != XPC_WN_Helper_GetProperty &&
-        !BindPropertyOp(cx, desc.getter(), desc.address(), id, JSPROP_GETTER, proxy))
+    if (!WrapAccessorFunction(cx, desc.getter(), desc.address(),
+                              JSPROP_GETTER, proxy))
         return false;
-    if (desc.setter() != XPC_WN_Helper_SetProperty &&
-        !BindPropertyOp(cx, desc.setter(), desc.address(), id, JSPROP_SETTER, proxy))
+    if (!WrapAccessorFunction(cx, desc.setter(), desc.address(),
+                              JSPROP_SETTER, proxy))
         return false;
     if (desc.value().isObject()) {
-        JSObject* val = &desc.value().toObject();
-        if (JS_ObjectIsCallable(cx, val)) {
+        RootedObject val (cx, &desc.value().toObject());
+        if (JS::IsCallable(val)) {
             val = WrapCallable(cx, val, proxy);
             if (!val)
                 return false;
@@ -743,10 +728,11 @@ xpc::SandboxProxyHandler::set(JSContext *cx, JS::Handle<JSObject*> proxy,
 }
 
 bool
-xpc::SandboxProxyHandler::keys(JSContext *cx, JS::Handle<JSObject*> proxy,
-                               AutoIdVector &props) const
+xpc::SandboxProxyHandler::getOwnEnumerablePropertyKeys(JSContext *cx,
+                                                       JS::Handle<JSObject*> proxy,
+                                                       AutoIdVector &props) const
 {
-    return BaseProxyHandler::keys(cx, proxy, props);
+    return BaseProxyHandler::getOwnEnumerablePropertyKeys(cx, proxy, props);
 }
 
 bool
@@ -794,6 +780,10 @@ xpc::GlobalProperties::Parse(JSContext *cx, JS::HandleObject obj)
             atob = true;
         } else if (!strcmp(name.ptr(), "btoa")) {
             btoa = true;
+        } else if (!strcmp(name.ptr(), "Blob")) {
+            Blob = true;
+        } else if (!strcmp(name.ptr(), "File")) {
+            File = true;
         } else {
             JS_ReportError(cx, "Unknown property name: %s", name.ptr());
             return false;
@@ -841,6 +831,14 @@ xpc::GlobalProperties::Define(JSContext *cx, JS::HandleObject obj)
 
     if (btoa &&
         !JS_DefineFunction(cx, obj, "btoa", Btoa, 1, 0))
+        return false;
+
+    if (Blob &&
+        !dom::BlobBinding::GetConstructorObject(cx, obj))
+        return false;
+
+    if (File &&
+        !dom::FileBinding::GetConstructorObject(cx, obj))
         return false;
 
     return true;
@@ -1257,7 +1255,8 @@ OptionsBase::ParseString(const char *name, nsCString &prop)
 
     char *tmp = JS_EncodeString(mCx, value.toString());
     NS_ENSURE_TRUE(tmp, false);
-    prop.Adopt(tmp, strlen(tmp));
+    prop.Assign(tmp, strlen(tmp));
+    js_free(tmp);
     return true;
 }
 

@@ -2,22 +2,33 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+body {
+  background: none;
+}
+
 /* Panel styles */
+
 .panel {
   /* hide the extra margin space that the panel resizer now wants to show */
   overflow: hidden;
 }
 
-.spacer {
-  margin-bottom: 1em;
+/* Notifications displayed over tabs */
+
+.panel .messages {
+  margin: 0;
 }
 
-.tab-view,
-.tab-view > li {
+.panel .messages .alert {
   margin: 0;
-  padding: 0;
-  border: 0;
-  vertical-align: baseline;
+}
+
+/* Tabs and tab selection buttons */
+
+.tab-view-container {
+  background-image: url("../img/beta-ribbon.svg#beta-ribbon");
+  background-size: 36px 36px;
+  background-repeat: no-repeat;
 }
 
 .tab-view {
@@ -25,7 +36,7 @@
   flex-direction: row;
   padding: 10px;
   border-bottom: 1px solid #ccc;
-  background: #fafafa;
+  color: #000;
   border-top-right-radius: 2px;
   border-top-left-radius: 2px;
   list-style: none;
@@ -39,21 +50,27 @@
   padding: 0 10px;
   height: 16px;
   cursor: pointer;
-  overflow: hidden;
   background-repeat: no-repeat;
   background-size: 16px 16px;
   background-position: center;
 }
 
-.tab-view > li[data-tab-name="call"] {
+.tab-view > li:last-child {
+  border-right-style: none;
+}
+
+.tab-view > li[data-tab-name="call"],
+.tab-view > li[data-tab-name="rooms"] {
   background-image: url("../img/icons-16x16.svg#precall");
 }
 
-.tab-view > li[data-tab-name="call"]:hover {
+.tab-view > li[data-tab-name="call"]:hover,
+.tab-view > li[data-tab-name="rooms"]:hover {
   background-image: url("../img/icons-16x16.svg#precall-hover");
 }
 
-.tab-view > li[data-tab-name="call"].selected {
+.tab-view > li[data-tab-name="call"].selected,
+.tab-view > li[data-tab-name="rooms"].selected {
   background-image: url("../img/icons-16x16.svg#precall-active");
 }
 
@@ -69,10 +86,6 @@
   background-image: url("../img/icons-16x16.svg#contacts-active");
 }
 
-.tab-view > li:last-child {
-  border-right: 0;
-}
-
 .tab {
   display: none;
 }
@@ -81,73 +94,173 @@
   display: block;
 }
 
-.share {
-  background: #fbfbfb;
-  margin-bottom: 14px;
+/* Content area and input fields */
+
+.content-area {
+  padding: 14px;
 }
 
-.share .description,
-.share .action input,
-.share > .action > .invite > .url-actions {
-  margin: 14px 14px 0 14px;
-}
-
-.share .description {
+.content-area header {
   font-weight: 700;
+  -moz-padding-start: 20px;
 }
 
-.share .action input {
-  border: 1px solid #ccc; /* Overriding background style for a text input (see
-                             below) resets its borders to a weird beveled style;
-                             defining a default 1px border solves the issue. */
-  font-size: 1em;
+.tab-view + .tab .content-area header {
+  /* The header shouldn't be indented if the tabs are present. */
+  -moz-padding-start: 0;
+}
+
+.content-area label {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  font-size: 10px;
+  color: #777;
+}
+
+.content-area input {
+  display: block;
+  width: 100%;
+  outline: none;
+  border-radius: 2px;
+  margin: 5px 0;
+  border: 1px solid #ccc;
+  height: 24px;
   padding: 0 10px;
+}
+
+.content-area input:invalid {
+  box-shadow: none;
+}
+
+.content-area input:not(.pristine):invalid {
+  border-color: #d74345;
+  box-shadow: 0 0 4px #c43c3e;
+}
+
+/* Rooms */
+.room-list {
+  background: #f5f5f5;
+}
+
+.room-list > h1 {
+  font-weight: bold;
+  color: #999;
+  padding: .5rem 1rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.room-list > .room-entry {
+  padding: 1rem 1rem 0 .5rem;
+}
+
+.room-list > .room-entry > h2 {
+  font-size: .85rem;
+  color: #777;
+}
+
+.room-list > .room-entry.room-active > h2 {
+  font-weight: bold;
+  color: #000;
+}
+
+.room-list > .room-entry > h2 > .room-notification {
+  display: inline-block;
+  background: transparent;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: .3rem;
+}
+
+.room-list > .room-entry.room-active > h2 > .room-notification {
+  background-color: #00a0ec;
+}
+
+.room-list > .room-entry:hover {
+  background: #f1f1f1;
+}
+
+.room-list > .room-entry:not(:last-child) {
+  border-bottom: 1px solid #ddd;
+}
+
+.room-list > .room-entry > p {
+  margin: 0;
+  padding: .2em 0 1rem .8rem;
+}
+
+.room-list > .room-entry > p > a {
+  color: #777;
+  opacity: .5;
+  transition: opacity .1s ease-in-out 0s;
+  text-decoration: none;
+}
+
+.room-list > .room-entry > p > a:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* Buttons */
+
+.button-group {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+}
+
+.button-group > .button {
+  flex: 1;
+  margin: 0 7px;
+}
+
+.button-group > .button:first-child {
+  -moz-margin-start: 0;
+}
+
+.button-group > .button:last-child {
+  -moz-margin-end: 0;
+}
+
+.button {
+  padding: 2px 5px;
+  background-color: #fbfbfb;
+  color: #333;
+  border: 1px solid #c1c1c1;
   border-radius: 2px;
-  outline: 0;
   height: 26px;
-  width: calc(100% - 28px);
+  font-size: 12px;
 }
 
-.share .action input.pending {
-  background-image: url(../img/loading-icon.gif);
-  background-repeat: no-repeat;
-  background-position: right;
+.button:hover {
+  background-color: #ebebeb;
 }
 
-.share .action .btn {
-  background-color: #0096DD;
-  border: 1px solid #0095DD;
+.button:hover:active {
+  background-color: #ccc;
+  color: #111;
+}
+
+.button.button-accept {
+  background-color: #5bc0a4;
+  border-color: #5bc0a4;
   color: #fff;
-  width: 50%;
-  height: 26px;
-  text-align: center;
 }
 
-.btn-email,
-.btn-copy {
-  border-radius: 2px;
+.button.button-accept:hover {
+  background-color: #47b396;
+  border-color: #47b396;
+  color: #fff;
 }
 
-.share > .action .btn:hover {
-  background-color: #008ACB;
-  border: 1px solid #008ACB;
+.button.button-accept:hover:active {
+  background-color: #3aa689;
+  border-color: #3aa689;
+  color: #fff;
 }
 
-.share > .action > .invite > .url-actions > .btn:first-child {
-  -moz-margin-end: 1em;
-}
-
-/* Specific cases */
-
-.panel .messages {
-  margin: 0;
-}
-
-.panel .messages .alert {
-  margin: 0;
-}
-
-/* Dropdown menu (shared styles) */
+/* Dropdown menu */
 
 .dropdown {
   position: relative;
@@ -157,7 +270,7 @@
   position: absolute;
   top: -28px;
   left: 0;
-  background: #fdfdfd;
+  background-color: #fdfdfd;
   box-shadow: 0 1px 3px rgba(0,0,0,.3);
   list-style: none;
   padding: 5px;
@@ -182,7 +295,49 @@ body[dir=rtl] .dropdown-menu-item {
 
 .dropdown-menu-item:hover {
   border: 1px solid #ccc;
-  background: #eee;
+  background-color: #eee;
+}
+
+/* Share tab */
+
+.generate-url input {
+  margin: 14px 0;
+  outline: 0;
+  border: 1px solid #ccc; /* Overriding background style for a text input (see
+                             below) resets its borders to a weird beveled style;
+                             defining a default 1px border solves the issue. */
+  border-radius: 2px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 1em;
+}
+
+.generate-url input.pending {
+  background-image: url(../img/loading-icon.gif);
+  background-repeat: no-repeat;
+  background-position: right;
+}
+
+.generate-url .button {
+  background-color: #0096dd;
+  border-color: #0096dd;
+  color: #fff;
+}
+
+.generate-url .button:hover {
+  background-color: #008acb;
+  border-color: #008acb;
+  color: #fff;
+}
+
+.terms-service {
+  color: #888;
+  text-align: center;
+  font-size: .9em;
+}
+
+.terms-service a {
+  color: #00caee;
 }
 
 /* DnD menu */
@@ -197,7 +352,7 @@ body[dir=rtl] .dropdown-menu-item {
 
 .dnd-status:hover {
   border: 1px solid #DDD;
-  background: #F1F1F1;
+  background-color: #f1f1f1;
 }
 
 /* Status badges -- Available/Unavailable */
@@ -211,7 +366,7 @@ body[dir=rtl] .dropdown-menu-item {
 }
 
 .status-available {
-  background: #6cb23e;
+  background-color: #6cb23e;
 }
 
 .status-dnd {
@@ -237,14 +392,27 @@ body[dir=rtl] .dropdown-menu-item {
 
 /* Settings (gear) menu */
 
-.btn-settings {
+.button-settings {
+  display: inline-block;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background-color: #a5a;
+  color: #fff;
+  text-align: center;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9em;
+  cursor: pointer;
   background: transparent url(../img/svg/glyph-settings-16x16.svg) no-repeat center center;
   background-size: contain;
   width: 12px;
   height: 12px;
 }
 
-.footer .btn-settings {
+.footer .button-settings {
   margin-top: 17px; /* used to align the gear icon with the availability dropdown menu inner text */
   opacity: .6;      /* used to "grey" the icon a little */
 }
@@ -283,22 +451,6 @@ body[dir=rtl] .dropdown-menu-item {
   background: transparent url(../img/svg/glyph-signout-16x16.svg) no-repeat center center;
 }
 
-/* Terms of Service */
-
-.terms-service {
-  padding: 3px 10px 10px;
-  background: #FFF;
-  text-align: center;
-  opacity: .5;
-  transition: opacity .3s;
-  font-family: 'Lucida Grande', sans-serif;
-  font-size: .9em;
-}
-
-.terms-service a {
-  color: #0095dd;
-}
-
 /* Footer */
 
 .footer {
@@ -310,7 +462,7 @@ body[dir=rtl] .dropdown-menu-item {
   align-items: flex-start;
   font-size: 1em;
   border-top: 1px solid #D1D1D1;
-  background: #EAEAEA;
-  color: #7F7F7F;
+  background-color: #eaeaea;
+  color: #7f7f7f;
   padding: 14px;
 }

@@ -47,11 +47,11 @@ class TaggedProto
         return uintptr_t(proto) > uintptr_t(TaggedProto::LazyProto);
     }
     JSObject *toObject() const {
-        JS_ASSERT(isObject());
+        MOZ_ASSERT(isObject());
         return proto;
     }
     JSObject *toObjectOrNull() const {
-        JS_ASSERT(!proto || isObject());
+        MOZ_ASSERT(!proto || isObject());
         return proto;
     }
     JSObject *raw() const { return proto; }
@@ -233,12 +233,12 @@ class Type
     }
 
     bool isPrimitive(JSValueType type) const {
-        JS_ASSERT(type < JSVAL_TYPE_OBJECT);
+        MOZ_ASSERT(type < JSVAL_TYPE_OBJECT);
         return (uintptr_t) type == data;
     }
 
     JSValueType primitive() const {
-        JS_ASSERT(isPrimitive());
+        MOZ_ASSERT(isPrimitive());
         return (JSValueType) data;
     }
 
@@ -261,7 +261,7 @@ class Type
     /* Accessors for types that are either JSObject or TypeObject. */
 
     bool isObject() const {
-        JS_ASSERT(!isAnyObject() && !isUnknown());
+        MOZ_ASSERT(!isAnyObject() && !isUnknown());
         return data > JSVAL_TYPE_UNKNOWN;
     }
 
@@ -304,7 +304,7 @@ class Type
     static inline Type UnknownType()   { return Type(JSVAL_TYPE_UNKNOWN); }
 
     static inline Type PrimitiveType(JSValueType type) {
-        JS_ASSERT(type < JSVAL_TYPE_UNKNOWN);
+        MOZ_ASSERT(type < JSVAL_TYPE_UNKNOWN);
         return Type(type);
     }
 
@@ -503,7 +503,12 @@ enum MOZ_ENUM_TYPE(uint32_t) {
     /* Mask for objects created with unknown properties. */
     OBJECT_FLAG_UNKNOWN_MASK =
         OBJECT_FLAG_DYNAMIC_MASK
-      | OBJECT_FLAG_SETS_MARKED_UNKNOWN
+      | OBJECT_FLAG_SETS_MARKED_UNKNOWN,
+
+    // Mask/shift for this type object's generation. If out of sync with the
+    // TypeZone's generation, this TypeObject hasn't been swept yet.
+    OBJECT_FLAG_GENERATION_MASK       = 0x02000000,
+    OBJECT_FLAG_GENERATION_SHIFT      = 25,
 };
 typedef uint32_t TypeObjectFlags;
 
@@ -552,7 +557,7 @@ class TypeSet
     bool empty() const { return !baseFlags() && !baseObjectCount(); }
 
     bool hasAnyFlag(TypeFlags flags) const {
-        JS_ASSERT((flags & TYPE_FLAG_BASE_MASK) == flags);
+        MOZ_ASSERT((flags & TYPE_FLAG_BASE_MASK) == flags);
         return !!(baseFlags() & flags);
     }
 
@@ -567,7 +572,7 @@ class TypeSet
     }
     bool definiteProperty() const { return flags & TYPE_FLAG_DEFINITE_MASK; }
     unsigned definiteSlot() const {
-        JS_ASSERT(definiteProperty());
+        MOZ_ASSERT(definiteProperty());
         return (flags >> TYPE_FLAG_DEFINITE_SHIFT) - 1;
     }
 
@@ -603,9 +608,9 @@ class TypeSet
         return (slot + 1) <= (unsigned(TYPE_FLAG_DEFINITE_MASK) >> TYPE_FLAG_DEFINITE_SHIFT);
     }
     void setDefinite(unsigned slot) {
-        JS_ASSERT(canSetDefinite(slot));
+        MOZ_ASSERT(canSetDefinite(slot));
         flags |= ((slot + 1) << TYPE_FLAG_DEFINITE_SHIFT);
-        JS_ASSERT(definiteSlot() == slot);
+        MOZ_ASSERT(definiteSlot() == slot);
     }
 
     /* Whether any values in this set might have the specified type. */
@@ -648,6 +653,29 @@ class TypeSet
     void clearObjects();
 };
 
+// If there is an OOM while sweeping types, the type information is deoptimized
+// so that it stays correct (i.e. overapproximates the possible types in the
+// zone), but constraints might not have been triggered on the deoptimization
+// or even copied over completely. In this case, destroy all JIT code and new
+// script information in the zone, the only things whose correctness depends on
+// the type constraints.
+class AutoClearTypeInferenceStateOnOOM
+{
+    Zone *zone;
+    bool oom;
+
+  public:
+    AutoClearTypeInferenceStateOnOOM(Zone *zone)
+      : zone(zone), oom(false)
+    {}
+
+    ~AutoClearTypeInferenceStateOnOOM();
+
+    void setOOM() {
+        oom = true;
+    }
+};
+
 /* Superclass common to stack and heap type sets. */
 class ConstraintTypeSet : public TypeSet
 {
@@ -666,7 +694,7 @@ class ConstraintTypeSet : public TypeSet
     /* Add a new constraint to this set. */
     bool addConstraint(JSContext *cx, TypeConstraint *constraint, bool callExisting = true);
 
-    inline void sweep(JS::Zone *zone, bool *oom);
+    inline void sweep(JS::Zone *zone, AutoClearTypeInferenceStateOnOOM &oom);
 };
 
 class StackTypeSet : public ConstraintTypeSet
@@ -904,13 +932,13 @@ class TypeNewScript
     // analyses are performed and this array is cleared. The pointers in this
     // array are weak.
     static const uint32_t PRELIMINARY_OBJECT_COUNT = 20;
-    JSObject **preliminaryObjects;
+    NativeObject **preliminaryObjects;
 
     // After the new script properties analyses have been performed, a template
     // object to use for newly constructed objects. The shape of this object
     // reflects all definite properties the object will have, and the
     // allocation kind to use.
-    HeapPtrObject templateObject_;
+    HeapPtrNativeObject templateObject_;
 
     // Order in which definite properties become initialized. We need this in
     // case the definite properties are invalidated (such as by adding a setter
@@ -945,17 +973,17 @@ class TypeNewScript
 
     bool analyzed() const {
         if (preliminaryObjects) {
-            JS_ASSERT(!templateObject());
-            JS_ASSERT(!initializerList);
-            JS_ASSERT(!initializedShape());
-            JS_ASSERT(!initializedType());
+            MOZ_ASSERT(!templateObject());
+            MOZ_ASSERT(!initializerList);
+            MOZ_ASSERT(!initializedShape());
+            MOZ_ASSERT(!initializedType());
             return false;
         }
-        JS_ASSERT(templateObject());
+        MOZ_ASSERT(templateObject());
         return true;
     }
 
-    JSObject *templateObject() const {
+    NativeObject *templateObject() const {
         return templateObject_;
     }
 
@@ -968,10 +996,14 @@ class TypeNewScript
     }
 
     void trace(JSTracer *trc);
-    void sweep(FreeOp *fop);
+    void sweep();
 
-    void registerNewObject(JSObject *res);
-    void unregisterNewObject(JSObject *res);
+#ifdef JSGC_COMPACTING
+    void fixupAfterMovingGC();
+#endif
+
+    void registerNewObject(NativeObject *res);
+    void unregisterNewObject(NativeObject *res);
     bool maybeAnalyze(JSContext *cx, TypeObject *type, bool *regenerate, bool force = false);
 
     void rollbackPartiallyInitializedObjects(JSContext *cx, TypeObject *type);
@@ -1023,7 +1055,7 @@ struct TypeObject : public gc::TenuredCell
     }
 
     void setClasp(const Class *clasp) {
-        JS_ASSERT(singleton());
+        MOZ_ASSERT(singleton());
         clasp_ = clasp;
     }
 
@@ -1068,19 +1100,23 @@ struct TypeObject : public gc::TenuredCell
 
   public:
 
-    TypeObjectFlags flags() const {
+    TypeObjectFlags flags() {
+        maybeSweep(nullptr);
         return flags_;
     }
 
     void addFlags(TypeObjectFlags flags) {
+        MOZ_ASSERT(!needsSweep());
         flags_ |= flags;
     }
 
     void clearFlags(TypeObjectFlags flags) {
+        MOZ_ASSERT(!needsSweep());
         flags_ &= ~flags;
     }
 
     TypeNewScript *newScript() {
+        maybeSweep(nullptr);
         return newScript_;
     }
 
@@ -1133,17 +1169,17 @@ struct TypeObject : public gc::TenuredCell
     inline TypeObject(const Class *clasp, TaggedProto proto, TypeObjectFlags initialFlags);
 
     bool hasAnyFlags(TypeObjectFlags flags) {
-        JS_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
+        MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
         return !!(this->flags() & flags);
     }
     bool hasAllFlags(TypeObjectFlags flags) {
-        JS_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
+        MOZ_ASSERT((flags & OBJECT_FLAG_DYNAMIC_MASK) == flags);
         return (this->flags() & flags) == flags;
     }
 
     bool unknownProperties() {
-        JS_ASSERT_IF(flags() & OBJECT_FLAG_UNKNOWN_PROPERTIES,
-                     hasAllFlags(OBJECT_FLAG_DYNAMIC_MASK));
+        MOZ_ASSERT_IF(flags() & OBJECT_FLAG_UNKNOWN_PROPERTIES,
+                      hasAllFlags(OBJECT_FLAG_DYNAMIC_MASK));
         return !!(flags() & OBJECT_FLAG_UNKNOWN_PROPERTIES);
     }
 
@@ -1151,7 +1187,7 @@ struct TypeObject : public gc::TenuredCell
         return hasAnyFlags(OBJECT_FLAG_PRE_TENURE) && !unknownProperties();
     }
 
-    bool hasTenuredProto() const {
+    bool hasTenuredProto() {
         return !(flags() & OBJECT_FLAG_NURSERY_PROTO);
     }
 
@@ -1172,7 +1208,7 @@ struct TypeObject : public gc::TenuredCell
     }
 
     void setShouldPreTenure(ExclusiveContext *cx) {
-        JS_ASSERT(canPreTenure());
+        MOZ_ASSERT(canPreTenure());
         setFlags(cx, OBJECT_FLAG_PRE_TENURE);
     }
 
@@ -1207,16 +1243,31 @@ struct TypeObject : public gc::TenuredCell
     void print();
 
     inline void clearProperties();
-    inline void sweep(FreeOp *fop, bool *oom);
+    void maybeSweep(AutoClearTypeInferenceStateOnOOM *oom);
+
+  private:
+#ifdef DEBUG
+    bool needsSweep();
+#endif
+
+    uint32_t generation() {
+        return (flags_ & OBJECT_FLAG_GENERATION_MASK) >> OBJECT_FLAG_GENERATION_SHIFT;
+    }
+
+  public:
+    void setGeneration(uint32_t generation) {
+        MOZ_ASSERT(generation <= (OBJECT_FLAG_GENERATION_MASK >> OBJECT_FLAG_GENERATION_SHIFT));
+        flags_ &= ~OBJECT_FLAG_GENERATION_MASK;
+        flags_ |= generation << OBJECT_FLAG_GENERATION_SHIFT;
+    }
+
+#ifdef JSGC_COMPACTING
+    void fixupAfterMovingGC();
+#endif
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
-    /*
-     * Type objects don't have explicit finalizers. Memory owned by a type
-     * object pending deletion is released when weak references are sweeped
-     * from all the compartment's type objects.
-     */
-    void finalize(FreeOp *fop) {}
+    inline void finalize(FreeOp *fop);
 
     static inline ThingRootKind rootKind() { return THING_ROOT_TYPE_OBJECT; }
 
@@ -1228,8 +1279,12 @@ struct TypeObject : public gc::TenuredCell
         return offsetof(TypeObject, proto_);
     }
 
+    static inline uint32_t offsetOfNewScript() {
+        return offsetof(TypeObject, newScript_);
+    }
+
   private:
-    inline uint32_t basePropertyCount() const;
+    inline uint32_t basePropertyCount();
     inline void setBasePropertyCount(uint32_t count);
 
     static void staticAsserts() {
@@ -1311,11 +1366,11 @@ class TypeScript
     StackTypeSet typeArray_[1];
 
   public:
-    /* Array of type type sets for variables and JOF_TYPESET ops. */
+    /* Array of type sets for variables and JOF_TYPESET ops. */
     StackTypeSet *typeArray() const {
         // Ensure typeArray_ is the last data member of TypeScript.
         JS_STATIC_ASSERT(sizeof(TypeScript) ==
-            sizeof(typeArray_) + offsetof(TypeScript, typeArray_));
+                         sizeof(typeArray_) + offsetof(TypeScript, typeArray_));
         return const_cast<StackTypeSet *>(typeArray_);
     }
 
@@ -1375,7 +1430,6 @@ class TypeScript
 
     static void Purge(JSContext *cx, HandleScript script);
 
-    static void Sweep(FreeOp *fop, JSScript *script, bool *oom);
     void destroy();
 
     size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -1390,10 +1444,10 @@ class TypeScript
 void
 FillBytecodeTypeMap(JSScript *script, uint32_t *bytecodeMap);
 
-JSObject *
+ArrayObject *
 GetOrFixupCopyOnWriteObject(JSContext *cx, HandleScript script, jsbytecode *pc);
 
-JSObject *
+ArrayObject *
 GetCopyOnWriteObject(JSScript *script, jsbytecode *pc);
 
 class RecompileInfo;
@@ -1435,11 +1489,11 @@ struct TypeObjectKey
     static TypeObjectKey *getKey(TypeObjectKey *obj) { return obj; }
 
     static TypeObjectKey *get(JSObject *obj) {
-        JS_ASSERT(obj);
+        MOZ_ASSERT(obj);
         return (TypeObjectKey *) (uintptr_t(obj) | 1);
     }
     static TypeObjectKey *get(TypeObject *obj) {
-        JS_ASSERT(obj);
+        MOZ_ASSERT(obj);
         return (TypeObjectKey *) obj;
     }
 
@@ -1571,37 +1625,41 @@ class CompilerOutput
             MOZ_CRASH();
         sweepIndex_ = index;
     }
-    void invalidateSweepIndex() {
-        sweepIndex_ = INVALID_SWEEP_INDEX;
-    }
     uint32_t sweepIndex() {
-        JS_ASSERT(sweepIndex_ != INVALID_SWEEP_INDEX);
+        MOZ_ASSERT(sweepIndex_ != INVALID_SWEEP_INDEX);
         return sweepIndex_;
     }
 };
 
 class RecompileInfo
 {
-    uint32_t outputIndex;
+    // Index in the TypeZone's compilerOutputs or sweepCompilerOutputs arrays,
+    // depending on the generation value.
+    uint32_t outputIndex : 31;
+
+    // If out of sync with the TypeZone's generation, this index is for the
+    // zone's sweepCompilerOutputs rather than compilerOutputs.
+    uint32_t generation : 1;
 
   public:
-    explicit RecompileInfo(uint32_t outputIndex = uint32_t(-1))
-      : outputIndex(outputIndex)
+    RecompileInfo(uint32_t outputIndex, uint32_t generation)
+      : outputIndex(outputIndex), generation(generation)
     {}
 
-    bool operator == (const RecompileInfo &o) const {
-        return outputIndex == o.outputIndex;
-    }
+    RecompileInfo()
+      : outputIndex(JS_BITMASK(31)), generation(0)
+    {}
+
     CompilerOutput *compilerOutput(TypeZone &types) const;
     CompilerOutput *compilerOutput(JSContext *cx) const;
     bool shouldSweep(TypeZone &types);
 };
 
+typedef Vector<RecompileInfo, 0, SystemAllocPolicy> RecompileInfoVector;
+
 /* Type information for a compartment. */
 struct TypeCompartment
 {
-    /* Constraint solving worklist structures. */
-
     /* Number of scripts in this compartment. */
     unsigned scriptCount;
 
@@ -1609,7 +1667,6 @@ struct TypeCompartment
     AllocationSiteTable *allocationSiteTable;
 
     /* Tables for determining types of singleton/JSON objects. */
-
     ArrayTypeTable *arrayTypeTable;
     ObjectTypeTable *objectTypeTable;
 
@@ -1617,9 +1674,9 @@ struct TypeCompartment
     void setTypeToHomogenousArray(ExclusiveContext *cx, JSObject *obj, Type type);
 
   public:
-    void fixArrayType(ExclusiveContext *cx, JSObject *obj);
-    void fixObjectType(ExclusiveContext *cx, JSObject *obj);
-    void fixRestArgumentsType(ExclusiveContext *cx, JSObject *obj);
+    void fixArrayType(ExclusiveContext *cx, ArrayObject *obj);
+    void fixObjectType(ExclusiveContext *cx, NativeObject *obj);
+    void fixRestArgumentsType(ExclusiveContext *cx, ArrayObject *obj);
 
     JSObject *newTypedObject(JSContext *cx, IdValuePair *properties, size_t nproperties);
 
@@ -1656,39 +1713,58 @@ struct TypeCompartment
                                 size_t *objectTypeTables);
 };
 
-void FixRestArgumentsType(ExclusiveContext *cxArg, JSObject *obj);
+void FixRestArgumentsType(ExclusiveContext *cxArg, ArrayObject *obj);
+
+struct AutoEnterAnalysis;
 
 struct TypeZone
 {
-    JS::Zone                     *zone_;
+    JS::Zone *zone_;
 
     /* Pool for type information in this zone. */
     static const size_t TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 8 * 1024;
-    js::LifoAlloc                typeLifoAlloc;
+    LifoAlloc typeLifoAlloc;
+
+    // Current generation for sweeping.
+    uint32_t generation : 1;
 
     /*
      * All Ion compilations that have occured in this zone, for indexing via
      * RecompileInfo. This includes both valid and invalid compilations, though
      * invalidated compilations are swept on GC.
      */
-    Vector<CompilerOutput> *compilerOutputs;
+    typedef Vector<CompilerOutput, 4, SystemAllocPolicy> CompilerOutputVector;
+    CompilerOutputVector *compilerOutputs;
 
-    /* Pending recompilations to perform before execution of JIT code can resume. */
-    Vector<RecompileInfo> *pendingRecompiles;
+    // During incremental sweeping, allocator holding the old type information
+    // for the zone.
+    LifoAlloc sweepTypeLifoAlloc;
+
+    // During incremental sweeping, the old compiler outputs for use by
+    // recompile indexes with a stale generation.
+    CompilerOutputVector *sweepCompilerOutputs;
+
+    // During incremental sweeping, whether to try to destroy all type
+    // information attached to scripts.
+    bool sweepReleaseTypes;
+
+    // The topmost AutoEnterAnalysis on the stack, if there is one.
+    AutoEnterAnalysis *activeAnalysis;
 
     explicit TypeZone(JS::Zone *zone);
     ~TypeZone();
 
     JS::Zone *zone() const { return zone_; }
 
-    void sweep(FreeOp *fop, bool releaseTypes, bool *oom);
+    void beginSweep(FreeOp *fop, bool releaseTypes, AutoClearTypeInferenceStateOnOOM &oom);
+    void endSweep(JSRuntime *rt);
     void clearAllNewScriptsOnOOM();
 
     /* Mark a script as needing recompilation once inference has finished. */
     void addPendingRecompile(JSContext *cx, const RecompileInfo &info);
     void addPendingRecompile(JSContext *cx, JSScript *script);
 
-    void processPendingRecompiles(FreeOp *fop);
+    void processPendingRecompiles(FreeOp *fop, RecompileInfoVector &recompiles);
 };
 
 enum SpewChannel {

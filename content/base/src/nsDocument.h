@@ -30,8 +30,6 @@
 #include "nsBindingManager.h"
 #include "nsInterfaceHashtable.h"
 #include "nsJSThingHashtable.h"
-#include "nsIBoxObject.h"
-#include "nsPIBoxObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIURI.h"
 #include "nsScriptLoader.h"
@@ -95,10 +93,12 @@ class nsHtml5TreeOpExecutor;
 class nsDocumentOnStack;
 class nsPointerLockPermissionRequest;
 class nsISecurityConsoleMessage;
+class nsPIBoxObject;
 
 namespace mozilla {
 class EventChainPreVisitor;
 namespace dom {
+class BoxObject;
 class UndoManager;
 struct LifecycleCallbacks;
 class CallbackFunction;
@@ -325,6 +325,8 @@ private:
 // being created flag.
 struct CustomElementData
 {
+  NS_INLINE_DECL_REFCOUNTING(CustomElementData)
+
   explicit CustomElementData(nsIAtom* aType);
   // Objects in this array are transient and empty after each microtask
   // checkpoint.
@@ -346,6 +348,9 @@ struct CustomElementData
 
   // Empties the callback queue.
   void RunCallbackQueue();
+
+private:
+  virtual ~CustomElementData() {}
 };
 
 // The required information for a custom element as defined in:
@@ -1002,8 +1007,10 @@ public:
   virtual void ForgetLink(mozilla::dom::Link* aLink);
 
   void ClearBoxObjectFor(nsIContent* aContent);
-  already_AddRefed<nsIBoxObject> GetBoxObjectFor(mozilla::dom::Element* aElement,
-                                                 mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
+
+  virtual already_AddRefed<mozilla::dom::BoxObject>
+  GetBoxObjectFor(mozilla::dom::Element* aElement,
+                  mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
 
   virtual Element*
     GetAnonymousElementByAttribute(nsIContent* aElement,
@@ -1290,10 +1297,10 @@ public:
                                                     mozilla::ErrorResult& rv) MOZ_OVERRIDE;
   virtual void UseRegistryFromDocument(nsIDocument* aDocument) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<nsIDocument> MasterDocument()
+  virtual nsIDocument* MasterDocument()
   {
-    return mMasterDocument ? (nsCOMPtr<nsIDocument>(mMasterDocument)).forget()
-                           : (nsCOMPtr<nsIDocument>(this)).forget();
+    return mMasterDocument ? mMasterDocument.get()
+                           : this;
   }
 
   virtual void SetMasterDocument(nsIDocument* master)
@@ -1306,11 +1313,11 @@ public:
     return !mMasterDocument;
   }
 
-  virtual already_AddRefed<mozilla::dom::ImportManager> ImportManager()
+  virtual mozilla::dom::ImportManager* ImportManager()
   {
     if (mImportManager) {
       MOZ_ASSERT(!mMasterDocument, "Only the master document has ImportManager set");
-      return nsRefPtr<mozilla::dom::ImportManager>(mImportManager).forget();
+      return mImportManager.get();
     }
 
     if (mMasterDocument) {
@@ -1322,7 +1329,28 @@ public:
     // master document and this is the first import in it.
     // Let's create a new manager.
     mImportManager = new mozilla::dom::ImportManager();
-    return nsRefPtr<mozilla::dom::ImportManager>(mImportManager).forget();
+    return mImportManager.get();
+  }
+
+  virtual bool HasSubImportLink(nsINode* aLink)
+  {
+    return mSubImportLinks.Contains(aLink);
+  }
+
+  virtual uint32_t IndexOfSubImportLink(nsINode* aLink)
+  {
+    return mSubImportLinks.IndexOf(aLink);
+  }
+
+  virtual void AddSubImportLink(nsINode* aLink)
+  {
+    mSubImportLinks.AppendElement(aLink);
+  }
+
+  virtual nsINode* GetSubImportLink(uint32_t aIdx)
+  {
+    return aIdx < mSubImportLinks.Length() ? mSubImportLinks[aIdx].get()
+                                           : nullptr;
   }
 
   virtual void UnblockDOMContentLoaded() MOZ_OVERRIDE;
@@ -1497,7 +1525,7 @@ private:
   // CustomElementData in this array, separated by nullptr that
   // represent the boundaries of the items in the stack. The first
   // queue in the stack is the base element queue.
-  static mozilla::Maybe<nsTArray<mozilla::dom::CustomElementData*>> sProcessingStack;
+  static mozilla::Maybe<nsTArray<nsRefPtr<mozilla::dom::CustomElementData>>> sProcessingStack;
 
   // Flag to prevent re-entrance into base element queue as described in the
   // custom elements speicification.
@@ -1641,6 +1669,7 @@ private:
   void DoUnblockOnload();
 
   nsresult CheckFrameOptions();
+  bool IsLoopDocument(nsIChannel* aChannel);
   nsresult InitCSP(nsIChannel* aChannel);
 
   void FlushCSPWebConsoleErrorQueue()
@@ -1754,6 +1783,7 @@ private:
 
   nsCOMPtr<nsIDocument> mMasterDocument;
   nsRefPtr<mozilla::dom::ImportManager> mImportManager;
+  nsTArray<nsCOMPtr<nsINode> > mSubImportLinks;
 
   // Set to true when the document is possibly controlled by the ServiceWorker.
   // Used to prevent multiple requests to ServiceWorkerManager.

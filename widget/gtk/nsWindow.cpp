@@ -3040,19 +3040,21 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
     }
     else {
         // If the character code is in the BMP, send the key press event.
-        // Otherwise, send a text event with the equivalent UTF-16 string.
+        // Otherwise, send a compositionchange event with the equivalent UTF-16
+        // string.
         if (IS_IN_BMP(event.charCode)) {
             DispatchEvent(&event, status);
         }
         else {
-            WidgetTextEvent textEvent(true, NS_TEXT_TEXT, this);
+            WidgetCompositionEvent compositionChangeEvent(
+                                     true, NS_COMPOSITION_CHANGE, this);
             char16_t textString[3];
             textString[0] = H_SURROGATE(event.charCode);
             textString[1] = L_SURROGATE(event.charCode);
             textString[2] = 0;
-            textEvent.theText = textString;
-            textEvent.time = event.time;
-            DispatchEvent(&textEvent, status);
+            compositionChangeEvent.mData = textString;
+            compositionChangeEvent.time = event.time;
+            DispatchEvent(&compositionChangeEvent, status);
         }
     }
 
@@ -5939,26 +5941,12 @@ NS_IMETHODIMP
 nsWindow::NotifyIME(const IMENotification& aIMENotification)
 {
     if (MOZ_UNLIKELY(!mIMModule)) {
-        switch (aIMENotification.mMessage) {
-            case NOTIFY_IME_OF_CURSOR_POS_CHANGED:
-            case REQUEST_TO_COMMIT_COMPOSITION:
-            case REQUEST_TO_CANCEL_COMPOSITION:
-            case NOTIFY_IME_OF_FOCUS:
-            case NOTIFY_IME_OF_BLUR:
-              return NS_ERROR_NOT_AVAILABLE;
-            default:
-              break;
-        }
+        return NS_ERROR_NOT_AVAILABLE;
     }
     switch (aIMENotification.mMessage) {
-        // TODO: We should replace NOTIFY_IME_OF_CURSOR_POS_CHANGED with
-        //       NOTIFY_IME_OF_SELECTION_CHANGE.  The required behavior is
-        //       really different from committing composition.
-        case NOTIFY_IME_OF_CURSOR_POS_CHANGED:
         case REQUEST_TO_COMMIT_COMPOSITION:
-            return mIMModule->CommitIMEComposition(this);
         case REQUEST_TO_CANCEL_COMPOSITION:
-            return mIMModule->CancelIMEComposition(this);
+            return mIMModule->EndIMEComposition(this);
         case NOTIFY_IME_OF_FOCUS:
             mIMModule->OnFocusChangeInGecko(true);
             return NS_OK;
@@ -5967,6 +5955,9 @@ nsWindow::NotifyIME(const IMENotification& aIMENotification)
             return NS_OK;
         case NOTIFY_IME_OF_COMPOSITION_UPDATE:
             mIMModule->OnUpdateComposition();
+            return NS_OK;
+        case NOTIFY_IME_OF_SELECTION_CHANGE:
+            mIMModule->OnSelectionChange(this);
             return NS_OK;
         default:
             return NS_ERROR_NOT_IMPLEMENTED;
@@ -5999,6 +5990,18 @@ nsWindow::GetInputContext()
       context.mNativeIMEContext = mIMModule;
   }
   return context;
+}
+
+nsIMEUpdatePreference
+nsWindow::GetIMEUpdatePreference()
+{
+    nsIMEUpdatePreference updatePreference(
+        nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE);
+    // We shouldn't notify IME of selection change caused by changes of
+    // composition string.  Therefore, we don't need to be notified selection
+    // changes which are caused by compositionchange events handled.
+    updatePreference.DontNotifyChangesCausedByComposition();
+    return updatePreference;
 }
 
 NS_IMETHODIMP_(bool)

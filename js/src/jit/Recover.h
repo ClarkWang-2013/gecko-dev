@@ -51,9 +51,11 @@ namespace jit {
     _(RegExpTest)                               \
     _(RegExpReplace)                            \
     _(TypeOf)                                   \
+    _(ToFloat32)                                \
     _(NewObject)                                \
     _(NewArray)                                 \
     _(NewDerivedTypedObject)                    \
+    _(CreateThisWithTemplate)                   \
     _(ObjectState)                              \
     _(ArrayState)
 
@@ -514,6 +516,18 @@ class RTypeOf MOZ_FINAL : public RInstruction
     bool recover(JSContext *cx, SnapshotIterator &iter) const;
 };
 
+class RToFloat32 MOZ_FINAL : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_(ToFloat32)
+
+    virtual uint32_t numOperands() const {
+        return 1;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
 class RNewObject MOZ_FINAL : public RInstruction
 {
   private:
@@ -552,6 +566,21 @@ class RNewDerivedTypedObject MOZ_FINAL : public RInstruction
 
     virtual uint32_t numOperands() const {
         return 3;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
+class RCreateThisWithTemplate MOZ_FINAL : public RInstruction
+{
+  private:
+    bool tenuredHeap_;
+
+  public:
+    RINSTRUCTION_HEADER_(CreateThisWithTemplate)
+
+    virtual uint32_t numOperands() const {
+        return 1;
     }
 
     bool recover(JSContext *cx, SnapshotIterator &iter) const;

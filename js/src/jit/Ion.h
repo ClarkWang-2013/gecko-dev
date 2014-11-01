@@ -93,7 +93,7 @@ MethodStatus CanEnterInParallel(JSContext *cx, HandleScript script);
 
 MethodStatus
 Recompile(JSContext *cx, HandleScript script, BaselineFrame *osrFrame, jsbytecode *osrPc,
-          bool constructing);
+          bool constructing, bool force);
 
 enum IonExecStatus
 {
@@ -126,9 +126,9 @@ IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgs &args);
 
 // Walk the stack and invalidate active Ion frames for the invalid scripts.
 void Invalidate(types::TypeZone &types, FreeOp *fop,
-                const Vector<types::RecompileInfo> &invalid, bool resetUses = true,
+                const types::RecompileInfoVector &invalid, bool resetUses = true,
                 bool cancelOffThread = true);
-void Invalidate(JSContext *cx, const Vector<types::RecompileInfo> &invalid, bool resetUses = true,
+void Invalidate(JSContext *cx, const types::RecompileInfoVector &invalid, bool resetUses = true,
                 bool cancelOffThread = true);
 bool Invalidate(JSContext *cx, JSScript *script, ExecutionMode mode, bool resetUses = true,
                 bool cancelOffThread = true);

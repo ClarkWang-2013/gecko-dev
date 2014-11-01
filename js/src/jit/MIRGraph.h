@@ -130,7 +130,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Mark this block (and only this block) as unreachable.
     void setUnreachable() {
-        JS_ASSERT(!unreachable_);
+        MOZ_ASSERT(!unreachable_);
         setUnreachableUnchecked();
     }
     void setUnreachableUnchecked() {
@@ -244,6 +244,10 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     // than two predecessors.
     void removePredecessor(MBasicBlock *pred);
 
+    // A version of removePredecessor which expects that phi operands to
+    // |pred| have already been removed.
+    void removePredecessorWithoutPhiOperands(MBasicBlock *pred, size_t predIndex);
+
     // Resets all the dominator info so that it can be recomputed.
     void clearDominatorInfo();
 
@@ -285,11 +289,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     // Removes an instruction with the intention to discard it.
     void discard(MInstruction *ins);
     void discardLastIns();
-    MInstructionIterator discardAt(MInstructionIterator &iter);
-    MInstructionReverseIterator discardAt(MInstructionReverseIterator &iter);
-    MDefinitionIterator discardDefAt(MDefinitionIterator &iter);
+    void discardDef(MDefinition *def);
     void discardAllInstructions();
-    void discardAllInstructionsStartingAt(MInstructionIterator &iter);
+    void discardAllInstructionsStartingAt(MInstructionIterator iter);
     void discardAllPhiOperands();
     void discardAllPhis();
     void discardAllResumePoints(bool discardEntry = true);
@@ -299,7 +301,14 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void discardIgnoreOperands(MInstruction *ins);
 
     // Discards a phi instruction and updates predecessor successorWithPhis.
-    MPhiIterator discardPhiAt(MPhiIterator &at);
+    void discardPhi(MPhi *phi);
+
+    // Some instruction which are guarding against some MIRType value, or
+    // against a type expectation should be considered as removing a potenatial
+    // branch where the guard does not hold.  We need to register such
+    // instructions in order to do destructive optimizations correctly, such as
+    // Range Analysis.
+    void flagOperandsOfPrunedBranches(MInstruction *ins);
 
     // Mark this block as having been removed from the graph.
     void markAsDead() {
@@ -331,7 +340,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
 
     uint32_t domIndex() const {
-        JS_ASSERT(!isDead());
+        MOZ_ASSERT(!isDead());
         return domIndex_;
     }
     void setDomIndex(uint32_t d) {
@@ -343,7 +352,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
     size_t indexForPredecessor(MBasicBlock *block) const {
         // This should only be called before critical edge splitting.
-        JS_ASSERT(!block->successorWithPhis());
+        MOZ_ASSERT(!block->successorWithPhis());
 
         for (size_t i = 0; i < predecessors_.length(); i++) {
             if (predecessors_[i] == block)
@@ -355,9 +364,11 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return !instructions_.empty() && instructions_.rbegin()->isControlInstruction();
     }
     MControlInstruction *lastIns() const {
-        JS_ASSERT(hasLastIns());
+        MOZ_ASSERT(hasLastIns());
         return instructions_.rbegin()->toControlInstruction();
     }
+    // Find or allocate an optimized out constant.
+    MConstant *optimizedOutConstant(TempAllocator &alloc);
     MPhiIterator phisBegin() const {
         return phis_.begin();
     }
@@ -385,7 +396,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return instructions_.begin();
     }
     MInstructionIterator begin(MInstruction *at) {
-        JS_ASSERT(at->block() == this);
+        MOZ_ASSERT(at->block() == this);
         return instructions_.begin(at);
     }
     MInstructionIterator end() {
@@ -395,7 +406,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return instructions_.rbegin();
     }
     MInstructionReverseIterator rbegin(MInstruction *at) {
-        JS_ASSERT(at->block() == this);
+        MOZ_ASSERT(at->block() == this);
         return instructions_.rbegin(at);
     }
     MInstructionReverseIterator rend() {
@@ -405,20 +416,20 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return kind_ == LOOP_HEADER;
     }
     bool hasUniqueBackedge() const {
-        JS_ASSERT(isLoopHeader());
-        JS_ASSERT(numPredecessors() >= 2);
+        MOZ_ASSERT(isLoopHeader());
+        MOZ_ASSERT(numPredecessors() >= 2);
         return numPredecessors() == 2;
     }
     MBasicBlock *backedge() const {
-        JS_ASSERT(hasUniqueBackedge());
+        MOZ_ASSERT(hasUniqueBackedge());
         return getPredecessor(numPredecessors() - 1);
     }
     MBasicBlock *loopHeaderOfBackedge() const {
-        JS_ASSERT(isLoopBackedge());
+        MOZ_ASSERT(isLoopBackedge());
         return getSuccessor(numSuccessors() - 1);
     }
     MBasicBlock *loopPredecessor() const {
-        JS_ASSERT(isLoopHeader());
+        MOZ_ASSERT(isLoopHeader());
         return getPredecessor(0);
     }
     bool isLoopBackedge() const {
@@ -486,7 +497,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     // Return the number of blocks dominated by this block. All blocks
     // dominate at least themselves, so this will always be non-zero.
     size_t numDominated() const {
-        JS_ASSERT(numDominated_ != 0);
+        MOZ_ASSERT(numDominated_ != 0);
         return numDominated_;
     }
 
@@ -522,6 +533,10 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         MOZ_ASSERT(!outerResumePoint_);
         outerResumePoint_ = outer;
     }
+    void clearOuterResumePoint() {
+        discardResumePoint(outerResumePoint_);
+        outerResumePoint_ = nullptr;
+    }
     MResumePoint *callerResumePoint() {
         return entryResumePoint() ? entryResumePoint()->caller() : nullptr;
     }
@@ -532,7 +547,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return entryResumePoint()->numOperands();
     }
     MDefinition *getEntrySlot(size_t i) const {
-        JS_ASSERT(i < numEntrySlots());
+        MOZ_ASSERT(i < numEntrySlots());
         return entryResumePoint()->getOperand(i);
     }
 
@@ -540,7 +555,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return lir_;
     }
     void assignLir(LBlock *lir) {
-        JS_ASSERT(!lir_);
+        MOZ_ASSERT(!lir_);
         lir_ = lir;
     }
 
@@ -555,9 +570,13 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         successorWithPhis_ = successor;
         positionInPhiSuccessor_ = id;
     }
+    void clearSuccessorWithPhis() {
+        successorWithPhis_ = nullptr;
+    }
     size_t numSuccessors() const;
     MBasicBlock *getSuccessor(size_t index) const;
     size_t getSuccessorIndex(MBasicBlock *) const;
+    size_t getPredecessorIndex(MBasicBlock *) const;
 
     void setLoopDepth(uint32_t loopDepth) {
         loopDepth_ = loopDepth;
@@ -578,7 +597,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     // Track bailouts by storing the current pc in MIR instruction added at this
     // cycle. This is also used for tracking calls when profiling.
     void updateTrackedSite(const BytecodeSite &site) {
-        JS_ASSERT(site.tree() == trackedSite_.tree());
+        MOZ_ASSERT(site.tree() == trackedSite_.tree());
         trackedSite_ = site;
     }
     const BytecodeSite &trackedSite() const {
@@ -733,12 +752,12 @@ class MIRGraph
     void removeBlock(MBasicBlock *block);
     void removeBlockIncludingPhis(MBasicBlock *block);
     void moveBlockToEnd(MBasicBlock *block) {
-        JS_ASSERT(block->id());
+        MOZ_ASSERT(block->id());
         blocks_.remove(block);
         blocks_.pushBack(block);
     }
     void moveBlockBefore(MBasicBlock *at, MBasicBlock *block) {
-        JS_ASSERT(block->id());
+        MOZ_ASSERT(block->id());
         blocks_.remove(block);
         blocks_.insertBefore(at, block);
     }
@@ -765,7 +784,7 @@ class MIRGraph
     }
 
     void setOsrBlock(MBasicBlock *osrBlock) {
-        JS_ASSERT(!osrBlock_);
+        MOZ_ASSERT(!osrBlock_);
         osrBlock_ = osrBlock;
     }
     MBasicBlock *osrBlock() {

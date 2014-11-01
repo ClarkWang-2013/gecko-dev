@@ -272,9 +272,10 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   // Initiatize an AutoJSAPI with aTarget's bound global to make sure any errors
   // are reported to the correct place.
   AutoJSAPI jsapi;
-  if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(boundGlobal))) {
+  if (NS_WARN_IF(!jsapi.Init(boundGlobal))) {
     return NS_OK;
   }
+  jsapi.TakeOwnershipOfErrorReporting();
   JSContext* cx = jsapi.cx();
   JS::Rooted<JSObject*> handler(cx);
 
@@ -310,12 +311,6 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   JS::Rooted<JSObject*> target(cx, &targetV.toObject());
   JS::Rooted<JSObject*> bound(cx, JS_CloneFunctionObject(cx, genericHandler, target));
   NS_ENSURE_TRUE(bound, NS_ERROR_FAILURE);
-
-  // Now, wrap the bound handler into the content compartment and use it.
-  JSAutoCompartment ac2(cx, globalObject);
-  if (!JS_WrapObject(cx, &bound)) {
-    return NS_ERROR_FAILURE;
-  }
 
   nsRefPtr<EventHandlerNonNull> handlerCallback =
     new EventHandlerNonNull(bound, /* aIncumbentGlobal = */ nullptr);
@@ -378,7 +373,7 @@ nsXBLPrototypeHandler::EnsureEventHandler(AutoJSAPI& jsapi, nsIAtom* aName,
          .setVersion(JSVERSION_LATEST);
 
   JS::Rooted<JSObject*> handlerFun(cx);
-  nsresult rv = nsJSUtils::CompileFunction(cx, JS::NullPtr(), options,
+  nsresult rv = nsJSUtils::CompileFunction(jsapi, JS::NullPtr(), options,
                                            nsAtomCString(aName), argCount,
                                            argNames, handlerText,
                                            handlerFun.address());

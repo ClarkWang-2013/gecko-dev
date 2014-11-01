@@ -205,6 +205,19 @@
       is(element.foo, undefined, "DOM element does not expose content properties");
     }
 
+    function recvSymbolTest(message) {
+      let object = message.objects.object;
+      is(object[Symbol.iterator], Symbol.iterator, "Should use Symbol.iterator");
+      is(Symbol.keyFor(object[Symbol.for("cpow-test")]), "cpow-test", "Symbols aren't registered correctly");
+      let symbols = Object.getOwnPropertySymbols(object);
+      is(symbols.length, 2, "Object should have two symbol keys");
+      let test = undefined;
+      for (let x of message.objects.test) {
+        test = x;
+      }
+      is(test, "a", "for .. of iteration should work");
+    }
+
     let systemGlobal = this;
     function recvCompartmentTest(message) {
       let getUnprivilegedObject = message.objects.getUnprivilegedObject;
@@ -223,7 +236,7 @@
       // (the privileged junk scope, but we don't have a good way to test for that
       // specifically).
       is(unprivilegedObject.expando, undefined, "parent->child references should get Xrays");
-      todo_is(unprivilegedObject.wrappedJSObject.expando, 42, "parent->child references should get waivable Xrays - see bug 1065811");
+      is(unprivilegedObject.wrappedJSObject.expando, 42, "parent->child references should get waivable Xrays");
 
       // Send an object to the child to let it verify invariants in the other direction.
       function passMe() { return 42; };
@@ -231,6 +244,21 @@
       let results = testParentObject(passMe);
       ok(results.length > 0, "Need results");
       results.forEach((x) => is(x.result, "PASS", x.message));
+    }
+
+    function recvRegExpTest(message) {
+      let regexp = message.objects.regexp;
+
+      // These work generically.
+      is(regexp.toString(), "/myRegExp/g", "toString works right");
+      ok(regexp.test("I like myRegExp to match"), "No false positives");
+      ok(!regexp.test("asdfsdf"), "No false positives");
+
+      // These go over regexp_toShared.
+      is("filler myRegExp filler".search(regexp), 7, "String.prototype.match works right");
+      var shell = /x/;
+      shell.compile(regexp);
+      is(regexp.toString(), shell.toString(), ".compile works right");
     }
 
     let savedWilldieObj;
@@ -285,7 +313,11 @@
       mm.addMessageListener("cpows:dom_test", recvDomTest);
       mm.addMessageListener("cpows:dom_test_after_gc", recvDomTestAfterGC);
       mm.addMessageListener("cpows:xray_test", recvXrayTest);
+      if (typeof Symbol === "function") {
+        mm.addMessageListener("cpows:symbol_test", recvSymbolTest);
+      }
       mm.addMessageListener("cpows:compartment_test", recvCompartmentTest);
+      mm.addMessageListener("cpows:regexp_test", recvRegExpTest);
       mm.addMessageListener("cpows:lifetime_test_1", recvLifetimeTest1);
       mm.addMessageListener("cpows:lifetime_test_2", recvLifetimeTest2);
       mm.loadFrameScript("chrome://mochitests/content/chrome/content/base/test/chrome/cpows_child.js", true);

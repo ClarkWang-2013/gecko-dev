@@ -6,7 +6,6 @@
 #include "mozilla/dom/SVGLineElement.h"
 #include "mozilla/dom/SVGLineElementBinding.h"
 #include "mozilla/gfx/2D.h"
-#include "gfxContext.h"
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(Line)
 
@@ -108,28 +107,23 @@ SVGLineElement::GetMarkPoints(nsTArray<nsSVGMark> *aMarks) {
 }
 
 void
-SVGLineElement::ConstructPath(gfxContext *aCtx)
+SVGLineElement::GetAsSimplePath(SimplePath* aSimplePath)
 {
   float x1, y1, x2, y2;
-
   GetAnimatedLengthValues(&x1, &y1, &x2, &y2, nullptr);
-
-  aCtx->MoveTo(gfxPoint(x1, y1));
-  aCtx->LineTo(gfxPoint(x2, y2));
+  aSimplePath->SetLine(x1, y1, x2, y2);
 }
 
 TemporaryRef<Path>
 SVGLineElement::BuildPath(PathBuilder* aBuilder)
 {
-  RefPtr<PathBuilder> pathBuilder = aBuilder ? aBuilder : CreatePathBuilder();
-
   float x1, y1, x2, y2;
   GetAnimatedLengthValues(&x1, &y1, &x2, &y2, nullptr);
 
-  pathBuilder->MoveTo(Point(x1, y1));
-  pathBuilder->LineTo(Point(x2, y2));
+  aBuilder->MoveTo(Point(x1, y1));
+  aBuilder->LineTo(Point(x2, y2));
 
-  return pathBuilder->Finish();
+  return aBuilder->Finish();
 }
 
 } // namespace dom

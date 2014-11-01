@@ -24,11 +24,17 @@
     _(SimdInsertElementI)           \
     _(SimdInsertElementF)           \
     _(SimdSignMaskX4)               \
+    _(SimdSwizzleI)                 \
+    _(SimdSwizzleF)                 \
+    _(SimdShuffle)                  \
+    _(SimdUnaryArithIx4)            \
+    _(SimdUnaryArithFx4)            \
     _(SimdBinaryCompIx4)            \
     _(SimdBinaryCompFx4)            \
     _(SimdBinaryArithIx4)           \
     _(SimdBinaryArithFx4)           \
     _(SimdBinaryBitwiseX4)          \
+    _(SimdShift)                    \
     _(SimdSelect)                   \
     _(Value)                        \
     _(CloneLiteral)                 \
@@ -166,6 +172,8 @@
     _(IntToString)                  \
     _(DoubleToString)               \
     _(ValueToString)                \
+    _(Int32x4ToFloat32x4)           \
+    _(Float32x4ToInt32x4)           \
     _(Start)                        \
     _(OsrEntry)                     \
     _(OsrValue)                     \
@@ -270,6 +278,7 @@
     _(TypedArrayLength)             \
     _(TypedArrayElements)           \
     _(TypedObjectProto)             \
+    _(TypedObjectUnsizedLength)     \
     _(TypedObjectElements)          \
     _(SetTypedObjectOffset)         \
     _(StringLength)                 \

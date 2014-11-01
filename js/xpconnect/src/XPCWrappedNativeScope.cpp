@@ -379,6 +379,12 @@ xpc::GetAddonScope(JSContext *cx, JS::HandleObject contentScope, JSAddonId *addo
 
     JSAutoCompartment ac(cx, contentScope);
     XPCWrappedNativeScope *nativeScope = CompartmentPrivate::Get(contentScope)->scope;
+    if (nativeScope->GetPrincipal() != nsXPConnect::SystemPrincipal()) {
+        // This can happen if, for example, Jetpack loads an unprivileged HTML
+        // page from the add-on. It's not clear what to do there, so we just use
+        // the normal global.
+        return js::GetGlobalForObjectCrossCompartment(contentScope);
+    }
     JSObject *scope = nativeScope->EnsureAddonScope(cx, addonId);
     NS_ENSURE_TRUE(scope, nullptr);
 
@@ -505,9 +511,13 @@ XPCWrappedNativeScope::UpdateWeakPointersAfterGC(XPCJSRuntime* rt)
 
         XPCWrappedNativeScope* next = cur->mNext;
 
-        // Check for finalization of the global object.  Note that global
-        // objects are never moved, so we don't need to handle updating the
-        // object pointer here.
+        if (cur->mContentXBLScope)
+            cur->mContentXBLScope.updateWeakPointerAfterGC();
+        for (size_t i = 0; i < cur->mAddonScopes.Length(); i++)
+            cur->mAddonScopes[i].updateWeakPointerAfterGC();
+
+        // Check for finalization of the global object or update our pointer if
+        // it was moved.
         if (cur->mGlobalJSObject) {
             cur->mGlobalJSObject.updateWeakPointerAfterGC();
             if (!cur->mGlobalJSObject) {

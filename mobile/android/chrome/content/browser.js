@@ -98,6 +98,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "NetErrorHelper",
 XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
                                   "resource://gre/modules/PermissionsUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "SharedPreferences",
+                                  "resource://gre/modules/SharedPreferences.jsm");
+
 // Lazily-loaded browser scripts:
 [
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
@@ -109,6 +112,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
   ["Linkifier", "chrome://browser/content/Linkify.js"],
   ["ZoomHelper", "chrome://browser/content/ZoomHelper.js"],
   ["CastingApps", "chrome://browser/content/CastingApps.js"],
+#ifdef NIGHTLY_BUILD
+  ["WebcompatReporter", "chrome://browser/content/WebcompatReporter.js"],
+#endif
 ].forEach(function (aScript) {
   let [name, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
@@ -124,12 +130,14 @@ XPCOMUtils.defineLazyModuleGetter(this, "PermissionsUtils",
 #endif
   ["MemoryObserver", ["memory-pressure", "Memory:Dump"], "chrome://browser/content/MemoryObserver.js"],
   ["ConsoleAPI", ["console-api-log-event"], "chrome://browser/content/ConsoleAPI.js"],
-  ["FindHelper", ["FindInPage:Find", "FindInPage:Prev", "FindInPage:Next", "FindInPage:Closed", "Tab:Selected"], "chrome://browser/content/FindHelper.js"],
+  ["FindHelper", ["FindInPage:Opened", "FindInPage:Closed", "Tab:Selected"], "chrome://browser/content/FindHelper.js"],
   ["PermissionsHelper", ["Permissions:Get", "Permissions:Clear"], "chrome://browser/content/PermissionsHelper.js"],
   ["FeedHandler", ["Feeds:Subscribe"], "chrome://browser/content/FeedHandler.js"],
   ["Feedback", ["Feedback:Show"], "chrome://browser/content/Feedback.js"],
   ["SelectionHandler", ["TextSelection:Get"], "chrome://browser/content/SelectionHandler.js"],
   ["Notifications", ["Notification:Event"], "chrome://browser/content/Notifications.jsm"],
+  ["EmbedRT", ["GeckoView:ImportScript"], "chrome://browser/content/EmbedRT.js"],
+  ["Reader", ["Reader:Add", "Reader:Remove"], "chrome://browser/content/Reader.js"],
 ].forEach(function (aScript) {
   let [name, notifications, script] = aScript;
   XPCOMUtils.defineLazyGetter(window, name, function() {
@@ -331,6 +339,9 @@ var BrowserApp = {
           SafeBrowsing.init();
         }, Ci.nsIThread.DISPATCH_NORMAL);
 #endif
+#ifdef NIGHTLY_BUILD
+        WebcompatReporter.init();
+#endif
       } catch(ex) { console.log(ex); }
     }, false);
 
@@ -339,6 +350,7 @@ var BrowserApp = {
 
     Services.androidBridge.browserApp = this;
 
+    Services.obs.addObserver(this, "Locale:OS", false);
     Services.obs.addObserver(this, "Locale:Changed", false);
     Services.obs.addObserver(this, "Tab:Load", false);
     Services.obs.addObserver(this, "Tab:Selected", false);
@@ -415,7 +427,6 @@ var BrowserApp = {
     Cu.import("resource://gre/modules/Webapps.jsm");
     DOMApplicationRegistry.allAppsLaunchable = true;
     RemoteDebugger.init();
-    Reader.init();
     UserAgentOverrides.init();
     DesktopUserAgent.init();
     CastingApps.init();
@@ -462,7 +473,7 @@ var BrowserApp = {
     if (this._startupStatus)
       this.onAppUpdated();
 
-    if (!ParentalControls.isAllowed(ParentalControls.INSTALL_EXTENSIONS)) {
+    if (!ParentalControls.isAllowed(ParentalControls.INSTALL_EXTENSION)) {
       // Disable extension installs
       Services.prefs.setIntPref("extensions.enabledScopes", 1);
       Services.prefs.setIntPref("extensions.autoDisableScopes", 1);
@@ -826,6 +837,13 @@ var BrowserApp = {
       Services.prefs.setIntPref("plugin.default.state", Ci.nsIPluginTag.STATE_ENABLED);
       Services.prefs.clearUserPref("plugins.click_to_play");
     }
+
+    // Set the search activity default pref on app upgrade if it has not been set already.
+    if (this._startupStatus === "upgrade" &&
+        !Services.prefs.prefHasUserValue("searchActivity.default.migrated")) {
+      Services.prefs.setBoolPref("searchActivity.default.migrated", true);
+      SearchEngines.migrateSearchActivityDefaultPref();
+    }
   },
 
   shutdown: function shutdown() {
@@ -846,6 +864,9 @@ var BrowserApp = {
     CastingApps.uninit();
     Distribution.uninit();
     Tabs.uninit();
+#ifdef NIGHTLY_BUILD
+    WebcompatReporter.uninit();
+#endif
   },
 
   // This function returns false during periods where the browser displayed document is
@@ -1626,7 +1647,7 @@ var BrowserApp = {
         // This event refers to a search via the URL bar, not a bookmarks
         // keyword search. Note that this code assumes that the user can only
         // perform a keyword search on the selected tab.
-        this.isSearch = true;
+        this.selectedTab.isSearch = true;
 
         // Don't store queries in private browsing mode.
         let isPrivate = PrivateBrowsingUtils.isBrowserPrivate(this.selectedTab.browser);
@@ -1748,6 +1769,34 @@ var BrowserApp = {
         WebappManager.autoUninstall(JSON.parse(aData));
         break;
 
+      case "Locale:OS":
+        // We know the system locale. We use this for generating Accept-Language headers.
+        console.log("Locale:OS: " + aData);
+        let currentOSLocale;
+        try {
+          currentOSLocale = Services.prefs.getCharPref("intl.locale.os");
+        } catch (e) {
+        }
+        if (currentOSLocale == aData) {
+          break;
+        }
+
+        console.log("New OS locale.");
+
+        // Ensure that this choice is immediately persisted, because
+        // Gecko won't be told again if it forgets.
+        Services.prefs.setCharPref("intl.locale.os", aData);
+        Services.prefs.savePrefFile(null);
+
+        let appLocale;
+        try {
+          appLocale = Services.prefs.getCharPref("general.useragent.locale");
+        } catch (e) {
+        }
+
+        this.computeAcceptLanguages(aData, appLocale);
+        break;
+
       case "Locale:Changed":
         if (aData) {
           // The value provided to Locale:Changed should be a BCP47 language tag
@@ -1769,6 +1818,16 @@ var BrowserApp = {
         // Blow away the string cache so that future lookups get the
         // correct locale.
         Services.strings.flushBundles();
+
+        // Make sure we use the right Accept-Language header.
+        let osLocale;
+        try {
+          // This should never not be set at this point, but better safe than sorry.
+          osLocale = Services.prefs.getCharPref("intl.locale.os");
+        } catch (e) {
+        }
+
+        this.computeAcceptLanguages(osLocale, aData);
         break;
 
       default:
@@ -1776,6 +1835,63 @@ var BrowserApp = {
         break;
 
     }
+  },
+
+  /**
+   * Set intl.accept_languages accordingly.
+   *
+   * After Bug 881510 this will also accept a real Accept-Language choice as
+   * input; all Accept-Language logic lives here.
+   *
+   * osLocale should never be null, but this method is safe regardless.
+   * appLocale may explicitly be null.
+   */
+  computeAcceptLanguages(osLocale, appLocale) {
+    let defaultBranch = Services.prefs.getDefaultBranch(null);
+    let defaultAccept = defaultBranch.getComplexValue("intl.accept_languages", Ci.nsIPrefLocalizedString).data;
+    console.log("Default intl.accept_languages = " + defaultAccept);
+
+    // A guard for potential breakage. Bug 438031.
+    // This should not be necessary, because we're reading from the default branch,
+    // but better safe than sorry.
+    if (defaultAccept && defaultAccept.startsWith("chrome://")) {
+      defaultAccept = null;
+    } else {
+      // Ensure lowercase everywhere so we can compare.
+      defaultAccept = defaultAccept.toLowerCase();
+    }
+
+    if (appLocale) {
+      appLocale = appLocale.toLowerCase();
+    }
+
+    if (osLocale) {
+      osLocale = osLocale.toLowerCase();
+    }
+
+    // Eliminate values if they're present in the default.
+    let chosen;
+    if (defaultAccept) {
+      // intl.accept_languages is a comma-separated list, with no q-value params. Those
+      // are added when the header is generated.
+      chosen = defaultAccept.split(",")
+                            .map(String.trim)
+                            .filter((x) => (x != appLocale && x != osLocale));
+    } else {
+      chosen = [];
+    }
+
+    if (osLocale) {
+      chosen.unshift(osLocale);
+    }
+
+    if (appLocale && appLocale != osLocale) {
+      chosen.unshift(appLocale);
+    }
+
+    let result = chosen.join(",");
+    console.log("Setting intl.accept_languages to " + result);
+    Services.prefs.setCharPref("intl.accept_languages", result);
   },
 
   get defaultBrowserWidth() {
@@ -3413,7 +3529,7 @@ Tab.prototype = {
       this.browser.focus();
       this.browser.docShellIsActive = true;
       Reader.updatePageAction(this);
-      ExternalApps.updatePageAction(this.browser.currentURI);
+      ExternalApps.updatePageAction(this.browser.currentURI, this.browser.contentDocument);
     } else {
       this.browser.setAttribute("type", "content-targetable");
       this.browser.docShellIsActive = false;
@@ -4078,7 +4194,7 @@ Tab.prototype = {
         let uri = this.browser.currentURI;
         if (BrowserApp.selectedTab == this) {
           if (ExternalApps.shouldCheckUri(uri)) {
-            ExternalApps.updatePageAction(uri);
+            ExternalApps.updatePageAction(uri, this.browser.contentDocument);
           } else {
             ExternalApps.clearPageAction();
           }
@@ -4195,16 +4311,12 @@ Tab.prototype = {
     } catch (ex) { }
 
     // In restricted profiles, we refuse to let you open any file urls.
-    if (!ParentalControls.isAllowed(ParentalControls.VISIT_FILE_URLS)) {
-      let bannedSchemes = ["file", "chrome", "resource", "jar", "wyciwyg"];
+    if (!ParentalControls.isAllowed(ParentalControls.VISIT_FILE_URLS, fixedURI)) {
+      aRequest.cancel(Cr.NS_BINDING_ABORTED);
 
-      if (bannedSchemes.indexOf(fixedURI.scheme) > -1) {
-        aRequest.cancel(Cr.NS_BINDING_ABORTED);
-
-        aRequest = this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
-        if (aRequest) {
-          fixedURI = aRequest.URI;
-        }
+      aRequest = this.browser.docShell.displayLoadError(Cr.NS_ERROR_UNKNOWN_PROTOCOL, fixedURI, null);
+      if (aRequest) {
+        fixedURI = aRequest.URI;
       }
     }
 
@@ -6764,12 +6876,16 @@ var SearchEngines = {
   PREF_SUGGEST_ENABLED: "browser.search.suggest.enabled",
   PREF_SUGGEST_PROMPTED: "browser.search.suggest.prompted",
 
+  // Shared preference key used for search activity default engine.
+  PREF_SEARCH_ACTIVITY_ENGINE_KEY: "search.engines.default",
+
   init: function init() {
     Services.obs.addObserver(this, "SearchEngines:Add", false);
     Services.obs.addObserver(this, "SearchEngines:GetVisible", false);
     Services.obs.addObserver(this, "SearchEngines:Remove", false);
     Services.obs.addObserver(this, "SearchEngines:RestoreDefaults", false);
     Services.obs.addObserver(this, "SearchEngines:SetDefault", false);
+    Services.obs.addObserver(this, "browser-search-engine-modified", false);
 
     let filter = {
       matches: function (aElement) {
@@ -6814,6 +6930,7 @@ var SearchEngines = {
     Services.obs.removeObserver(this, "SearchEngines:Remove");
     Services.obs.removeObserver(this, "SearchEngines:RestoreDefaults");
     Services.obs.removeObserver(this, "SearchEngines:SetDefault");
+    Services.obs.removeObserver(this, "browser-search-engine-modified");
     if (this._contextMenuId != null)
       NativeWindow.contextmenus.remove(this._contextMenuId);
   },
@@ -6894,11 +7011,51 @@ var SearchEngines = {
         Services.search.moveEngine(engine, 0);
         Services.search.defaultEngine = engine;
         break;
-
+      case "browser-search-engine-modified":
+        if (aData == "engine-default") {
+          this._setSearchActivityDefaultPref(aSubject.QueryInterface(Ci.nsISearchEngine));
+        }
+        break;
       default:
         dump("Unexpected message type observed: " + aTopic);
         break;
     }
+  },
+
+  migrateSearchActivityDefaultPref: function migrateSearchActivityDefaultPref() {
+    Services.search.init(() => this._setSearchActivityDefaultPref(Services.search.defaultEngine));
+  },
+
+  // Updates the search activity pref when the default engine changes.
+  _setSearchActivityDefaultPref: function _setSearchActivityDefaultPref(engine) {
+    // Helper function copied from nsSearchService.js. This is the logic that is used
+    // to create file names for search plugin XML serialized to disk.
+    function sanitizeName(aName) {
+      const maxLength = 60;
+      const minLength = 1;
+      let name = aName.toLowerCase();
+      name = name.replace(/\s+/g, "-");
+      name = name.replace(/[^-a-z0-9]/g, "");
+
+      if (name.length < minLength) {
+        // Well, in this case, we're kinda screwed. In this case, the search service
+        // generates a random file name, so to do this the right way, we'd need
+        // to open up search.json and see what file name is stored.
+        Cu.reportError("Couldn't create search plugin file name from engine name: " + aName);
+        return null;
+      }
+
+      // Force max length.
+      return name.substring(0, maxLength);
+    }
+
+    let identifier = engine.identifier;
+    if (identifier === null) {
+      // The identifier will be null for non-built-in engines. In this case, we need to
+      // figure out an identifier to store from the engine name.
+      identifier = sanitizeName(engine.name);
+    }
+    SharedPreferences.forApp().setCharPref(this.PREF_SEARCH_ACTIVITY_ENGINE_KEY, identifier);
   },
 
   // Display context menu listing names of the search engines available to be added.
@@ -7203,562 +7360,6 @@ var Telemetry = {
   },
 };
 
-let Reader = {
-  // Version of the cache database schema
-  DB_VERSION: 1,
-
-  DEBUG: 0,
-
-  READER_ADD_SUCCESS: 0,
-  READER_ADD_FAILED: 1,
-  READER_ADD_DUPLICATE: 2,
-
-  // Don't try to parse the page if it has too many elements (for memory and
-  // performance reasons)
-  MAX_ELEMS_TO_PARSE: 3000,
-
-  isEnabledForParseOnLoad: false,
-
-  init: function Reader_init() {
-    this.log("Init()");
-    this._requests = {};
-
-    this.isEnabledForParseOnLoad = this.getStateForParseOnLoad();
-
-    Services.obs.addObserver(this, "Reader:Add", false);
-    Services.obs.addObserver(this, "Reader:Remove", false);
-
-    Services.prefs.addObserver("reader.parse-on-load.", this, false);
-  },
-
-  pageAction: {
-    readerModeCallback: function(){
-      Messaging.sendRequest({
-        type: "Reader:Click",
-      });
-    },
-
-    readerModeActiveCallback: function(){
-      Messaging.sendRequest({
-        type: "Reader:LongClick",
-      });
-
-      UITelemetry.addEvent("save.1", "pageaction", null, "reader");
-    },
-  },
-
-  updatePageAction: function(tab) {
-    if (this.pageAction.id) {
-      PageActions.remove(this.pageAction.id);
-      delete this.pageAction.id;
-    }
-
-    if (tab.readerActive) {
-      this.pageAction.id = PageActions.add({
-        title: Strings.browser.GetStringFromName("readerMode.exit"),
-        icon: "drawable://reader_active",
-        clickCallback: this.pageAction.readerModeCallback,
-        important: true
-      });
-
-      // Only start a reader session if the viewer is in the foreground. We do
-      // not track background reader viewers.
-      UITelemetry.startSession("reader.1", null);
-      return;
-    }
-
-    // Only stop a reader session if the foreground viewer is not visible.
-    UITelemetry.stopSession("reader.1", "", null);
-
-    if (tab.readerEnabled) {
-      this.pageAction.id = PageActions.add({
-        title: Strings.browser.GetStringFromName("readerMode.enter"),
-        icon: "drawable://reader",
-        clickCallback:this.pageAction.readerModeCallback,
-        longClickCallback: this.pageAction.readerModeActiveCallback,
-        important: true
-      });
-    }
-  },
-
-  observe: function(aMessage, aTopic, aData) {
-    switch(aTopic) {
-      case "Reader:Add": {
-        let args = JSON.parse(aData);
-        if ('fromAboutReader' in args) {
-          // Ignore adds initiated from aboutReader menu banner
-          break;
-        }
-
-        let tabID = null;
-        let url, urlWithoutRef;
-
-        if ('tabID' in args) {
-          tabID = args.tabID;
-
-          let tab = BrowserApp.getTabForId(tabID);
-          let currentURI = tab.browser.currentURI;
-
-          url = currentURI.spec;
-          urlWithoutRef = currentURI.specIgnoringRef;
-        } else if ('url' in args) {
-          let uri = Services.io.newURI(args.url, null, null);
-          url = uri.spec;
-          urlWithoutRef = uri.specIgnoringRef;
-        } else {
-          throw new Error("Reader:Add requires a tabID or an URL as argument");
-        }
-
-        let sendResult = function(result, article) {
-          article = article || {};
-          this.log("Reader:Add success=" + result + ", url=" + url + ", title=" + article.title + ", excerpt=" + article.excerpt);
-
-          Messaging.sendRequest({
-            type: "Reader:Added",
-            result: result,
-            title: truncate(article.title, MAX_TITLE_LENGTH),
-            url: truncate(url, MAX_URI_LENGTH),
-            length: article.length,
-            excerpt: article.excerpt
-          });
-        }.bind(this);
-
-        let handleArticle = function(article) {
-          if (!article) {
-            sendResult(this.READER_ADD_FAILED, null);
-            return;
-          }
-
-          this.storeArticleInCache(article, function(success) {
-            let result = (success ? this.READER_ADD_SUCCESS : this.READER_ADD_FAILED);
-            sendResult(result, article);
-          }.bind(this));
-        }.bind(this);
-
-        this.getArticleFromCache(urlWithoutRef, function (article) {
-          // If the article is already in reading list, bail
-          if (article) {
-            sendResult(this.READER_ADD_DUPLICATE, null);
-            return;
-          }
-
-          if (tabID != null) {
-            this.getArticleForTab(tabID, urlWithoutRef, handleArticle);
-          } else {
-            this.parseDocumentFromURL(urlWithoutRef, handleArticle);
-          }
-        }.bind(this));
-        break;
-      }
-
-      case "Reader:Remove": {
-        let args = JSON.parse(aData);
-
-        if (!("url" in args)) {
-          throw new Error("Reader:Remove requires URL as an argument");
-        }
-
-        this.removeArticleFromCache(args.url, function(success) {
-          this.log("Reader:Remove success=" + success + ", url=" + args.url);
-          if (success && args.notify) {
-            Messaging.sendRequest({
-              type: "Reader:Removed",
-              url: args.url
-            });
-          }
-        }.bind(this));
-        break;
-      }
-
-      case "nsPref:changed": {
-        if (aData.startsWith("reader.parse-on-load.")) {
-          this.isEnabledForParseOnLoad = this.getStateForParseOnLoad();
-        }
-        break;
-      }
-    }
-  },
-
-  getStateForParseOnLoad: function Reader_getStateForParseOnLoad() {
-    let isEnabled = Services.prefs.getBoolPref("reader.parse-on-load.enabled");
-    let isForceEnabled = Services.prefs.getBoolPref("reader.parse-on-load.force-enabled");
-    // For low-memory devices, don't allow reader mode since it takes up a lot of memory.
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=792603 for details.
-    return isForceEnabled || (isEnabled && !BrowserApp.isOnLowMemoryPlatform);
-  },
-
-  parseDocumentFromURL: function Reader_parseDocumentFromURL(url, callback) {
-    // If there's an on-going request for the same URL, simply append one
-    // more callback to it to be called when the request is done.
-    if (url in this._requests) {
-      let request = this._requests[url];
-      request.callbacks.push(callback);
-      return;
-    }
-
-    let request = { url: url, callbacks: [callback] };
-    this._requests[url] = request;
-
-    try {
-      this.log("parseDocumentFromURL: " + url);
-
-      // First, try to find a cached parsed article in the DB
-      this.getArticleFromCache(url, function(article) {
-        if (article) {
-          this.log("Page found in cache, return article immediately");
-          this._runCallbacksAndFinish(request, article);
-          return;
-        }
-
-        if (!this._requests) {
-          this.log("Reader has been destroyed, abort");
-          return;
-        }
-
-        // Article hasn't been found in the cache DB, we need to
-        // download the page and parse the article out of it.
-        this._downloadAndParseDocument(url, request);
-      }.bind(this));
-    } catch (e) {
-      this.log("Error parsing document from URL: " + e);
-      this._runCallbacksAndFinish(request, null);
-    }
-  },
-
-  getArticleForTab: function Reader_getArticleForTab(tabId, url, callback) {
-    let tab = BrowserApp.getTabForId(tabId);
-    if (tab) {
-      let article = tab.savedArticle;
-      if (article && article.url == url) {
-        this.log("Saved article found in tab");
-        callback(article);
-        return;
-      }
-    }
-
-    this.parseDocumentFromURL(url, callback);
-  },
-
-  parseDocumentFromTab: function(tabId, callback) {
-    try {
-      this.log("parseDocumentFromTab: " + tabId);
-
-      let tab = BrowserApp.getTabForId(tabId);
-      let url = tab.browser.contentWindow.location.href;
-      let uri = Services.io.newURI(url, null, null);
-
-      if (!this._shouldCheckUri(uri)) {
-        callback(null);
-        return;
-      }
-
-      // First, try to find a cached parsed article in the DB
-      this.getArticleFromCache(url, function(article) {
-        if (article) {
-          this.log("Page found in cache, return article immediately");
-          callback(article);
-          return;
-        }
-
-        let doc = tab.browser.contentWindow.document;
-        this._readerParse(uri, doc, function (article) {
-          if (!article) {
-            this.log("Failed to parse page");
-            callback(null);
-            return;
-          }
-
-          callback(article);
-        }.bind(this));
-      }.bind(this));
-    } catch (e) {
-      this.log("Error parsing document from tab: " + e);
-      callback(null);
-    }
-  },
-
-  getArticleFromCache: function Reader_getArticleFromCache(url, callback) {
-    this._getCacheDB(function(cacheDB) {
-      if (!cacheDB) {
-        callback(false);
-        return;
-      }
-
-      let transaction = cacheDB.transaction(cacheDB.objectStoreNames);
-      let articles = transaction.objectStore(cacheDB.objectStoreNames[0]);
-
-      let request = articles.get(url);
-
-      request.onerror = function(event) {
-        this.log("Error getting article from the cache DB: " + url);
-        callback(null);
-      }.bind(this);
-
-      request.onsuccess = function(event) {
-        this.log("Got article from the cache DB: " + event.target.result);
-        callback(event.target.result);
-      }.bind(this);
-    }.bind(this));
-  },
-
-  storeArticleInCache: function Reader_storeArticleInCache(article, callback) {
-    this._getCacheDB(function(cacheDB) {
-      if (!cacheDB) {
-        callback(false);
-        return;
-      }
-
-      let transaction = cacheDB.transaction(cacheDB.objectStoreNames, "readwrite");
-      let articles = transaction.objectStore(cacheDB.objectStoreNames[0]);
-
-      let request = articles.add(article);
-
-      request.onerror = function(event) {
-        this.log("Error storing article in the cache DB: " + article.url);
-        callback(false);
-      }.bind(this);
-
-      request.onsuccess = function(event) {
-        this.log("Stored article in the cache DB: " + article.url);
-        callback(true);
-      }.bind(this);
-    }.bind(this));
-  },
-
-  removeArticleFromCache: function Reader_removeArticleFromCache(url, callback) {
-    this._getCacheDB(function(cacheDB) {
-      if (!cacheDB) {
-        callback(false);
-        return;
-      }
-
-      let transaction = cacheDB.transaction(cacheDB.objectStoreNames, "readwrite");
-      let articles = transaction.objectStore(cacheDB.objectStoreNames[0]);
-
-      let request = articles.delete(url);
-
-      request.onerror = function(event) {
-        this.log("Error removing article from the cache DB: " + url);
-        callback(false);
-      }.bind(this);
-
-      request.onsuccess = function(event) {
-        this.log("Removed article from the cache DB: " + url);
-        callback(true);
-      }.bind(this);
-    }.bind(this));
-  },
-
-  uninit: function Reader_uninit() {
-    Services.prefs.removeObserver("reader.parse-on-load.", this);
-
-    Services.obs.removeObserver(this, "Reader:Add");
-    Services.obs.removeObserver(this, "Reader:Remove");
-
-    let requests = this._requests;
-    for (let url in requests) {
-      let request = requests[url];
-      if (request.browser) {
-        let browser = request.browser;
-        browser.parentNode.removeChild(browser);
-      }
-    }
-    delete this._requests;
-
-    if (this._cacheDB) {
-      this._cacheDB.close();
-      delete this._cacheDB;
-    }
-  },
-
-  log: function(msg) {
-    if (this.DEBUG)
-      dump("Reader: " + msg);
-  },
-
-  _shouldCheckUri: function Reader_shouldCheckUri(uri) {
-    if ((uri.prePath + "/") === uri.spec) {
-      this.log("Not parsing home page: " + uri.spec);
-      return false;
-    }
-
-    if (!(uri.schemeIs("http") || uri.schemeIs("https") || uri.schemeIs("file"))) {
-      this.log("Not parsing URI scheme: " + uri.scheme);
-      return false;
-    }
-
-    return true;
-  },
-
-  _readerParse: function Reader_readerParse(uri, doc, callback) {
-    let numTags = doc.getElementsByTagName("*").length;
-    if (numTags > this.MAX_ELEMS_TO_PARSE) {
-      this.log("Aborting parse for " + uri.spec + "; " + numTags + " elements found");
-      callback(null);
-      return;
-    }
-
-    let worker = new ChromeWorker("readerWorker.js");
-    worker.onmessage = function (evt) {
-      let article = evt.data;
-
-      // Append URL to the article data. specIgnoringRef will ignore any hash
-      // in the URL.
-      if (article) {
-        article.url = uri.specIgnoringRef;
-        let flags = Ci.nsIDocumentEncoder.OutputSelectionOnly | Ci.nsIDocumentEncoder.OutputAbsoluteLinks;
-        article.title = Cc["@mozilla.org/parserutils;1"].getService(Ci.nsIParserUtils)
-                                                        .convertToPlainText(article.title, flags, 0);
-      }
-
-      callback(article);
-    };
-
-    try {
-      worker.postMessage({
-        uri: {
-          spec: uri.spec,
-          host: uri.host,
-          prePath: uri.prePath,
-          scheme: uri.scheme,
-          pathBase: Services.io.newURI(".", null, uri).spec
-        },
-        doc: new XMLSerializer().serializeToString(doc)
-      });
-    } catch (e) {
-      dump("Reader: could not build Readability arguments: " + e);
-      callback(null);
-    }
-  },
-
-  _runCallbacksAndFinish: function Reader_runCallbacksAndFinish(request, result) {
-    delete this._requests[request.url];
-
-    request.callbacks.forEach(function(callback) {
-      callback(result);
-    });
-  },
-
-  _downloadDocument: function Reader_downloadDocument(url, callback) {
-    // We want to parse those arbitrary pages safely, outside the privileged
-    // context of chrome. We create a hidden browser element to fetch the
-    // loaded page's document object then discard the browser element.
-
-    let browser = document.createElement("browser");
-    browser.setAttribute("type", "content");
-    browser.setAttribute("collapsed", "true");
-    browser.setAttribute("disablehistory", "true");
-
-    document.documentElement.appendChild(browser);
-    browser.stop();
-
-    browser.webNavigation.allowAuth = false;
-    browser.webNavigation.allowImages = false;
-    browser.webNavigation.allowJavascript = false;
-    browser.webNavigation.allowMetaRedirects = true;
-    browser.webNavigation.allowPlugins = false;
-
-    browser.addEventListener("DOMContentLoaded", function (event) {
-      let doc = event.originalTarget;
-
-      // ignore on frames and other documents
-      if (doc != browser.contentDocument)
-        return;
-
-      this.log("Done loading: " + doc);
-      if (doc.location.href == "about:blank") {
-        callback(null);
-
-        // Request has finished with error, remove browser element
-        browser.parentNode.removeChild(browser);
-        return;
-      }
-
-      callback(doc);
-    }.bind(this));
-
-    browser.loadURIWithFlags(url, Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
-                             null, null, null);
-
-    return browser;
-  },
-
-  _downloadAndParseDocument: function Reader_downloadAndParseDocument(url, request) {
-    try {
-      this.log("Needs to fetch page, creating request: " + url);
-
-      request.browser = this._downloadDocument(url, function(doc) {
-        this.log("Finished loading page: " + doc);
-
-        if (!doc) {
-          this.log("Error loading page");
-          this._runCallbacksAndFinish(request, null);
-          return;
-        }
-
-        this.log("Parsing response with Readability");
-
-        let uri = Services.io.newURI(url, null, null);
-        this._readerParse(uri, doc, function (article) {
-          // Delete reference to the browser element as we've finished parsing.
-          let browser = request.browser;
-          if (browser) {
-            browser.parentNode.removeChild(browser);
-            delete request.browser;
-          }
-
-          if (!article) {
-            this.log("Failed to parse page");
-            this._runCallbacksAndFinish(request, null);
-            return;
-          }
-
-          this.log("Parsing has been successful");
-
-          this._runCallbacksAndFinish(request, article);
-        }.bind(this));
-      }.bind(this));
-    } catch (e) {
-      this.log("Error downloading and parsing document: " + e);
-      this._runCallbacksAndFinish(request, null);
-    }
-  },
-
-  _getCacheDB: function Reader_getCacheDB(callback) {
-    if (this._cacheDB) {
-      callback(this._cacheDB);
-      return;
-    }
-
-    let request = window.indexedDB.open("about:reader", this.DB_VERSION);
-
-    request.onerror = function(event) {
-      this.log("Error connecting to the cache DB");
-      this._cacheDB = null;
-      callback(null);
-    }.bind(this);
-
-    request.onsuccess = function(event) {
-      this.log("Successfully connected to the cache DB");
-      this._cacheDB = event.target.result;
-      callback(this._cacheDB);
-    }.bind(this);
-
-    request.onupgradeneeded = function(event) {
-      this.log("Database schema upgrade from " +
-           event.oldVersion + " to " + event.newVersion);
-
-      let cacheDB = event.target.result;
-
-      // Create the articles object store
-      this.log("Creating articles object store");
-      cacheDB.createObjectStore("articles", { keyPath: "url" });
-
-      this.log("Database upgrade done: " + this.DB_VERSION);
-    }.bind(this);
-  }
-};
-
 var ExternalApps = {
   _contextMenuId: null,
 
@@ -7810,6 +7411,9 @@ var ExternalApps = {
   },
 
   openExternal: function(aElement) {
+    if (aElement.pause) {
+      aElement.pause();
+    }
     let uri = ExternalApps._getMediaLink(aElement);
     HelperApps.launchUri(uri);
   },
@@ -7822,11 +7426,11 @@ var ExternalApps = {
     return true;
   },
 
-  updatePageAction: function updatePageAction(uri) {
+  updatePageAction: function updatePageAction(uri, contentDocument) {
     HelperApps.getAppsForUri(uri, { filterHttp: true }, (apps) => {
       this.clearPageAction();
       if (apps.length > 0)
-        this._setUriForPageAction(uri, apps);
+        this._setUriForPageAction(uri, apps, contentDocument);
     });
   },
 
@@ -7834,12 +7438,33 @@ var ExternalApps = {
     this._pageActionUri = uri;
   },
 
-  _setUriForPageAction: function setUriForPageAction(uri, apps) {
+  _getMediaContentElement(contentDocument) {
+    if (!contentDocument.contentType.startsWith("video/") &&
+        !contentDocument.contentType.startsWith("audio/")) {
+      return null;
+    }
+
+    let element = contentDocument.activeElement;
+
+    if (element instanceof HTMLBodyElement) {
+      element = element.firstChild;
+    }
+
+    if (element instanceof HTMLMediaElement) {
+      return element;
+    }
+
+    return null;
+  },
+
+  _setUriForPageAction: function setUriForPageAction(uri, apps, contentDocument) {
     this.updatePageActionUri(uri);
 
     // If the pageaction is already added, simply update the URI to be launched when 'onclick' is triggered.
     if (this._pageActionId != undefined)
       return;
+
+    let mediaElement = this._getMediaContentElement(contentDocument);
 
     this._pageActionId = PageActions.add({
       title: Strings.browser.GetStringFromName("openInApp.pageAction"),
@@ -7847,6 +7472,11 @@ var ExternalApps = {
 
       clickCallback: () => {
         UITelemetry.addEvent("launch.1", "pageaction", null, "helper");
+
+        let wasPlaying = mediaElement && !mediaElement.paused && !mediaElement.ended;
+        if (wasPlaying) {
+          mediaElement.pause();
+        }
 
         if (apps.length > 1) {
           // Use the HelperApps prompt here to filter out any Http handlers
@@ -7858,6 +7488,10 @@ var ExternalApps = {
             ]
           }, (result) => {
             if (result.button != 0) {
+              if (wasPlaying) {
+                mediaElement.play();
+              }
+
               return;
             }
             apps[result.icongrid0].launch(this._pageActionUri);

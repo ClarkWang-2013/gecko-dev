@@ -151,9 +151,11 @@ loop.shared.views = (function(_, OT, l10n) {
       width: "100%",
       height: "100%",
       style: {
+        audioLevelDisplayMode: "off",
         bugDisplayMode: "off",
         buttonDisplayMode: "off",
-        nameDisplayMode: "off"
+        nameDisplayMode: "off",
+        videoDisabledDisplayMode: "off"
       }
     },
 
@@ -617,9 +619,19 @@ loop.shared.views = (function(_, OT, l10n) {
     render: function() {
       var notification = this.props.notification;
       return (
-        <div key={this.props.key}
-             className={"alert alert-" + notification.get("level")}>
-          <span className="message">{notification.get("message")}</span>
+        <div className="notificationContainer">
+          <div key={this.props.key}
+               className={"alert alert-" + notification.get("level")}>
+            <span className="message">{notification.get("message")}</span>
+          </div>
+          <div className={"detailsBar details-" + notification.get("level")}
+               hidden={!notification.get("details")}>
+            <button className="detailsButton btn-info"
+                    hidden={true || !notification.get("detailsButtonLabel")}>
+              {notification.get("detailsButtonLabel")}
+            </button>
+            <span className="details">{notification.get("details")}</span>
+          </div>
         </div>
       );
     }
@@ -678,7 +690,65 @@ loop.shared.views = (function(_, OT, l10n) {
     }
   });
 
+  var Button = React.createClass({
+    propTypes: {
+      caption: React.PropTypes.string.isRequired,
+      onClick: React.PropTypes.func.isRequired,
+      disabled: React.PropTypes.bool,
+      additionalClass: React.PropTypes.string,
+    },
+
+    getDefaultProps: function() {
+      return {
+        disabled: false,
+        additionalClass: "",
+      };
+    },
+
+    render: function() {
+      var cx = React.addons.classSet;
+      var classObject = { button: true, disabled: this.props.disabled };
+      if (this.props.additionalClass) {
+        classObject[this.props.additionalClass] = true;
+      }
+      return (
+        <button onClick={this.props.onClick}
+                disabled={this.props.disabled}
+                className={cx(classObject)}>
+          {this.props.caption}
+        </button>
+      )
+    }
+  });
+
+  var ButtonGroup = React.createClass({
+    PropTypes: {
+      additionalClass: React.PropTypes.string
+    },
+
+    getDefaultProps: function() {
+      return {
+        additionalClass: "",
+      };
+    },
+
+    render: function() {
+      var cx = React.addons.classSet;
+      var classObject = { "button-group": true };
+      if (this.props.additionalClass) {
+        classObject[this.props.additionalClass] = true;
+      }
+      return (
+        <div className={cx(classObject)}>
+          {this.props.children}
+        </div>
+      )
+    }
+  });
+
   return {
+    Button: Button,
+    ButtonGroup: ButtonGroup,
     ConversationView: ConversationView,
     ConversationToolbar: ConversationToolbar,
     FeedbackView: FeedbackView,

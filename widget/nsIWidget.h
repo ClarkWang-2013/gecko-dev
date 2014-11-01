@@ -25,7 +25,6 @@
 
 // forward declarations
 class   nsFontMetrics;
-class   nsRenderingContext;
 class   nsDeviceContext;
 struct  nsFont;
 class   nsIRollupListener;
@@ -502,11 +501,8 @@ struct SizeConstraints {
 typedef int8_t IMEMessageType;
 enum IMEMessage MOZ_ENUM_TYPE(IMEMessageType)
 {
-  // XXX We should replace NOTIFY_IME_OF_CURSOR_POS_CHANGED with
-  //     NOTIFY_IME_OF_SELECTION_CHANGE later.
-  NOTIFY_IME_OF_CURSOR_POS_CHANGED,
   // An editable content is getting focus
-  NOTIFY_IME_OF_FOCUS,
+  NOTIFY_IME_OF_FOCUS = 1,
   // An editable content is losing focus
   NOTIFY_IME_OF_BLUR,
   // Selection in the focused editable content is changed

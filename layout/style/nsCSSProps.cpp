@@ -1347,6 +1347,12 @@ const KTableValue nsCSSProps::kImageOrientationFlipKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
+const KTableValue nsCSSProps::kIsolationKTable[] = {
+  eCSSKeyword_auto, NS_STYLE_ISOLATION_AUTO,
+  eCSSKeyword_isolate, NS_STYLE_ISOLATION_ISOLATE,
+  eCSSKeyword_UNKNOWN,-1
+};
+
 const KTableValue nsCSSProps::kIMEModeKTable[] = {
   eCSSKeyword_normal, NS_STYLE_IME_MODE_NORMAL,
   eCSSKeyword_auto, NS_STYLE_IME_MODE_AUTO,
@@ -1581,6 +1587,13 @@ const KTableValue nsCSSProps::kResizeKTable[] = {
   eCSSKeyword_both,       NS_STYLE_RESIZE_BOTH,
   eCSSKeyword_horizontal, NS_STYLE_RESIZE_HORIZONTAL,
   eCSSKeyword_vertical,   NS_STYLE_RESIZE_VERTICAL,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const KTableValue nsCSSProps::kScrollBehaviorKTable[] = {
+  eCSSKeyword_auto,       NS_STYLE_SCROLL_BEHAVIOR_AUTO,
+  eCSSKeyword_instant,    NS_STYLE_SCROLL_BEHAVIOR_INSTANT,
+  eCSSKeyword_smooth,     NS_STYLE_SCROLL_BEHAVIOR_SMOOTH,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1880,6 +1893,23 @@ const KTableValue nsCSSProps::kFillRuleKTable[] = {
   eCSSKeyword_UNKNOWN, -1
 };
 
+const KTableValue nsCSSProps::kClipShapeSizingKTable[] = {
+  eCSSKeyword_content_box,   NS_STYLE_CLIP_SHAPE_SIZING_CONTENT,
+  eCSSKeyword_padding_box,   NS_STYLE_CLIP_SHAPE_SIZING_PADDING,
+  eCSSKeyword_border_box,    NS_STYLE_CLIP_SHAPE_SIZING_BORDER,
+  eCSSKeyword_margin_box,    NS_STYLE_CLIP_SHAPE_SIZING_MARGIN,
+  eCSSKeyword_fill_box,      NS_STYLE_CLIP_SHAPE_SIZING_FILL,
+  eCSSKeyword_stroke_box,    NS_STYLE_CLIP_SHAPE_SIZING_STROKE,
+  eCSSKeyword_view_box,      NS_STYLE_CLIP_SHAPE_SIZING_VIEW,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const KTableValue nsCSSProps::kShapeRadiusKTable[] = {
+  eCSSKeyword_closest_side, NS_RADIUS_CLOSEST_SIDE,
+  eCSSKeyword_farthest_side, NS_RADIUS_FARTHEST_SIDE,
+  eCSSKeyword_UNKNOWN, -1
+};
+
 const KTableValue nsCSSProps::kFilterFunctionKTable[] = {
   eCSSKeyword_blur, NS_STYLE_FILTER_BLUR,
   eCSSKeyword_brightness, NS_STYLE_FILTER_BRIGHTNESS,
@@ -1979,6 +2009,15 @@ const KTableValue nsCSSProps::kCounterSystemKTable[] = {
   eCSSKeyword_additive, NS_STYLE_COUNTER_SYSTEM_ADDITIVE,
   eCSSKeyword_fixed, NS_STYLE_COUNTER_SYSTEM_FIXED,
   eCSSKeyword_extends, NS_STYLE_COUNTER_SYSTEM_EXTENDS,
+  eCSSKeyword_UNKNOWN, -1
+};
+
+const KTableValue nsCSSProps::kCounterSymbolsSystemKTable[] = {
+  eCSSKeyword_cyclic, NS_STYLE_COUNTER_SYSTEM_CYCLIC,
+  eCSSKeyword_numeric, NS_STYLE_COUNTER_SYSTEM_NUMERIC,
+  eCSSKeyword_alphabetic, NS_STYLE_COUNTER_SYSTEM_ALPHABETIC,
+  eCSSKeyword_symbolic, NS_STYLE_COUNTER_SYSTEM_SYMBOLIC,
+  eCSSKeyword_fixed, NS_STYLE_COUNTER_SYSTEM_FIXED,
   eCSSKeyword_UNKNOWN, -1
 };
 

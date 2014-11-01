@@ -8,7 +8,8 @@
 #include "jscntxt.h" /* for error messages */
 #include "jsobj.h" /* for unwrapping without a context */
 
-using namespace JS;
+using namespace js;
+using JS::PerfMeasurement;
 
 // You cannot forward-declare a static object in C++, so instead
 // we have to forward-declare the helper function that refers to it.
@@ -271,7 +272,7 @@ ExtractPerfMeasurement(jsval wrapper)
     if (obj->getClass() != js::Valueify(&pm_class))
         return 0;
 
-    return (PerfMeasurement*) obj->getPrivate();
+    return (PerfMeasurement*) obj->as<js::NativeObject>().getPrivate();
 }
 
 } // namespace JS

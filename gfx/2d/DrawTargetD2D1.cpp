@@ -155,7 +155,10 @@ DrawTargetD2D1::DrawFilter(FilterNode *aNode,
 
   mDC->SetAntialiasMode(D2DAAMode(aOptions.mAntialiasMode));
 
-  mDC->DrawImage(static_cast<FilterNodeD2D1*>(aNode)->OutputEffect(), D2DPoint(aDestPoint), D2DRect(aSourceRect));
+  FilterNodeD2D1* node = static_cast<FilterNodeD2D1*>(aNode);
+  node->WillDraw(this);
+
+  mDC->DrawImage(node->OutputEffect(), D2DPoint(aDestPoint), D2DRect(aSourceRect));
 
   FinalizeDrawing(aOptions.mCompositionOp, ColorPattern(Color()));
 }
@@ -701,7 +704,7 @@ DrawTargetD2D1::CreateGradientStops(GradientStop *rawStops, uint32_t aNumStops, 
 TemporaryRef<FilterNode>
 DrawTargetD2D1::CreateFilter(FilterType aType)
 {
-  return FilterNodeD2D1::Create(this, mDC, aType);
+  return FilterNodeD2D1::Create(mDC, aType);
 }
 
 bool
@@ -1207,16 +1210,16 @@ DrawTargetD2D1::CreateBrushForPattern(const Pattern &aPattern, Float aAlpha)
     }
 
     D2D1_RECT_F samplingBounds;
+    Matrix mat = pat->mMatrix;
     if (!pat->mSamplingRect.IsEmpty()) {
       samplingBounds = D2DRect(pat->mSamplingRect);
+      mat.PreTranslate(pat->mSamplingRect.x, pat->mSamplingRect.y);
     } else {
       samplingBounds = D2D1::RectF(0, 0,
                                    Float(pat->mSurface->GetSize().width),
                                    Float(pat->mSurface->GetSize().height));
     }
 
-    Matrix mat = pat->mMatrix;
-    
     RefPtr<ID2D1ImageBrush> imageBrush;
     RefPtr<ID2D1Image> image = GetImageForSurface(pat->mSurface, mat, pat->mExtendMode);
     mDC->CreateImageBrush(image,

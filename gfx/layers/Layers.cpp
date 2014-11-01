@@ -7,6 +7,7 @@
 
 #include "Layers.h"
 #include <algorithm>                    // for max, min
+#include "apz/src/AsyncPanZoomController.h"
 #include "CompositableHost.h"           // for CompositableHost
 #include "ImageContainer.h"             // for ImageContainer, etc
 #include "ImageLayers.h"                // for ImageLayer
@@ -23,7 +24,6 @@
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
-#include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/Compositor.h"  // for Compositor
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/LayerManagerComposite.h"  // for LayerComposite
@@ -715,10 +715,10 @@ const Matrix4x4
 Layer::GetTransform() const
 {
   Matrix4x4 transform = mTransform;
+  transform.PostScale(mPostXScale, mPostYScale, 1.0f);
   if (const ContainerLayer* c = AsContainerLayer()) {
-    transform.Scale(c->GetPreXScale(), c->GetPreYScale(), 1.0f);
+    transform.PreScale(c->GetPreXScale(), c->GetPreYScale(), 1.0f);
   }
-  transform = transform * Matrix4x4().Scale(mPostXScale, mPostYScale, 1.0f);
   return transform;
 }
 
@@ -730,10 +730,11 @@ Layer::GetLocalTransform()
     transform = shadow->GetShadowTransform();
   else
     transform = mTransform;
+
+  transform.PostScale(mPostXScale, mPostYScale, 1.0f);
   if (ContainerLayer* c = AsContainerLayer()) {
-    transform.Scale(c->GetPreXScale(), c->GetPreYScale(), 1.0f);
+    transform.PreScale(c->GetPreXScale(), c->GetPreYScale(), 1.0f);
   }
-  transform = transform * Matrix4x4().Scale(mPostXScale, mPostYScale, 1.0f);
 
   return transform;
 }
@@ -1151,11 +1152,11 @@ ContainerLayer::HasOpaqueAncestorLayer(Layer* aLayer)
 void
 ContainerLayer::DidRemoveChild(Layer* aLayer)
 {
-  ThebesLayer* tl = aLayer->AsThebesLayer();
+  PaintedLayer* tl = aLayer->AsPaintedLayer();
   if (tl && tl->UsedForReadback()) {
     for (Layer* l = mFirstChild; l; l = l->GetNextSibling()) {
       if (l->GetType() == TYPE_READBACK) {
-        static_cast<ReadbackLayer*>(l)->NotifyThebesLayerRemoved(tl);
+        static_cast<ReadbackLayer*>(l)->NotifyPaintedLayerRemoved(tl);
       }
     }
   }
@@ -1343,7 +1344,7 @@ Layer::Dump(std::stringstream& aStream, const char* aPrefix, bool aDumpHtml)
   if (aDumpHtml) {
     aStream << nsPrintfCString("<li><a id=\"%p\" ", this).get();
 #ifdef MOZ_DUMP_PAINTING
-    if (GetType() == TYPE_CONTAINER || GetType() == TYPE_THEBES) {
+    if (GetType() == TYPE_CONTAINER || GetType() == TYPE_PAINTED) {
       WriteSnapshotLinkToDumpFile(this, aStream);
     }
 #endif
@@ -1620,7 +1621,7 @@ Layer::DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent)
 }
 
 void
-ThebesLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
+PaintedLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
 {
   Layer::PrintInfo(aStream, aPrefix);
   if (!mValidRegion.IsEmpty()) {
@@ -1629,13 +1630,13 @@ ThebesLayer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
 }
 
 void
-ThebesLayer::DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent)
+PaintedLayer::DumpPacket(layerscope::LayersPacket* aPacket, const void* aParent)
 {
   Layer::DumpPacket(aPacket, aParent);
   // get this layer data
   using namespace layerscope;
   LayersPacket::Layer* layer = aPacket->mutable_layer(aPacket->layer_size()-1);
-  layer->set_type(LayersPacket::Layer::ThebesLayer);
+  layer->set_type(LayersPacket::Layer::PaintedLayer);
   if (!mValidRegion.IsEmpty()) {
     DumpRegion(layer->mutable_valid(), mValidRegion);
   }

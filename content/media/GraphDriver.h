@@ -11,6 +11,7 @@
 #include "AudioBufferUtils.h"
 #include "AudioMixer.h"
 #include "AudioSegment.h"
+#include "mozilla/Atomics.h"
 
 struct cubeb_stream;
 
@@ -66,6 +67,7 @@ typedef int64_t GraphTime;
 const GraphTime GRAPH_TIME_MAX = MEDIA_TIME_MAX;
 
 class AudioCallbackDriver;
+class OfflineClockDriver;
 
 /**
  * A driver is responsible for the scheduling of the processing, the thread
@@ -153,6 +155,10 @@ public:
     return nullptr;
   }
 
+  virtual OfflineClockDriver* AsOfflineClockDriver() {
+    return nullptr;
+  }
+
   /**
    * Tell the driver it has to stop and return the current time of the graph, so
    * another driver can start from the right point in time.
@@ -198,6 +204,8 @@ public:
     return mGraphImpl;
   }
 
+  virtual bool OnThread() = 0;
+
 protected:
   // Time of the start of this graph iteration.
   GraphTime mIterationStart;
@@ -225,8 +233,6 @@ protected:
   };
   WaitState mWaitState;
 
-  // True if the graph needs another iteration after the current iteration.
-  bool mNeedAnotherIteration;
   TimeStamp mCurrentTimeStamp;
   // This is non-null only when this driver has recently switched from an other
   // driver, and has not cleaned it up yet (for example because the audio stream
@@ -262,6 +268,9 @@ public:
   uint32_t IterationDuration() {
     return MEDIA_GRAPH_TARGET_PERIOD_MS;
   }
+
+  virtual bool OnThread() MOZ_OVERRIDE { return !mThread || NS_GetCurrentThread() == mThread; }
+
 protected:
   nsCOMPtr<nsIThread> mThread;
 };
@@ -302,6 +311,9 @@ public:
   virtual void WaitForNextIteration() MOZ_OVERRIDE;
   virtual void WakeUp() MOZ_OVERRIDE;
   virtual TimeStamp GetCurrentTimeStamp() MOZ_OVERRIDE;
+  virtual OfflineClockDriver* AsOfflineClockDriver() {
+    return this;
+  }
 
 private:
   // Time, in GraphTime, for each iteration
@@ -384,6 +396,8 @@ public:
    */
   bool InCallback();
 
+  virtual bool OnThread() MOZ_OVERRIDE { return !mStarted || InCallback(); }
+
   /* Whether the underlying cubeb stream has been started. See comment for
    * mStarted for details. */
   bool IsStarted();
@@ -449,8 +463,7 @@ private:
    * shutdown of the audio stream. */
   nsCOMPtr<nsIThread> mInitShutdownThread;
   dom::AudioChannel mAudioChannel;
-  /* This can only be accessed with the graph's monitor held. */
-  bool mInCallback;
+  Atomic<bool> mInCallback;
   /* A thread has been created to be able to pause and restart the audio thread,
    * but has not done so yet. This indicates that the callback should return
    * early */

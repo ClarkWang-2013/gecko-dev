@@ -104,7 +104,7 @@ js::SetPropertyIgnoringNamedGetter(JSContext *cx, const BaseProxyHandler *handle
 {
     /* The control-flow here differs from ::get() because of the fall-through case below. */
     if (descIsOwn) {
-        JS_ASSERT(desc.object());
+        MOZ_ASSERT(desc.object());
 
         // Check for read-only properties.
         if (desc.isReadonly())
@@ -165,19 +165,20 @@ js::SetPropertyIgnoringNamedGetter(JSContext *cx, const BaseProxyHandler *handle
 }
 
 bool
-BaseProxyHandler::keys(JSContext *cx, HandleObject proxy, AutoIdVector &props) const
+BaseProxyHandler::getOwnEnumerablePropertyKeys(JSContext *cx, HandleObject proxy,
+                                               AutoIdVector &props) const
 {
     assertEnteredPolicy(cx, proxy, JSID_VOID, ENUMERATE);
-    JS_ASSERT(props.length() == 0);
+    MOZ_ASSERT(props.length() == 0);
 
-    if (!getOwnPropertyNames(cx, proxy, props))
+    if (!ownPropertyKeys(cx, proxy, props))
         return false;
 
     /* Select only the enumerable properties through in-place iteration. */
     RootedId id(cx);
     size_t i = 0;
     for (size_t j = 0, len = props.length(); j < len; j++) {
-        JS_ASSERT(i <= j);
+        MOZ_ASSERT(i <= j);
         id = props[j];
         if (JSID_IS_SYMBOL(id))
             continue;
@@ -190,7 +191,7 @@ BaseProxyHandler::keys(JSContext *cx, HandleObject proxy, AutoIdVector &props) c
             props[i++].set(id);
     }
 
-    JS_ASSERT(i <= props.length());
+    MOZ_ASSERT(i <= props.length());
     props.resize(i);
 
     return true;
@@ -204,7 +205,7 @@ BaseProxyHandler::iterate(JSContext *cx, HandleObject proxy, unsigned flags,
 
     AutoIdVector props(cx);
     if ((flags & JSITER_OWNONLY)
-        ? !keys(cx, proxy, props)
+        ? !getOwnEnumerablePropertyKeys(cx, proxy, props)
         : !enumerate(cx, proxy, props)) {
         return false;
     }

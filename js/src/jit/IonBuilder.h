@@ -666,6 +666,7 @@ class IonBuilder
     {
         InliningStatus_Error,
         InliningStatus_NotInlined,
+        InliningStatus_WarmUpCountTooLow,
         InliningStatus_Inlined
     };
 
@@ -673,7 +674,8 @@ class IonBuilder
     {
         InliningDecision_Error,
         InliningDecision_Inline,
-        InliningDecision_DontInline
+        InliningDecision_DontInline,
+        InliningDecision_WarmUpCountTooLow
     };
 
     static InliningDecision DontInline(JSScript *targetScript, const char *reason);
@@ -757,10 +759,9 @@ class IonBuilder
     InliningStatus inlineToInteger(CallInfo &callInfo);
     InliningStatus inlineToString(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
-    InliningStatus inlineHasClass(CallInfo &callInfo, const Class *clasp) {
-        return inlineHasClasses(callInfo, clasp, nullptr);
-    }
-    InliningStatus inlineHasClasses(CallInfo &callInfo, const Class *clasp1, const Class *clasp2);
+    InliningStatus inlineHasClass(CallInfo &callInfo, const Class *clasp,
+                                  const Class *clasp2 = nullptr,
+                                  const Class *clasp3 = nullptr);
     InliningStatus inlineIsConstructing(CallInfo &callInfo);
 
     // Testing functions.
@@ -895,7 +896,7 @@ class IonBuilder
     uint32_t loopDepth_;
 
     BytecodeSite bytecodeSite(jsbytecode *pc) {
-        JS_ASSERT(info().inlineScriptTree()->script()->containsPC(pc));
+        MOZ_ASSERT(info().inlineScriptTree()->script()->containsPC(pc));
         return BytecodeSite(info().inlineScriptTree(), pc);
     }
 
@@ -1018,7 +1019,7 @@ class CallInfo
     { }
 
     bool init(CallInfo &callInfo) {
-        JS_ASSERT(constructing_ == callInfo.constructing());
+        MOZ_ASSERT(constructing_ == callInfo.constructing());
 
         fun_ = callInfo.fun();
         thisArg_ = callInfo.thisArg();
@@ -1030,7 +1031,7 @@ class CallInfo
     }
 
     bool init(MBasicBlock *current, uint32_t argc) {
-        JS_ASSERT(args_.empty());
+        MOZ_ASSERT(args_.empty());
 
         // Get the arguments in the right order
         if (!args_.reserve(argc))
@@ -1066,7 +1067,7 @@ class CallInfo
     }
 
     void setArgs(MDefinitionVector *args) {
-        JS_ASSERT(args_.empty());
+        MOZ_ASSERT(args_.empty());
         args_.appendAll(*args);
     }
 
@@ -1079,17 +1080,17 @@ class CallInfo
     }
 
     MDefinition *getArg(uint32_t i) const {
-        JS_ASSERT(i < argc());
+        MOZ_ASSERT(i < argc());
         return args_[i];
     }
 
     void setArg(uint32_t i, MDefinition *def) {
-        JS_ASSERT(i < argc());
+        MOZ_ASSERT(i < argc());
         args_[i] = def;
     }
 
     MDefinition *thisArg() const {
-        JS_ASSERT(thisArg_);
+        MOZ_ASSERT(thisArg_);
         return thisArg_;
     }
 
@@ -1109,7 +1110,7 @@ class CallInfo
     }
 
     MDefinition *fun() const {
-        JS_ASSERT(fun_);
+        MOZ_ASSERT(fun_);
         return fun_;
     }
 

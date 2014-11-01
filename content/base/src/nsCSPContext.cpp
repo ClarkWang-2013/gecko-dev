@@ -11,7 +11,6 @@
 #include "nsCSPService.h"
 #include "nsError.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
-#include "nsIChannelPolicy.h"
 #include "nsIClassInfoImpl.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
@@ -25,12 +24,10 @@
 #include "nsIObjectOutputStream.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-#include "nsIPropertyBag2.h"
 #include "nsIStringStream.h"
 #include "nsIUploadChannel.h"
 #include "nsIScriptError.h"
 #include "nsIWebNavigation.h"
-#include "nsIWritablePropertyBag2.h"
 #include "nsNetUtil.h"
 #include "nsNullPrincipal.h"
 #include "nsIContentPolicy.h"
@@ -173,6 +170,9 @@ nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
     if (!mPolicies[p]->permits(aContentType,
                                aContentLocation,
                                nonce,
+                               // aExtra is only non-null if
+                               // the channel got redirected.
+                               (aExtra != nullptr),
                                violatedDirective)) {
       // If the policy is violated and not report-only, reject the load and
       // report to the console
@@ -689,6 +689,19 @@ nsCSPContext::SendReports(nsISupports* aBlockedContentSource,
       continue; // don't return yet, there may be more URIs
     }
 
+    // log a warning to console if scheme is not http or https
+    bool isHttpScheme =
+      (NS_SUCCEEDED(reportURI->SchemeIs("http", &isHttpScheme)) && isHttpScheme) ||
+      (NS_SUCCEEDED(reportURI->SchemeIs("https", &isHttpScheme)) && isHttpScheme);
+
+    if (!isHttpScheme) {
+      const char16_t* params[] = { reportURIs[r].get() };
+      CSP_LogLocalizedStr(NS_LITERAL_STRING("reportURInotHttpsOrHttp2").get(),
+                          params, ArrayLength(params),
+                          aSourceFile, aScriptSample, aLineNum, 0,
+                          nsIScriptError::errorFlag, "CSP", mInnerWindowID);
+    }
+
     // make sure this is an anonymous request (no cookies) so in case the
     // policy URI is injected, it can't be abused for CSRF.
     nsLoadFlags flags;
@@ -792,7 +805,8 @@ class CSPReportSenderRunnable MOZ_FINAL : public nsRunnable
                             uint64_t aInnerWindowID,
                             nsCSPContext* aCSPContext)
       : mBlockedContentSource(aBlockedContentSource)
-      , mOriginalURI(aOriginalURI) , mViolatedPolicyIndex(aViolatedPolicyIndex)
+      , mOriginalURI(aOriginalURI)
+      , mViolatedPolicyIndex(aViolatedPolicyIndex)
       , mReportOnlyFlag(aReportOnlyFlag)
       , mViolatedDirective(aViolatedDirective)
       , mSourceFile(aSourceFile)
@@ -871,7 +885,7 @@ class CSPReportSenderRunnable MOZ_FINAL : public nsRunnable
     nsString                mScriptSample;
     uint32_t                mLineNum;
     uint64_t                mInnerWindowID;
-    nsCSPContext*           mCSPContext;
+    nsRefPtr<nsCSPContext>  mCSPContext;
 };
 
 /**
@@ -1024,6 +1038,7 @@ nsCSPContext::PermitsAncestry(nsIDocShell* aDocShell, bool* outPermitsAncestry)
       if (!mPolicies[i]->permits(nsIContentPolicy::TYPE_DOCUMENT,
                                  ancestorsArray[a],
                                  EmptyString(), // no nonce
+                                 false, // no redirect
                                  violatedDirective)) {
         // Policy is violated
         // Send reports, but omit the ancestor URI if cross-origin as per spec

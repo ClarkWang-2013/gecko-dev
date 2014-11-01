@@ -15,15 +15,16 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/AudioStreamTrack.h"
 #include "mozilla/dom/BlobEvent.h"
+#include "mozilla/dom/File.h"
 #include "mozilla/dom/RecordErrorEvent.h"
 #include "mozilla/dom/VideoStreamTrack.h"
 #include "nsError.h"
 #include "nsIDocument.h"
-#include "nsIDOMFile.h"
 #include "nsIPrincipal.h"
 #include "nsMimeTypes.h"
 #include "nsProxyRelease.h"
 #include "nsTArray.h"
+#include "GeckoProfiler.h"
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gMediaRecorderLog;
@@ -242,6 +243,8 @@ class MediaRecorder::Session: public nsIObserver
       } else {
         // Flush out remaining encoded data.
         mSession->Extract(true);
+        if (mSession->mIsRegisterProfiler)
+           profiler_unregister_thread();
         if (NS_FAILED(NS_DispatchToMainThread(
                         new DestroyRunnable(mSession)))) {
           MOZ_ASSERT(false, "NS_DispatchToMainThread DestroyRunnable failed");
@@ -339,7 +342,8 @@ public:
     : mRecorder(aRecorder),
       mTimeSlice(aTimeSlice),
       mStopIssued(false),
-      mCanRetrieveData(false)
+      mCanRetrieveData(false),
+      mIsRegisterProfiler(false)
   {
     MOZ_ASSERT(NS_IsMainThread());
 
@@ -386,10 +390,24 @@ public:
     return NS_OK;
   }
 
+  nsresult RequestData()
+  {
+    LOG(PR_LOG_DEBUG, ("Session.RequestData"));
+    MOZ_ASSERT(NS_IsMainThread());
+
+    if (NS_FAILED(NS_DispatchToMainThread(new PushBlobRunnable(this)))) {
+      MOZ_ASSERT(false, "RequestData NS_DispatchToMainThread failed");
+      return NS_ERROR_FAILURE;
+    }
+
+    return NS_OK;
+  }
+
   already_AddRefed<nsIDOMBlob> GetEncodedData()
   {
     MOZ_ASSERT(NS_IsMainThread());
-    return mEncodedBufferCache->ExtractBlob(mMimeType);
+    return mEncodedBufferCache->ExtractBlob(mRecorder->GetParentObject(),
+                                            mMimeType);
   }
 
   bool IsEncoderError()
@@ -423,6 +441,15 @@ private:
   {
     MOZ_ASSERT(NS_GetCurrentThread() == mReadThread);
     LOG(PR_LOG_DEBUG, ("Session.Extract %p", this));
+
+    if (!mIsRegisterProfiler) {
+      char aLocal;
+      profiler_register_thread("Media_Encoder", &aLocal);
+      mIsRegisterProfiler = true;
+    }
+
+    PROFILER_LABEL("MediaRecorder", "Session Extract",
+      js::ProfileEntry::Category::OTHER);
 
     // Pull encoded media data from MediaEncoder
     nsTArray<nsTArray<uint8_t> > encodedBuf;
@@ -520,7 +547,7 @@ private:
     mTrackUnionStream->AddListener(mEncoder);
     // Create a thread to read encode media data from MediaEncoder.
     if (!mReadThread) {
-      nsresult rv = NS_NewNamedThread("Media Encoder", getter_AddRefs(mReadThread));
+      nsresult rv = NS_NewNamedThread("Media_Encoder", getter_AddRefs(mReadThread));
       if (NS_FAILED(rv)) {
         DoSessionEndTask(rv);
         return;
@@ -622,6 +649,8 @@ private:
   bool mStopIssued;
   // Indicate session has encoded data. This can be changed in recording thread.
   bool mCanRetrieveData;
+  // The register flag for "Media_Encoder" thread to profiler
+  bool mIsRegisterProfiler;
 };
 
 NS_IMPL_ISUPPORTS(MediaRecorder::Session, nsIObserver)
@@ -815,25 +844,6 @@ MediaRecorder::Resume(ErrorResult& aResult)
   mState = RecordingState::Recording;
 }
 
-class CreateAndDispatchBlobEventRunnable : public nsRunnable {
-  nsCOMPtr<nsIDOMBlob> mBlob;
-  nsRefPtr<MediaRecorder> mRecorder;
-public:
-  CreateAndDispatchBlobEventRunnable(already_AddRefed<nsIDOMBlob>&& aBlob,
-                                     MediaRecorder* aRecorder)
-    : mBlob(aBlob), mRecorder(aRecorder)
-  { }
-
-  NS_IMETHOD
-  Run();
-};
-
-NS_IMETHODIMP
-CreateAndDispatchBlobEventRunnable::Run()
-{
-  return mRecorder->CreateAndDispatchBlobEvent(mBlob.forget());
-}
-
 void
 MediaRecorder::RequestData(ErrorResult& aResult)
 {
@@ -842,10 +852,9 @@ MediaRecorder::RequestData(ErrorResult& aResult)
     return;
   }
   MOZ_ASSERT(mSessions.Length() > 0);
-  if (NS_FAILED(NS_DispatchToMainThread(
-                  new CreateAndDispatchBlobEventRunnable(
-                    mSessions.LastElement()->GetEncodedData(), this)))) {
-    MOZ_ASSERT(false, "NS_DispatchToMainThread CreateAndDispatchBlobEventRunnable failed");
+  nsresult rv = mSessions.LastElement()->RequestData();
+  if (NS_FAILED(rv)) {
+    NotifyError(rv);
   }
 }
 
@@ -920,7 +929,10 @@ MediaRecorder::CreateAndDispatchBlobEvent(already_AddRefed<nsIDOMBlob>&& aBlob)
   BlobEventInit init;
   init.mBubbles = false;
   init.mCancelable = false;
-  init.mData = aBlob;
+
+  nsCOMPtr<nsIDOMBlob> blob = aBlob;
+  init.mData = static_cast<File*>(blob.get());
+
   nsRefPtr<BlobEvent> event =
     BlobEvent::Constructor(this,
                            NS_LITERAL_STRING("dataavailable"),

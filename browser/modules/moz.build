@@ -6,17 +6,23 @@
 
 BROWSER_CHROME_MANIFESTS += ['test/browser.ini']
 MOCHITEST_CHROME_MANIFESTS += ['test/chrome/chrome.ini']
-XPCSHELL_TESTS_MANIFESTS += ['test/unit/social/xpcshell.ini']
+XPCSHELL_TESTS_MANIFESTS += [
+    'test/unit/social/xpcshell.ini',
+    'test/xpcshell/xpcshell.ini',
+]
 
 EXTRA_JS_MODULES += [
     'BrowserNewTabPreloader.jsm',
     'BrowserUITelemetry.jsm',
+    'CastingApps.jsm',
     'Chat.jsm',
     'ContentClick.jsm',
     'ContentLinkHandler.jsm',
     'ContentSearch.jsm',
     'ContentWebRTC.jsm',
     'CustomizationTabPreloader.jsm',
+    'DirectoryLinksProvider.jsm',
+    'E10SUtils.jsm',
     'Feeds.jsm',
     'FormSubmitObserver.jsm',
     'FormValidationHandler.jsm',

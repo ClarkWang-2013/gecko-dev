@@ -10,6 +10,8 @@
 
 #include <algorithm>
 
+#include "gfxUtils.h"
+#include "mozilla/gfx/2D.h"
 #include "nsCOMPtr.h"
 #include "nsITimer.h"
 #include "nsFrameSelection.h"
@@ -20,6 +22,7 @@
 #include "nsISelectionPrivate.h"
 #include "nsIContent.h"
 #include "nsIPresShell.h"
+#include "nsLayoutUtils.h"
 #include "nsRenderingContext.h"
 #include "nsPresContext.h"
 #include "nsBlockFrame.h"
@@ -36,6 +39,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::gfx;
 
 // The bidi indicator hangs off the caret to one side, to show which
 // direction the typing is in. It needs to be at least 2x2 to avoid looking like 
@@ -305,12 +309,18 @@ nsCaret::GetGeometryForFrame(nsIFrame* aFrame,
     descent = fm->MaxDescent();
   }
   nscoord height = ascent + descent;
-  framePos.y = baseline - ascent;
+  bool vertical = aFrame->GetWritingMode().IsVertical();
+  if (vertical) {
+    framePos.x = baseline - ascent;
+  } else {
+    framePos.y = baseline - ascent;
+  }
   Metrics caretMetrics = ComputeMetrics(aFrame, aFrameOffset, height);
-  rect = nsRect(framePos, nsSize(caretMetrics.mCaretWidth, height));
+  rect = nsRect(framePos, vertical ? nsSize(height, caretMetrics.mCaretWidth) :
+                                     nsSize(caretMetrics.mCaretWidth, height));
 
-  // Clamp the x-position to be within our scroll frame. If we don't, then it
-  // clips us, and we don't appear at all. See bug 335560.
+  // Clamp the inline-position to be within our scroll frame. If we don't, then
+  // it clips us, and we don't appear at all. See bug 335560.
   nsIFrame *scrollFrame =
     nsLayoutUtils::GetClosestFrameOfType(aFrame, nsGkAtoms::scrollFrame);
   if (scrollFrame) {
@@ -319,12 +329,20 @@ nsCaret::GetGeometryForFrame(nsIFrame* aFrame,
     nsIFrame *scrolled = sf->GetScrolledFrame();
     nsRect caretInScroll = rect + aFrame->GetOffsetTo(scrolled);
 
-    // Now see if thet caret extends beyond the view's bounds. If it does,
+    // Now see if the caret extends beyond the view's bounds. If it does,
     // then snap it back, put it as close to the edge as it can.
-    nscoord overflow = caretInScroll.XMost() -
-      scrolled->GetVisualOverflowRectRelativeToSelf().width;
-    if (overflow > 0) {
-      rect.x -= overflow;
+    if (vertical) {
+      nscoord overflow = caretInScroll.YMost() -
+        scrolled->GetVisualOverflowRectRelativeToSelf().height;
+      if (overflow > 0) {
+        rect.y -= overflow;
+      }
+    } else {
+      nscoord overflow = caretInScroll.XMost() -
+        scrolled->GetVisualOverflowRectRelativeToSelf().width;
+      if (overflow > 0) {
+        rect.x -= overflow;
+      }
     }
   }
 
@@ -506,15 +524,22 @@ void nsCaret::PaintCaret(nsDisplayListBuilder *aBuilder,
   }
   NS_ASSERTION(frame == aForFrame, "We're referring different frame");
 
-  nscolor foregroundColor = aForFrame->GetCaretColorAt(contentOffset);
-  aCtx->SetColor(foregroundColor);
+  DrawTarget* drawTarget = aCtx->GetDrawTarget();
+  int32_t appUnitsPerDevPixel = frame->PresContext()->AppUnitsPerDevPixel();
 
   nsRect caretRect;
   nsRect hookRect;
   ComputeCaretRects(frame, contentOffset, &caretRect, &hookRect);
-  aCtx->FillRect(caretRect + aOffset);
+
+  Rect devPxCaretRect =
+    NSRectToSnappedRect(caretRect + aOffset, appUnitsPerDevPixel, *drawTarget);
+  Rect devPxHookRect =
+    NSRectToSnappedRect(hookRect + aOffset, appUnitsPerDevPixel, *drawTarget);
+  ColorPattern color(ToDeviceColor(frame->GetCaretColorAt(contentOffset)));
+
+  drawTarget->FillRect(devPxCaretRect, color);
   if (!hookRect.IsEmpty()) {
-    aCtx->FillRect(hookRect + aOffset);
+    drawTarget->FillRect(devPxHookRect, color);
   }
 }
 
@@ -822,13 +847,19 @@ nsCaret::ComputeCaretRects(nsIFrame* aFrame, int32_t aFrameOffset,
 {
   NS_ASSERTION(aFrame, "Should have a frame here");
 
+  bool isVertical = aFrame->GetWritingMode().IsVertical();
+
   nscoord bidiIndicatorSize;
   *aCaretRect = GetGeometryForFrame(aFrame, aFrameOffset, &bidiIndicatorSize);
 
   // on RTL frames the right edge of mCaretRect must be equal to framePos
   const nsStyleVisibility* vis = aFrame->StyleVisibility();
   if (NS_STYLE_DIRECTION_RTL == vis->mDirection) {
-    aCaretRect->x -= aCaretRect->width;
+    if (isVertical) {
+      aCaretRect->y -= aCaretRect->height;
+    } else {
+      aCaretRect->x -= aCaretRect->width;
+    }
   }
 
   // Simon -- make a hook to draw to the left or right of the caret to show keyboard language direction
@@ -846,10 +877,19 @@ nsCaret::ComputeCaretRects(nsIFrame* aFrame, int32_t aFrameOffset,
     // If keyboard language is RTL, draw the hook on the left; if LTR, to the right
     // The height of the hook rectangle is the same as the width of the caret
     // rectangle.
-    aHookRect->SetRect(aCaretRect->x + (isCaretRTL ? bidiIndicatorSize * -1 : aCaretRect->width),
-                       aCaretRect->y + bidiIndicatorSize,
-                       bidiIndicatorSize,
-                       aCaretRect->width);
+    if (isVertical) {
+      aHookRect->SetRect(aCaretRect->XMost() - bidiIndicatorSize,
+                         aCaretRect->y + (isCaretRTL ? bidiIndicatorSize * -1 :
+                                                       aCaretRect->height),
+                         aCaretRect->height,
+                         bidiIndicatorSize);
+    } else {
+      aHookRect->SetRect(aCaretRect->x + (isCaretRTL ? bidiIndicatorSize * -1 :
+                                                       aCaretRect->width),
+                         aCaretRect->y + bidiIndicatorSize,
+                         bidiIndicatorSize,
+                         aCaretRect->width);
+    }
   }
 }
 

@@ -388,7 +388,10 @@ DrawTargetD2D::DrawFilter(FilterNode *aNode,
     hr = rt->QueryInterface((ID2D1DeviceContext**)byRef(dc));
 
     if (SUCCEEDED(hr)) {
-      dc->DrawImage(static_cast<FilterNodeD2D1*>(aNode)->OutputEffect(), D2DPoint(aDestPoint), D2DRect(aSourceRect));
+      FilterNodeD2D1* node = static_cast<FilterNodeD2D1*>(aNode);
+      node->WillDraw(this);
+
+      dc->DrawImage(node->OutputEffect(), D2DPoint(aDestPoint), D2DRect(aSourceRect));
 
       Rect destRect = aSourceRect;
       destRect.MoveBy(aDestPoint);
@@ -1320,7 +1323,7 @@ DrawTargetD2D::CreateFilter(FilterType aType)
   HRESULT hr = mRT->QueryInterface((ID2D1DeviceContext**)byRef(dc));
 
   if (SUCCEEDED(hr)) {
-    return FilterNodeD2D1::Create(this, dc, aType);
+    return FilterNodeD2D1::Create(dc, aType);
   }
 #endif
   return FilterNodeSoftware::Create(aType);
@@ -2364,7 +2367,9 @@ DrawTargetD2D::CreateBrushForPattern(const Pattern &aPattern, Float aAlpha)
 
     RefPtr<SourceSurface> source = pat->mSurface;
 
-    if (!pat->mSamplingRect.IsEmpty()) {
+    if (!pat->mSamplingRect.IsEmpty() &&
+        (source->GetType() == SurfaceType::D2D1_BITMAP ||
+         source->GetType() == SurfaceType::D2D1_DRAWTARGET)) {
       IntRect samplingRect = pat->mSamplingRect;
 
       RefPtr<DrawTargetD2D> dt = new DrawTargetD2D();
@@ -2408,7 +2413,12 @@ DrawTargetD2D::CreateBrushForPattern(const Pattern &aPattern, Float aAlpha)
           return nullptr;
         }
 
-        bitmap = CreatePartialBitmapForSurface(dataSurf, mTransform, mSize, pat->mExtendMode, mat, mRT); 
+        IntRect sourceRect = pat->mSamplingRect;
+        if (sourceRect.IsEmpty()) {
+          sourceRect = IntRect(0, 0, source->GetSize().width, source->GetSize().height);
+        }
+
+        bitmap = CreatePartialBitmapForSurface(dataSurf, mTransform, mSize, pat->mExtendMode, mat, mRT, &sourceRect);
         if (!bitmap) {
           return nullptr;
         }

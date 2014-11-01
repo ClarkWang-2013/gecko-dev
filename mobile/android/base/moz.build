@@ -47,6 +47,7 @@ gujar = add_java_jar('gecko-util')
 gujar.sources += [
     'util/ActivityResultHandler.java',
     'util/ActivityResultHandlerMap.java',
+    'util/ActivityUtils.java',
     'util/Clipboard.java',
     'util/EventCallback.java',
     'util/FileUtils.java',
@@ -59,6 +60,7 @@ gujar.sources += [
     'util/HardwareUtils.java',
     'util/INIParser.java',
     'util/INISection.java',
+    'util/IOUtils.java',
     'util/JSONUtils.java',
     'util/MenuUtils.java',
     'util/NativeEventListener.java',
@@ -130,6 +132,7 @@ gbjar.sources += [
     'BrowserLocaleManager.java',
     'ContactService.java',
     'ContextGetter.java',
+    'CrashHandler.java',
     'CustomEditText.java',
     'DataReportingNotification.java',
     'db/AbstractPerProfileDatabaseProvider.java',
@@ -160,6 +163,7 @@ gbjar.sources += [
     'distribution/ReferrerDescriptor.java',
     'distribution/ReferrerReceiver.java',
     'DoorHangerPopup.java',
+    'DownloadsIntegration.java',
     'DynamicToolbar.java',
     'EditBookmarkDialog.java',
     'EventDispatcher.java',
@@ -227,7 +231,6 @@ gbjar.sources += [
     'gfx/LayerRenderer.java',
     'gfx/LayerView.java',
     'gfx/NativePanZoomController.java',
-    'gfx/NinePatchTileLayer.java',
     'gfx/Overscroll.java',
     'gfx/OverscrollEdgeEffect.java',
     'gfx/PanningPerfAPI.java',
@@ -240,9 +243,7 @@ gbjar.sources += [
     'gfx/RenderTask.java',
     'gfx/ScrollbarLayer.java',
     'gfx/SimpleScaleGestureDetector.java',
-    'gfx/SingleTileLayer.java',
     'gfx/SubdocumentScrollHelper.java',
-    'gfx/TextLayer.java',
     'gfx/TextureGenerator.java',
     'gfx/TextureReaper.java',
     'gfx/TileLayer.java',
@@ -369,6 +370,7 @@ gbjar.sources += [
     'prompts/PromptService.java',
     'prompts/TabInput.java',
     'ReaderModeUtils.java',
+    'ReadingListHelper.java',
     'RemoteClientsDialogFragment.java',
     'RemoteTabsExpandableListAdapter.java',
     'Restarter.java',
@@ -389,27 +391,20 @@ gbjar.sources += [
     'Tab.java',
     'Tabs.java',
     'tabs/PrivateTabsPanel.java',
-    'tabs/RemoteTabsContainerPanel.java',
-    'tabs/RemoteTabsList.java',
     'tabs/RemoteTabsPanel.java',
-    'tabs/RemoteTabsSetupPanel.java',
-    'tabs/RemoteTabsVerificationPanel.java',
     'tabs/TabCurve.java',
     'tabs/TabsGridLayout.java',
     'tabs/TabsLayoutAdapter.java',
     'tabs/TabsLayoutItemView.java',
     'tabs/TabsListLayout.java',
     'tabs/TabsPanel.java',
-    'tabs/TabStrip.java',
-    'tabs/TabStripAdapter.java',
-    'tabs/TabStripItemView.java',
-    'tabs/TabStripView.java',
     'TabsAccessor.java',
     'Telemetry.java',
     'TelemetryContract.java',
     'TextSelection.java',
     'TextSelectionHandle.java',
     'ThumbnailHelper.java',
+    'toolbar/ActionBarViewFlipper.java',
     'toolbar/AutocompleteHandler.java',
     'toolbar/BackButton.java',
     'toolbar/BrowserToolbar.java',
@@ -421,6 +416,7 @@ gbjar.sources += [
     'toolbar/BrowserToolbarTabletBase.java',
     'toolbar/CanvasDelegate.java',
     'toolbar/ForwardButton.java',
+    'toolbar/NavButton.java',
     'toolbar/PageActionLayout.java',
     'toolbar/PhoneTabsButton.java',
     'toolbar/ShapedButton.java',
@@ -469,7 +465,6 @@ gbjar.sources += [
     'widget/IconTabWidget.java',
     'widget/SquaredImageView.java',
     'widget/SwipeDismissListViewTouchListener.java',
-    'widget/TabRow.java',
     'widget/TabThumbnailWrapper.java',
     'widget/ThumbnailView.java',
     'widget/TwoWayView.java',
@@ -514,14 +509,27 @@ if CONFIG['MOZ_ANDROID_SHARE_OVERLAY']:
         'overlays/ui/ShareDialog.java',
     ]
 
+if (CONFIG['MOZ_ANDROID_MAX_SDK_VERSION']):
+    max_sdk_version = int(CONFIG['MOZ_ANDROID_MAX_SDK_VERSION'])
+else:
+    max_sdk_version = 999
+
+if CONFIG['MOZ_ANDROID_NEW_TABLET_UI'] and max_sdk_version >= 11:
+    gbjar.sources += [
+        'tabs/TabStrip.java',
+        'tabs/TabStripAdapter.java',
+        'tabs/TabStripItemView.java',
+        'tabs/TabStripView.java'
+    ]
+    ANDROID_RES_DIRS += [ SRCDIR + '/newtablet/res' ]
+
 gbjar.sources += sync_java_files
 gbjar.generated_sources += sync_generated_java_files
 gbjar.extra_jars = [
     'gecko-R.jar',
     'gecko-mozglue.jar',
+    'gecko-thirdparty.jar',
     'gecko-util.jar',
-    'nineoldandroids.jar',
-    'squareup-picasso.jar',
     'sync-thirdparty.jar',
 ]
 
@@ -541,8 +549,9 @@ if CONFIG['MOZ_NATIVE_DEVICES']:
 
 gbjar.javac_flags += ['-Xlint:all,-deprecation,-fallthrough', '-J-Xmx512m', '-J-Xms128m']
 
-noajar = add_java_jar('nineoldandroids')
-noajar.sources += [ thirdparty_source_dir + f for f in [
+# gecko-thirdparty is a good place to put small independent libraries
+gtjar = add_java_jar('gecko-thirdparty')
+gtjar.sources += [ thirdparty_source_dir + f for f in [
     'com/nineoldandroids/animation/Animator.java',
     'com/nineoldandroids/animation/AnimatorInflater.java',
     'com/nineoldandroids/animation/AnimatorListenerAdapter.java',
@@ -570,12 +579,8 @@ noajar.sources += [ thirdparty_source_dir + f for f in [
     'com/nineoldandroids/view/ViewPropertyAnimator.java',
     'com/nineoldandroids/view/ViewPropertyAnimatorHC.java',
     'com/nineoldandroids/view/ViewPropertyAnimatorICS.java',
-    'com/nineoldandroids/view/ViewPropertyAnimatorPreHC.java'
-] ]
-#noajar.javac_flags += ['-Xlint:all']
-
-spjar = add_java_jar('squareup-picasso')
-spjar.sources += [ thirdparty_source_dir + f for f in [
+    'com/nineoldandroids/view/ViewPropertyAnimatorPreHC.java',
+    'com/readystatesoftware/systembartint/SystemBarTintManager.java',
     'com/squareup/picasso/Action.java',
     'com/squareup/picasso/AssetBitmapHunter.java',
     'com/squareup/picasso/BitmapHunter.java',
@@ -606,9 +611,15 @@ spjar.sources += [ thirdparty_source_dir + f for f in [
     'com/squareup/picasso/TargetAction.java',
     'com/squareup/picasso/Transformation.java',
     'com/squareup/picasso/UrlConnectionDownloader.java',
-    'com/squareup/picasso/Utils.java',
+    'com/squareup/picasso/Utils.java'
 ] ]
-#spjar.javac_flags += ['-Xlint:all']
+#gtjar.javac_flags += ['-Xlint:all']
+
+if not CONFIG['MOZILLA_OFFICIAL']:
+    gtjar.sources += [ thirdparty_source_dir + f for f in [
+        'org/lucasr/dspec/DesignSpec.java',
+        'org/lucasr/dspec/RawResource.java'
+    ] ]
 
 ANDROID_RES_DIRS += [
     SRCDIR + '/resources',
@@ -623,7 +634,8 @@ ANDROID_GENERATED_RESFILES += [
 
 for var in ('MOZ_ANDROID_ANR_REPORTER', 'MOZ_LINKER_EXTRACT', 'MOZILLA_OFFICIAL', 'MOZ_DEBUG',
             'MOZ_ANDROID_SEARCH_ACTIVITY', 'MOZ_NATIVE_DEVICES', 'MOZ_ANDROID_MLS_STUMBLER',
-            'MOZ_ANDROID_SHARE_OVERLAY'):
+            'MOZ_ANDROID_SHARE_OVERLAY', 'MOZ_ANDROID_DOWNLOADS_INTEGRATION',
+            'MOZ_ANDROID_NEW_TABLET_UI'):
     if CONFIG[var]:
         DEFINES[var] = 1
 
@@ -655,9 +667,6 @@ if CONFIG['MOZ_ANDROID_SEARCH_ACTIVITY']:
     search_source_dir = SRCDIR + '/../search'
     include('../search/search_activity_sources.mozbuild')
 
-    ANDROID_RES_DIRS += [search_source_dir + '/res']
-    resjar.generated_sources += ['org/mozilla/search/R.java']
-
     search_activity = add_java_jar('search-activity')
     search_activity.sources += [search_source_dir + '/' + f for f in search_activity_sources]
     search_activity.javac_flags += ['-Xlint:all']
@@ -665,8 +674,8 @@ if CONFIG['MOZ_ANDROID_SEARCH_ACTIVITY']:
         'gecko-R.jar',
         'gecko-browser.jar',
         'gecko-mozglue.jar',
-        'gecko-util.jar',
-        'nineoldandroids.jar'
+        'gecko-thirdparty.jar',
+        'gecko-util.jar'
     ]
 
 generated_recursive_make_targets = ['.aapt.deps', '.locales.deps'] # Captures dependencies on Android manifest and all resources.
@@ -827,17 +836,5 @@ if CONFIG['MOZ_ANDROID_MLS_STUMBLER']:
     DEFINES['MOZ_STUMBLER_API_KEY'] = CONFIG['MOZ_MOZILLA_API_KEY']
 
 if CONFIG['MOZ_ANDROID_SEARCH_ACTIVITY']:
-    searchres = add_android_eclipse_library_project('FennecResourcesSearch')
-    # Eclipse generates org.mozilla.search.R for this project, which is
-    # referenced by the search/**/*.java code.
-    searchres.package_name = 'org.mozilla.search'
-    searchres.res = SRCDIR + '/../search/res'
-
-    searchres.included_projects += ['../' + static.name, '../' + generated.name, '../' + branding.name]
-    searchres.referenced_projects += ['../' + static.name, '../' + generated.name, '../' + branding.name]
-
-    resources.included_projects += ['../' + searchres.name]
-    resources.referenced_projects += ['../' + searchres.name]
-
     # The Search Activity code is built as part of Fennec, so we follow suit in Eclipse.
     main.add_classpathentry('search', TOPSRCDIR + '/mobile/android/search/java', dstdir='search')

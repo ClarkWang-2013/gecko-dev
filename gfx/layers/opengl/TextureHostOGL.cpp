@@ -14,7 +14,6 @@
 #include "gfxReusableSurfaceWrapper.h"  // for gfxReusableSurfaceWrapper
 #include "mozilla/gfx/2D.h"             // for DataSourceSurface
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
-#include "mozilla/layers/CompositorOGL.h"  // for CompositorOGL
 #ifdef MOZ_WIDGET_GONK
 # include "GrallocImages.h"  // for GrallocImage
 # include "EGLImageHelpers.h"
@@ -24,7 +23,7 @@
 #include "mozilla/layers/GrallocTextureHost.h"
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsRegion.h"                   // for nsIntRegion
-#include "nsSurfaceTexture.h"
+#include "AndroidSurfaceTexture.h"
 #include "GfxTexturesReporter.h"        // for GfxTexturesReporter
 #include "GLBlitTextureImageHelper.h"
 #ifdef XP_MACOSX
@@ -69,7 +68,7 @@ CreateTextureHostOGL(const SurfaceDescriptor& aDesc,
     case SurfaceDescriptor::TSurfaceTextureDescriptor: {
       const SurfaceTextureDescriptor& desc = aDesc.get_SurfaceTextureDescriptor();
       result = new SurfaceTextureHost(aFlags,
-                                      (nsSurfaceTexture*)desc.surfTex(),
+                                      (AndroidSurfaceTexture*)desc.surfTex(),
                                       desc.size());
       break;
     }
@@ -121,47 +120,134 @@ FlagsToGLFlags(TextureFlags aFlags)
 }
 
 CompositableDataGonkOGL::CompositableDataGonkOGL()
- : mTexture(0)
+{
+}
+
+CompositableDataGonkOGL::~CompositableDataGonkOGL()
+{
+   ClearData();
+}
+
+void
+CompositableDataGonkOGL::ClearData()
+{
+  CompositableBackendSpecificData::ClearData();
+  mTextureBackendSpecificData = nullptr;
+  mCompositor = nullptr;
+}
+
+void
+CompositableDataGonkOGL::SetCompositor(Compositor* aCompositor)
+{
+  mCompositor = static_cast<CompositorOGL*>(aCompositor);
+  if (mTextureBackendSpecificData) {
+    mTextureBackendSpecificData->SetCompositor(aCompositor);
+  }
+}
+
+TextureSharedDataGonkOGL*
+CompositableDataGonkOGL::GetTextureBackendSpecificData()
+{
+  if (!mTextureBackendSpecificData) {
+    mTextureBackendSpecificData = new TextureSharedDataGonkOGL();
+    mTextureBackendSpecificData->SetCompositor(mCompositor);
+    mTextureBackendSpecificData->SetAllowSharingTextureHost(IsAllowingSharingTextureHost());
+  }
+  return mTextureBackendSpecificData;
+}
+
+TextureSharedDataGonkOGL::TextureSharedDataGonkOGL()
+ : mOwnedByCompositableHost(true)
+ , mAllowSharingTextureHost(false)
+ , mTexture(0)
  , mBoundEGLImage(EGL_NO_IMAGE)
 {
 }
-CompositableDataGonkOGL::~CompositableDataGonkOGL()
+
+TextureSharedDataGonkOGL::TextureSharedDataGonkOGL(GLuint aTexture, EGLImage aImage, CompositorOGL* aCompositor)
+ : mOwnedByCompositableHost(true)
+ , mAllowSharingTextureHost(false)
+ , mCompositor(aCompositor)
+ , mTexture(aTexture)
+ , mBoundEGLImage(aImage)
+{
+}
+
+TextureSharedDataGonkOGL::~TextureSharedDataGonkOGL()
 {
   DeleteTextureIfPresent();
 }
 
 gl::GLContext*
-CompositableDataGonkOGL::gl() const
+TextureSharedDataGonkOGL::gl() const
 {
   return mCompositor ? mCompositor->gl() : nullptr;
 }
 
-void CompositableDataGonkOGL::SetCompositor(Compositor* aCompositor)
+void
+TextureSharedDataGonkOGL::SetCompositor(Compositor* aCompositor)
 {
+  if (gl() && mCompositor != aCompositor) {
+    DeleteTextureIfPresent();
+  }
   mCompositor = static_cast<CompositorOGL*>(aCompositor);
 }
 
-void CompositableDataGonkOGL::ClearData()
+void
+TextureSharedDataGonkOGL::ClearData()
 {
-  CompositableBackendSpecificData::ClearData();
   DeleteTextureIfPresent();
 }
 
-GLuint CompositableDataGonkOGL::GetTexture()
+TemporaryRef<TextureSharedDataGonkOGL>
+TextureSharedDataGonkOGL::GetNewTextureBackendSpecificData(EGLImage aImage)
+{
+  MOZ_ASSERT(IsAllowingSharingTextureHost());
+
+  if (IsEGLImageBound(aImage))
+  {
+    // If EGLImage is already bound to OpenGL Texture,
+    // handover the OpenGL Texture to caller
+    GLuint textureId = GetAndResetGLTextureOwnership();
+    RefPtr<TextureSharedDataGonkOGL> data = new TextureSharedDataGonkOGL(textureId, aImage, mCompositor);
+    data->SetCompositor(mCompositor);
+    data->SetAllowSharingTextureHost(true);
+    return data;
+  }
+
+  // Create brand new TextureSharedDataGonkOGL
+  RefPtr<TextureSharedDataGonkOGL> data = new TextureSharedDataGonkOGL();
+  data->SetCompositor(mCompositor);
+  data->SetAllowSharingTextureHost(true);
+  return data;
+}
+
+GLuint
+TextureSharedDataGonkOGL::GetTexture()
 {
   if (!mTexture) {
-    if (gl()->MakeCurrent()) {
+    if (gl() && gl()->MakeCurrent()) {
       gl()->fGenTextures(1, &mTexture);
     }
   }
   return mTexture;
 }
 
+GLuint
+TextureSharedDataGonkOGL::GetAndResetGLTextureOwnership()
+{
+  GLuint texture = mTexture;
+  mTexture = 0;
+  mBoundEGLImage = EGL_NO_IMAGE;
+  return texture;
+}
+
 void
-CompositableDataGonkOGL::DeleteTextureIfPresent()
+TextureSharedDataGonkOGL::DeleteTextureIfPresent()
 {
   if (mTexture) {
-    if (gl()->MakeCurrent()) {
+    MOZ_ASSERT(mCompositor);
+    if (gl() && gl()->MakeCurrent()) {
       gl()->fDeleteTextures(1, &mTexture);
     }
     mTexture = 0;
@@ -170,21 +256,35 @@ CompositableDataGonkOGL::DeleteTextureIfPresent()
 }
 
 void
-CompositableDataGonkOGL::BindEGLImage(GLuint aTarget, EGLImage aImage)
+TextureSharedDataGonkOGL::BindEGLImage(GLuint aTarget, EGLImage aImage)
 {
   if (mBoundEGLImage != aImage) {
-    gl()->fEGLImageTargetTexture2D(aTarget, aImage);
+    MOZ_ASSERT(gl());
+    if (gl()) {
+      gl()->fEGLImageTargetTexture2D(aTarget, aImage);
+    }
     mBoundEGLImage = aImage;
   }
 }
 
 void
-CompositableDataGonkOGL::ClearBoundEGLImage(EGLImage aImage)
+TextureSharedDataGonkOGL::ClearBoundEGLImage(EGLImage aImage)
 {
   if (mBoundEGLImage == aImage) {
     DeleteTextureIfPresent();
     mBoundEGLImage = EGL_NO_IMAGE;
   }
+}
+
+bool
+TextureSharedDataGonkOGL::IsEGLImageBound(EGLImage aImage)
+{
+  if (mTexture != 0 &&
+      aImage != EGL_NO_IMAGE &&
+      aImage == mBoundEGLImage) {
+    return true;
+  }
+  return false;
 }
 
 #if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
@@ -478,7 +578,7 @@ GLTextureSource::gl() const
 #ifdef MOZ_WIDGET_ANDROID
 
 SurfaceTextureSource::SurfaceTextureSource(CompositorOGL* aCompositor,
-                                           nsSurfaceTexture* aSurfTex,
+                                           AndroidSurfaceTexture* aSurfTex,
                                            gfx::SurfaceFormat aFormat,
                                            GLenum aTarget,
                                            GLenum aWrapMode,
@@ -499,10 +599,8 @@ SurfaceTextureSource::BindTexture(GLenum aTextureUnit, gfx::Filter aFilter)
     NS_WARNING("Trying to bind a texture without a GLContext");
     return;
   }
-  GLuint tex = mCompositor->GetTemporaryTexture(GetTextureTarget(), aTextureUnit);
 
   gl()->fActiveTexture(aTextureUnit);
-  gl()->fBindTexture(mTextureTarget, tex);
 #ifndef DEBUG
   // SurfaceTexture spams us if there are any existing GL errors, so
   // we'll clear them here in order to avoid that.
@@ -543,7 +641,7 @@ SurfaceTextureSource::GetTextureTransform()
 ////////////////////////////////////////////////////////////////////////
 
 SurfaceTextureHost::SurfaceTextureHost(TextureFlags aFlags,
-                                       nsSurfaceTexture* aSurfTex,
+                                       AndroidSurfaceTexture* aSurfTex,
                                        gfx::IntSize aSize)
   : TextureHost(aFlags)
   , mSurfTex(aSurfTex)
@@ -581,12 +679,15 @@ SurfaceTextureHost::Lock()
                                               mSize);
   }
 
+  mSurfTex->Attach(gl());
+
   return true;
 }
 
 void
 SurfaceTextureHost::Unlock()
 {
+  mSurfTex->Detach();
 }
 
 void

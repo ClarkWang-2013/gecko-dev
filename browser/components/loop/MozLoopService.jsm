@@ -4,7 +4,7 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 
 // Invalid auth token as per
 // https://github.com/mozilla-services/loop-server/blob/45787d34108e2f0d87d74d4ddf4ff0dbab23501c/loop/errno.json#L6
@@ -20,6 +20,11 @@ const LOOP_SESSION_TYPE = {
   FXA: 2,
 };
 
+// See LOG_LEVELS in Console.jsm. Common examples: "All", "Info", "Warn", & "Error".
+const PREF_LOG_LEVEL = "loop.debug.loglevel";
+
+const EMAIL_OR_PHONE_RE = /^(:?\S+@\S+|\+\d+)$/;
+
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
@@ -29,9 +34,6 @@ Cu.import("resource://gre/modules/FxAccountsOAuthClient.jsm");
 Cu.importGlobalProperties(["URL"]);
 
 this.EXPORTED_SYMBOLS = ["MozLoopService", "LOOP_SESSION_TYPE"];
-
-XPCOMUtils.defineLazyModuleGetter(this, "console",
-  "resource://gre/modules/devtools/Console.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "injectLoopAPI",
   "resource:///modules/loop/MozLoopAPI.jsm");
@@ -56,6 +58,12 @@ XPCOMUtils.defineLazyModuleGetter(this, "HawkClient",
 XPCOMUtils.defineLazyModuleGetter(this, "deriveHawkCredentials",
                                   "resource://services-common/hawkrequest.js");
 
+XPCOMUtils.defineLazyModuleGetter(this, "LoopContacts",
+                                  "resource:///modules/loop/LoopContacts.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "LoopStorage",
+                                  "resource:///modules/loop/LoopStorage.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "MozLoopPushHandler",
                                   "resource:///modules/loop/MozLoopPushHandler.jsm");
 
@@ -67,6 +75,25 @@ XPCOMUtils.defineLazyServiceGetter(this, "gDNSService",
                                    "@mozilla.org/network/dns-service;1",
                                    "nsIDNSService");
 
+// Create a new instance of the ConsoleAPI so we can control the maxLogLevel with a pref.
+XPCOMUtils.defineLazyGetter(this, "log", () => {
+  let ConsoleAPI = Cu.import("resource://gre/modules/devtools/Console.jsm", {}).ConsoleAPI;
+  let consoleOptions = {
+    maxLogLevel: Services.prefs.getCharPref(PREF_LOG_LEVEL).toLowerCase(),
+    prefix: "Loop",
+  };
+  return new ConsoleAPI(consoleOptions);
+});
+
+function setJSONPref(aName, aValue) {
+  let value = !!aValue ? JSON.stringify(aValue) : "";
+  Services.prefs.setCharPref(aName, value);
+}
+
+function getJSONPref(aName) {
+  let value = Services.prefs.getCharPref(aName);
+  return !!value ? JSON.parse(value) : null;
+}
 
 // The current deferred for the registration process. This is set if in progress
 // or the registration was successful. This is null if a registration attempt was
@@ -74,12 +101,11 @@ XPCOMUtils.defineLazyServiceGetter(this, "gDNSService",
 let gRegisteredDeferred = null;
 let gPushHandler = null;
 let gHawkClient = null;
-let gLocalizedStrings =  null;
+let gLocalizedStrings = null;
 let gInitializeTimer = null;
+let gFxAEnabled = true;
 let gFxAOAuthClientPromise = null;
 let gFxAOAuthClient = null;
-let gFxAOAuthTokenData = null;
-let gFxAOAuthProfile = null;
 let gErrors = new Map();
 
  /**
@@ -112,7 +138,7 @@ CallProgressSocket.prototype = {
   connect: function(onSuccess, onError) {
     this._onSuccess = onSuccess;
     this._onError = onError ||
-      (reason => {console.warn("MozLoopService::callProgessSocket - ", reason);});
+      (reason => {log.warn("MozLoopService::callProgessSocket - ", reason);});
 
     if (!onSuccess) {
       this._onError("missing onSuccess argument");
@@ -193,7 +219,7 @@ CallProgressSocket.prototype = {
       msg = JSON.parse(aMsg);
     }
     catch (error) {
-      console.error("MozLoopService: error parsing progress message - ", error);
+      log.error("MozLoopService: error parsing progress message - ", error);
       return;
     }
 
@@ -211,7 +237,7 @@ CallProgressSocket.prototype = {
    */
   _send: function(aMsg) {
     if (!this._handshakeComplete) {
-      console.warn("MozLoopService::_send error - handshake not complete");
+      log.warn("MozLoopService::_send error - handshake not complete");
       return;
     }
 
@@ -297,6 +323,38 @@ let MozLoopServiceInternal = {
   },
 
   /**
+   * Retrieves MozLoopService Firefox Accounts OAuth token.
+   *
+   * @return {Object} OAuth token
+   */
+  get fxAOAuthTokenData() {
+    return getJSONPref("loop.fxa_oauth.tokendata");
+  },
+
+  /**
+   * Sets MozLoopService Firefox Accounts OAuth token.
+   * If the tokenData is being cleared, will also clear the
+   * profile since the profile is dependent on the token data.
+   *
+   * @param {Object} aTokenData OAuth token
+   */
+  set fxAOAuthTokenData(aTokenData) {
+    setJSONPref("loop.fxa_oauth.tokendata", aTokenData);
+    if (!aTokenData) {
+      this.fxAOAuthProfile = null;
+    }
+  },
+
+  /**
+   * Sets MozLoopService Firefox Accounts Profile data.
+   *
+   * @param {Object} aProfileData Profile data
+   */
+  set fxAOAuthProfile(aProfileData) {
+    setJSONPref("loop.fxa_oauth.profile", aProfileData);
+  },
+
+  /**
    * Retrieves MozLoopService "do not disturb" pref value.
    *
    * @return {Boolean} aFlag
@@ -316,15 +374,67 @@ let MozLoopServiceInternal = {
   },
 
   notifyStatusChanged: function(aReason = null) {
+    log.debug("notifyStatusChanged with reason:", aReason);
+    let profile = MozLoopService.userProfile;
+    LoopStorage.switchDatabase(profile ? profile.uid : null);
     Services.obs.notifyObservers(null, "loop-status-changed", aReason);
   },
 
   /**
+   * Record an error and notify interested UI with the relevant user-facing strings attached.
+   *
    * @param {String} errorType a key to identify the type of error. Only one
-   *                           error of a type will be saved at a time.
+   *                           error of a type will be saved at a time. This value may be used to
+   *                           determine user-facing (aka. friendly) strings.
    * @param {Object} error     an object describing the error in the format from Hawk errors
    */
   setError: function(errorType, error) {
+    let messageString, detailsString, detailsButtonLabelString;
+    const NETWORK_ERRORS = [
+      Cr.NS_ERROR_CONNECTION_REFUSED,
+      Cr.NS_ERROR_NET_INTERRUPT,
+      Cr.NS_ERROR_NET_RESET,
+      Cr.NS_ERROR_NET_TIMEOUT,
+      Cr.NS_ERROR_OFFLINE,
+      Cr.NS_ERROR_PROXY_CONNECTION_REFUSED,
+      Cr.NS_ERROR_UNKNOWN_HOST,
+      Cr.NS_ERROR_UNKNOWN_PROXY_HOST,
+    ];
+
+    if (error.code === null && error.errno === null &&
+        error.error instanceof Ci.nsIException &&
+        NETWORK_ERRORS.indexOf(error.error.result) != -1) {
+      // Network error. Override errorType so we can easily clear it on the next succesful request.
+      errorType = "network";
+      messageString = "could_not_connect";
+      detailsString = "check_internet_connection";
+      detailsButtonLabelString = "retry_button";
+    } else if (errorType == "profile" && error.code >= 500 && error.code < 600) {
+      messageString = "problem_accessing_account";
+    } else if (error.code == 401) {
+      if (errorType == "login") {
+        messageString = "could_not_authenticate"; // XXX: Bug 1076377
+        detailsString = "password_changed_question";
+        detailsButtonLabelString = "retry_button";
+      } else {
+        messageString = "session_expired_error_description";
+      }
+    } else if (error.code >= 500 && error.code < 600) {
+      messageString = "service_not_available";
+      detailsString = "try_again_later";
+      detailsButtonLabelString = "retry_button";
+    } else {
+      messageString = "generic_failure_title";
+    }
+
+    error.friendlyMessage = this.localizedStrings[messageString].textContent;
+    error.friendlyDetails = detailsString ?
+                              this.localizedStrings[detailsString].textContent :
+                              null;
+    error.friendlyDetailsButtonLabel = detailsButtonLabelString ?
+                                         this.localizedStrings[detailsButtonLabelString].textContent :
+                                         null;
+
     gErrors.set(errorType, error);
     this.notifyStatusChanged();
   },
@@ -360,9 +470,8 @@ let MozLoopServiceInternal = {
     let result = gRegisteredDeferred.promise;
 
     gPushHandler = mockPushHandler || MozLoopPushHandler;
-
     gPushHandler.initialize(this.onPushRegistered.bind(this),
-      this.onHandleNotification.bind(this));
+                            this.onHandleNotification.bind(this));
 
     return result;
   },
@@ -401,7 +510,30 @@ let MozLoopServiceInternal = {
                                           2 * 32, true);
     }
 
-    return gHawkClient.request(path, method, credentials, payloadObj);
+    return gHawkClient.request(path, method, credentials, payloadObj).then((result) => {
+      this.clearError("network");
+      return result;
+    }, (error) => {
+      if (error.code == 401) {
+        this.clearSessionToken(sessionType);
+
+        if (sessionType == LOOP_SESSION_TYPE.FXA) {
+          MozLoopService.logOutFromFxA().then(() => {
+            // Set a user-visible error after logOutFromFxA clears existing ones.
+            this.setError("login", error);
+          });
+        } else {
+          if (!this.urlExpiryTimeIsInFuture()) {
+            // If there are no Guest URLs in the future, don't use setError to notify the user since
+            // there isn't a need for a Guest registration at this time.
+            throw error;
+          }
+
+          this.setError("registration", error);
+        }
+      }
+      throw error;
+    });
   },
 
   /**
@@ -412,7 +544,7 @@ let MozLoopServiceInternal = {
    */
 
   _hawkRequestError: function(error) {
-    console.error("Loop hawkRequest error:", error);
+    log.error("Loop hawkRequest error:", error);
     throw error;
   },
 
@@ -447,9 +579,10 @@ let MozLoopServiceInternal = {
       // XXX should do more validation here
       if (sessionToken.length === 64) {
         Services.prefs.setCharPref(this.getSessionTokenPrefName(sessionType), sessionToken);
+        log.debug("Stored a hawk session token for sessionType", sessionType);
       } else {
         // XXX Bubble the precise details up to the UI somehow (bug 1013248).
-        console.warn("Loop server sent an invalid session token");
+        log.warn("Loop server sent an invalid session token");
         gRegisteredDeferred.reject("session-token-wrong-size");
         gRegisteredDeferred = null;
         return false;
@@ -470,6 +603,7 @@ let MozLoopServiceInternal = {
    */
   clearSessionToken: function(sessionType) {
     Services.prefs.clearUserPref(this.getSessionTokenPrefName(sessionType));
+    log.debug("Cleared hawk session token for sessionType", sessionType);
   },
 
   /**
@@ -490,12 +624,15 @@ let MozLoopServiceInternal = {
       if (!gRegisteredDeferred) {
         return;
       }
-      gRegisteredDeferred.resolve();
+      gRegisteredDeferred.resolve("registered to guest status");
       // No need to clear the promise here, everything was good, so we don't need
       // to re-register.
-    }, (error) => {
-      console.error("Failed to register with Loop server: ", error);
-      gRegisteredDeferred.reject(error.errno);
+    }, error => {
+      log.error("Failed to register with Loop server: ", error);
+      // registerWithLoopServer may have already made this null.
+      if (gRegisteredDeferred) {
+        gRegisteredDeferred.reject(error);
+      }
       gRegisteredDeferred = null;
     });
   },
@@ -517,27 +654,22 @@ let MozLoopServiceInternal = {
         if (!this.storeSessionToken(sessionType, response.headers))
           return;
 
+        log.debug("Successfully registered with server for sessionType", sessionType);
         this.clearError("registration");
       }, (error) => {
         // There's other errors than invalid auth token, but we should only do the reset
         // as a last resort.
-        if (error.code === 401 && error.errno === INVALID_AUTH_TOKEN) {
-          if (this.urlExpiryTimeIsInFuture()) {
-            // XXX Should this be reported to the user is a visible manner?
-            Cu.reportError("Loop session token is invalid, all previously "
-                           + "generated urls will no longer work.");
-          }
-
+        if (error.code === 401) {
           // Authorization failed, invalid token, we need to try again with a new token.
-          this.clearSessionToken(sessionType);
           if (retry) {
             return this.registerWithLoopServer(sessionType, pushUrl, false);
           }
         }
 
-        // XXX Bubble the precise details up to the UI somehow (bug 1013248).
-        console.error("Failed to register with the loop server. Error: ", error);
+        log.error("Failed to register with the loop server. Error: ", error);
         this.setError("registration", error);
+        gRegisteredDeferred.reject(error);
+        gRegisteredDeferred = null;
         throw error;
       }
     );
@@ -555,20 +687,26 @@ let MozLoopServiceInternal = {
    * @return {Promise} resolving when the unregistration request finishes
    */
   unregisterFromLoopServer: function(sessionType, pushURL) {
+    let prefType = Services.prefs.getPrefType(this.getSessionTokenPrefName(sessionType));
+    if (prefType == Services.prefs.PREF_INVALID) {
+      return Promise.resolve("already unregistered");
+    }
+
     let unregisterURL = "/registration?simplePushURL=" + encodeURIComponent(pushURL);
     return this.hawkRequest(sessionType, unregisterURL, "DELETE")
       .then(() => {
+        log.debug("Successfully unregistered from server for sessionType", sessionType);
         MozLoopServiceInternal.clearSessionToken(sessionType);
       },
       error => {
         // Always clear the registration token regardless of whether the server acknowledges the logout.
         MozLoopServiceInternal.clearSessionToken(sessionType);
-        if (error.code === 401 && error.errno === INVALID_AUTH_TOKEN) {
+        if (error.code === 401) {
           // Authorization failed, invalid token. This is fine since it may mean we already logged out.
           return;
         }
 
-        console.error("Failed to unregister with the loop server. Error: ", error);
+        log.error("Failed to unregister with the loop server. Error: ", error);
         throw error;
       });
   },
@@ -594,7 +732,9 @@ let MozLoopServiceInternal = {
     // Make the call to get the GUEST session regardless of whether the FXA
     // request fails.
 
-    this._getCalls(LOOP_SESSION_TYPE.FXA, version).catch(() => {});
+    if (MozLoopService.userProfile) {
+      this._getCalls(LOOP_SESSION_TYPE.FXA, version).catch(() => {});
+    }
     this._getCalls(LOOP_SESSION_TYPE.GUEST, version).catch(
       error => {this._hawkRequestError(error);});
   },
@@ -633,23 +773,85 @@ let MozLoopServiceInternal = {
       if (respData.calls && Array.isArray(respData.calls)) {
         respData.calls.forEach((callData) => {
           if (!this.callsData.inUse) {
-            this.callsData.inUse = true;
             callData.sessionType = sessionType;
-            this.callsData.data = callData;
-            this.openChatWindow(
-              null,
-              this.localizedStrings["incoming_call_title2"].textContent,
-              "about:loopconversation#incoming/" + callData.callId);
+            this._startCall(callData, "incoming");
           } else {
             this._returnBusy(callData);
           }
         });
       } else {
-        console.warn("Error: missing calls[] in response");
+        log.warn("Error: missing calls[] in response");
       }
     } catch (err) {
-      console.warn("Error parsing calls info", err);
+      log.warn("Error parsing calls info", err);
     }
+  },
+
+  /**
+   * Starts a call, saves the call data, and opens a chat window.
+   *
+   * @param {Object} callData The data associated with the call including an id.
+   * @param {String} conversationType Whether or not the call is "incoming"
+   *                                  or "outgoing"
+   */
+  _startCall: function(callData, conversationType) {
+    const openChat = () => {
+      this.callsData.inUse = true;
+      this.callsData.data = callData;
+
+      this.openChatWindow(
+        null,
+        // No title, let the page set that, to avoid flickering.
+        "",
+        "about:loopconversation#" + conversationType + "/" + callData.callId);
+    };
+
+    if (conversationType == "incoming" && ("callerId" in callData) &&
+        EMAIL_OR_PHONE_RE.test(callData.callerId)) {
+      LoopContacts.search({
+        q: callData.callerId,
+        field: callData.callerId.contains("@") ? "email" : "tel"
+      }, (err, contacts) => {
+        if (err) {
+          // Database error, helas!
+          openChat();
+          return;
+        }
+
+        for (let contact of contacts) {
+          if (contact.blocked) {
+            // Blocked! Send a busy signal back to the caller.
+            this._returnBusy(callData);
+            return;
+          }
+        }
+
+        openChat();
+      })
+    } else {
+      openChat();
+    }
+  },
+
+  /**
+   * Starts a direct call to the contact addresses.
+   *
+   * @param {Object} contact The contact to call
+   * @param {String} callType The type of call, e.g. "audio-video" or "audio-only"
+   * @return true if the call is opened, false if it is not opened (i.e. busy)
+   */
+  startDirectCall: function(contact, callType) {
+    if (this.callsData.inUse)
+      return false;
+
+    var callData = {
+      contact: contact,
+      callType: callType,
+      callId: Math.floor((Math.random() * 10))
+    };
+
+    this._startCall(callData, "outgoing");
+    return true;
   },
 
    /**
@@ -760,7 +962,7 @@ let MozLoopServiceInternal = {
 
         let worker = new ChromeWorker("MozLoopWorker.js");
         worker.onmessage = function(e) {
-          console.log(e.data.ok ?
+          log.info(e.data.ok ?
             "Successfully staged loop report for telemetry upload." :
             ("Failed to stage loop report. Error: " + e.data.fail));
         }
@@ -898,7 +1100,7 @@ let MozLoopServiceInternal = {
         client.launchWebFlow();
       },
       error => {
-        console.error(error);
+        log.error(error);
         deferred.reject(error);
       }
     );
@@ -950,15 +1152,36 @@ let MozLoopServiceInternal = {
 };
 Object.freeze(MozLoopServiceInternal);
 
-let gInitializeTimerFunc = () => {
-  // Kick off the push notification service into registering after a timeout
-  // this ensures we're not doing too much straight after the browser's finished
+let gInitializeTimerFunc = (deferredInitialization, mockPushHandler, mockWebSocket) => {
+  // Kick off the push notification service into registering after a timeout.
+  // This ensures we're not doing too much straight after the browser's finished
   // starting up.
   gInitializeTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-  gInitializeTimer.initWithCallback(() => {
-    MozLoopService.register();
+  gInitializeTimer.initWithCallback(Task.async(function* initializationCallback() {
+    yield MozLoopService.register(mockPushHandler, mockWebSocket).then(Task.async(function*() {
+      if (!MozLoopServiceInternal.fxAOAuthTokenData) {
+        log.debug("MozLoopService: Initialized without an already logged-in account");
+        deferredInitialization.resolve("initialized to guest status");
+        return;
+      }
+
+      log.debug("MozLoopService: Initializing with already logged-in account");
+      let registeredPromise =
+            MozLoopServiceInternal.registerWithLoopServer(LOOP_SESSION_TYPE.FXA,
+                                                          gPushHandler.pushUrl);
+      registeredPromise.then(() => {
+        deferredInitialization.resolve("initialized to logged-in status");
+      }, error => {
+        log.debug("MozLoopService: error logging in using cached auth token");
+        MozLoopServiceInternal.setError("login", error);
+        deferredInitialization.reject("error logging in using cached auth token");
+      });
+    }), error => {
+      log.debug("MozLoopService: Failure of initial registration", error);
+      deferredInitialization.reject(error);
+    });
     gInitializeTimer = null;
-  },
+  }),
   MozLoopServiceInternal.initialRegistrationDelayMilliseconds, Ci.nsITimer.TYPE_ONE_SHOT);
 };
 
@@ -975,9 +1198,10 @@ this.MozLoopService = {
   /**
    * Initialized the loop service, and starts registration with the
    * push and loop servers.
+   *
+   * @return {Promise}
    */
-  initialize: function() {
-
+  initialize: Task.async(function*(mockPushHandler, mockWebSocket) {
     // Do this here, rather than immediately after definition, so that we can
     // stub out API functions for unit testing
     Object.freeze(this);
@@ -985,14 +1209,34 @@ this.MozLoopService = {
     // Don't do anything if loop is not enabled.
     if (!Services.prefs.getBoolPref("loop.enabled") ||
         Services.prefs.getBoolPref("loop.throttled")) {
-      return;
+      return Promise.reject("loop is not enabled");
     }
 
-    // If expiresTime is in the future then kick-off registration.
-    if (MozLoopServiceInternal.urlExpiryTimeIsInFuture()) {
-      gInitializeTimerFunc();
+    if (Services.prefs.getPrefType("loop.fxa.enabled") == Services.prefs.PREF_BOOL) {
+      gFxAEnabled = Services.prefs.getBoolPref("loop.fxa.enabled");
+      if (!gFxAEnabled) {
+        yield this.logOutFromFxA();
+      }
     }
-  },
+
+    // If expiresTime is not in the future and the user hasn't
+    // previously authenticated then skip registration.
+    if (!MozLoopServiceInternal.urlExpiryTimeIsInFuture() &&
+        !MozLoopServiceInternal.fxAOAuthTokenData) {
+      return Promise.resolve("registration not needed");
+    }
+
+    let deferredInitialization = Promise.defer();
+    gInitializeTimerFunc(deferredInitialization, mockPushHandler, mockWebSocket);
+
+    return deferredInitialization.promise.catch(error => {
+      if (typeof(error) == "object") {
+        // This never gets cleared since there is no UI to recover. Only restarting will work.
+        MozLoopServiceInternal.setError("initialization", error);
+      }
+      throw error;
+    });
+  }),
 
   /**
    * If we're operating the service in "soft start" mode, and this browser
@@ -1068,7 +1312,7 @@ this.MozLoopService = {
 
       if (now_serving > ticket) {
         // Hot diggity! It's our turn! Activate the service.
-        console.log("MozLoopService: Activating Loop via soft-start");
+        log.info("MozLoopService: Activating Loop via soft-start");
         Services.prefs.setBoolPref("loop.throttled", false);
         buttonNode.hidden = false;
         this.initialize();
@@ -1103,6 +1347,7 @@ this.MozLoopService = {
    *          rejected with an error code or string.
    */
   register: function(mockPushHandler, mockWebSocket) {
+    log.debug("registering");
     // Don't do anything if loop is not enabled.
     if (!Services.prefs.getBoolPref("loop.enabled")) {
       throw new Error("Loop is not enabled");
@@ -1121,7 +1366,7 @@ this.MozLoopService = {
    * sooner, this function is a no-op; this ensures we always have the latest
    * expiry time for a url.
    *
-   * This is used to deterimine whether or not we should be registering with the
+   * This is used to determine whether or not we should be registering with the
    * push server on start.
    *
    * @param {Integer} expiryTimeSeconds The seconds since epoch of the expiry time
@@ -1142,11 +1387,18 @@ this.MozLoopService = {
   getStrings: function(key) {
       var stringData = MozLoopServiceInternal.localizedStrings;
       if (!(key in stringData)) {
-        Cu.reportError('No string for key: ' + key + 'found');
+        log.error("No string found for key: ", key);
         return "";
       }
 
       return JSON.stringify(stringData[key]);
+  },
+
+  /**
+   * Returns a new GUID (UUID) in curly braces format.
+   */
+  generateUUID: function() {
+    return uuidgen.generateUUID().toString();
   },
 
   /**
@@ -1167,12 +1419,28 @@ this.MozLoopService = {
     MozLoopServiceInternal.doNotDisturb = aFlag;
   },
 
+  get fxAEnabled() {
+    return gFxAEnabled;
+  },
+
+  /**
+   * Gets the user profile, but only if there is
+   * tokenData present. Without tokenData, the
+   * profile is meaningless.
+   *
+   * @return {Object}
+   */
   get userProfile() {
-    return gFxAOAuthProfile;
+    return getJSONPref("loop.fxa_oauth.tokendata") &&
+           getJSONPref("loop.fxa_oauth.profile");
   },
 
   get errors() {
     return MozLoopServiceInternal.errors;
+  },
+
+  get log() {
+    return log;
   },
 
   /**
@@ -1234,7 +1502,7 @@ this.MozLoopService = {
     try {
       Services.prefs.setCharPref("loop." + prefName, value);
     } catch (ex) {
-      console.log("setLoopCharPref had trouble setting " + prefName +
+      log.error("setLoopCharPref had trouble setting " + prefName +
         "; exception: " + ex);
     }
   },
@@ -1256,7 +1524,7 @@ this.MozLoopService = {
     try {
       return Services.prefs.getCharPref("loop." + prefName);
     } catch (ex) {
-      console.log("getLoopCharPref had trouble getting " + prefName +
+      log.error("getLoopCharPref had trouble getting " + prefName +
         "; exception: " + ex);
       return null;
     }
@@ -1279,7 +1547,7 @@ this.MozLoopService = {
     try {
       return Services.prefs.getBoolPref("loop." + prefName);
     } catch (ex) {
-      console.log("getLoopBoolPref had trouble getting " + prefName +
+      log.error("getLoopBoolPref had trouble getting " + prefName +
         "; exception: " + ex);
       return null;
     }
@@ -1293,14 +1561,15 @@ this.MozLoopService = {
    * @return {Promise} that resolves when the FxA login flow is complete.
    */
   logInToFxA: function() {
-    if (gFxAOAuthTokenData) {
-      return Promise.resolve(gFxAOAuthTokenData);
+    log.debug("logInToFxA with fxAOAuthTokenData:", !!MozLoopServiceInternal.fxAOAuthTokenData);
+    if (MozLoopServiceInternal.fxAOAuthTokenData) {
+      return Promise.resolve(MozLoopServiceInternal.fxAOAuthTokenData);
     }
 
     return MozLoopServiceInternal.promiseFxAOAuthAuthorization().then(response => {
       return MozLoopServiceInternal.promiseFxAOAuthToken(response.code, response.state);
     }).then(tokenData => {
-      gFxAOAuthTokenData = tokenData;
+      MozLoopServiceInternal.fxAOAuthTokenData = tokenData;
       return tokenData;
     }).then(tokenData => {
       return gRegisteredDeferred.promise.then(Task.async(function*() {
@@ -1309,7 +1578,9 @@ this.MozLoopService = {
         } else {
           throw new Error("No pushUrl for FxA registration");
         }
-        return gFxAOAuthTokenData;
+        MozLoopServiceInternal.clearError("login");
+        MozLoopServiceInternal.clearError("profile");
+        return MozLoopServiceInternal.fxAOAuthTokenData;
       }));
     }).then(tokenData => {
       let client = new FxAccountsProfileClient({
@@ -1317,17 +1588,22 @@ this.MozLoopService = {
         token: tokenData.access_token
       });
       client.fetchProfile().then(result => {
-        gFxAOAuthProfile = result;
+        MozLoopServiceInternal.fxAOAuthProfile = result;
         MozLoopServiceInternal.notifyStatusChanged("login");
       }, error => {
-        console.error("Failed to retrieve profile", error);
-        gFxAOAuthProfile = null;
+        log.error("Failed to retrieve profile", error);
+        this.setError("profile", error);
+        MozLoopServiceInternal.fxAOAuthProfile = null;
         MozLoopServiceInternal.notifyStatusChanged();
       });
       return tokenData;
     }).catch(error => {
-      gFxAOAuthTokenData = null;
-      gFxAOAuthProfile = null;
+      MozLoopServiceInternal.fxAOAuthTokenData = null;
+      MozLoopServiceInternal.fxAOAuthProfile = null;
+      throw error;
+    }).catch((error) => {
+      MozLoopServiceInternal.setError("login", error);
+      // Re-throw for testing
       throw error;
     });
   },
@@ -1340,11 +1616,16 @@ this.MozLoopService = {
    * @return {Promise} that resolves when the FxA logout flow is complete.
    */
   logOutFromFxA: Task.async(function*() {
-    yield MozLoopServiceInternal.unregisterFromLoopServer(LOOP_SESSION_TYPE.FXA,
-                                                          gPushHandler.pushUrl);
+    log.debug("logOutFromFxA");
+    if (gPushHandler && gPushHandler.pushUrl) {
+      yield MozLoopServiceInternal.unregisterFromLoopServer(LOOP_SESSION_TYPE.FXA,
+                                                            gPushHandler.pushUrl);
+    } else {
+      MozLoopServiceInternal.clearSessionToken(LOOP_SESSION_TYPE.FXA);
+    }
 
-    gFxAOAuthTokenData = null;
-    gFxAOAuthProfile = null;
+    MozLoopServiceInternal.fxAOAuthTokenData = null;
+    MozLoopServiceInternal.fxAOAuthProfile = null;
 
     // Reset the client since the initial promiseFxAOAuthParameters() call is
     // what creates a new session.
@@ -1354,13 +1635,25 @@ this.MozLoopService = {
     // clearError calls notifyStatusChanged so should be done last when the
     // state is clean.
     MozLoopServiceInternal.clearError("registration");
+    MozLoopServiceInternal.clearError("login");
+    MozLoopServiceInternal.clearError("profile");
   }),
 
-  openFxASettings: function() {
-    let url = new URL("/settings", gFxAOAuthClient.parameters.content_uri);
-    let win = Services.wm.getMostRecentWindow("navigator:browser");
-    win.switchToTabHavingURI(url.toString(), true);
-  },
+  openFxASettings: Task.async(function() {
+    try {
+      let fxAOAuthClient = yield MozLoopServiceInternal.promiseFxAOAuthClient();
+      if (!fxAOAuthClient) {
+        log.error("Could not get the OAuth client");
+        return;
+      }
+
+      let url = new URL("/settings", fxAOAuthClient.parameters.content_uri);
+      let win = Services.wm.getMostRecentWindow("navigator:browser");
+      win.switchToTabHavingURI(url.toString(), true);
+    } catch (ex) {
+      log.error("Error opening FxA settings", ex);
+    }
+  }),
 
   /**
    * Performs a hawk based request to the loop server.
@@ -1380,5 +1673,16 @@ this.MozLoopService = {
   hawkRequest: function(sessionType, path, method, payloadObj) {
     return MozLoopServiceInternal.hawkRequest(sessionType, path, method, payloadObj).catch(
       error => {MozLoopServiceInternal._hawkRequestError(error);});
+  },
+
+    /**
+     * Starts a direct call to the contact addresses.
+     *
+     * @param {Object} contact The contact to call
+     * @param {String} callType The type of call, e.g. "audio-video" or "audio-only"
+     * @return true if the call is opened, false if it is not opened (i.e. busy)
+     */
+  startDirectCall: function(contact, callType) {
+    MozLoopServiceInternal.startDirectCall(contact, callType);
   },
 };

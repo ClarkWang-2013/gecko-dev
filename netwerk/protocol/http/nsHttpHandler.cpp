@@ -47,6 +47,7 @@
 #include "SpdyZlibReporter.h"
 #include "nsIMemoryReporter.h"
 #include "nsIParentalControlsService.h"
+#include "nsINetworkLinkService.h"
 
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/Telemetry.h"
@@ -82,8 +83,6 @@ extern PRThread *gSocketThread;
 #define INTL_ACCEPT_LANGUAGES   "intl.accept_languages"
 #define BROWSER_PREF_PREFIX     "browser.cache."
 #define DONOTTRACK_HEADER_ENABLED "privacy.donottrackheader.enabled"
-#define DONOTTRACK_HEADER_VALUE   "privacy.donottrackheader.value"
-#define DONOTTRACK_VALUE_UNSET    2
 #define TELEMETRY_ENABLED        "toolkit.telemetry.enabled"
 #define ALLOW_EXPERIMENTS        "network.allow-experiments"
 #define SAFE_HINT_HEADER_VALUE   "safeHint.enabled"
@@ -143,6 +142,7 @@ nsHttpHandler::nsHttpHandler()
     , mSpdyTimeout(PR_SecondsToInterval(180))
     , mResponseTimeout(PR_SecondsToInterval(300))
     , mResponseTimeoutEnabled(false)
+    , mNetworkChangedTimeout(5000)
     , mMaxRequestAttempts(10)
     , mMaxRequestDelay(10)
     , mIdleSynTimeout(250)
@@ -173,7 +173,6 @@ nsHttpHandler::nsHttpHandler()
     , mSendSecureXSiteReferrer(true)
     , mEnablePersistentHttpsCaching(false)
     , mDoNotTrackEnabled(false)
-    , mDoNotTrackValue(1)
     , mSafeHintEnabled(false)
     , mParentalControlEnabled(false)
     , mTelemetryEnabled(false)
@@ -188,6 +187,8 @@ nsHttpHandler::nsHttpHandler()
     , mCoalesceSpdy(true)
     , mSpdyPersistentSettings(false)
     , mAllowPush(true)
+    , mEnableAltSvc(true)
+    , mEnableAltSvcOE(true)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
     , mSpdyPushAllowance(32768)
@@ -270,7 +271,6 @@ nsHttpHandler::Init()
         prefBranch->AddObserver(INTL_ACCEPT_LANGUAGES, this, true);
         prefBranch->AddObserver(BROWSER_PREF("disk_cache_ssl"), this, true);
         prefBranch->AddObserver(DONOTTRACK_HEADER_ENABLED, this, true);
-        prefBranch->AddObserver(DONOTTRACK_HEADER_VALUE, this, true);
         prefBranch->AddObserver(TELEMETRY_ENABLED, this, true);
         prefBranch->AddObserver(HTTP_PREF("tcp_keepalive.short_lived_connections"), this, true);
         prefBranch->AddObserver(HTTP_PREF("tcp_keepalive.long_lived_connections"), this, true);
@@ -348,6 +348,7 @@ nsHttpHandler::Init()
         mObserverService->AddObserver(this, "net:failed-to-process-uri-content", true);
         mObserverService->AddObserver(this, "last-pb-context-exited", true);
         mObserverService->AddObserver(this, "browser:purge-session-history", true);
+        mObserverService->AddObserver(this, NS_NETWORK_LINK_TOPIC, false);
     }
 
     MakeNewRequestTokenBucket();
@@ -422,8 +423,7 @@ nsHttpHandler::AddStandardRequestHeaders(nsHttpHeaderArray *request)
 
     // Add the "Do-Not-Track" header
     if (mDoNotTrackEnabled) {
-      rv = request->SetHeader(nsHttp::DoNotTrack,
-                              nsPrintfCString("%d", mDoNotTrackValue));
+      rv = request->SetHeader(nsHttp::DoNotTrack, NS_LITERAL_CSTRING("1"));
       if (NS_FAILED(rv)) return rv;
     }
 
@@ -611,6 +611,7 @@ nsHttpHandler::BuildUserAgent()
                            mAppVersion.Length() +
                            mCompatFirefox.Length() +
                            mCompatDevice.Length() +
+                           mDeviceModelId.Length() +
                            13);
 
     // Application portion
@@ -634,6 +635,10 @@ nsHttpHandler::BuildUserAgent()
     else if (!mOscpu.IsEmpty()) {
       mUserAgent += mOscpu;
       mUserAgent.AppendLiteral("; ");
+    }
+    if (!mDeviceModelId.IsEmpty()) {
+        mUserAgent += mDeviceModelId;
+        mUserAgent.AppendLiteral("; ");
     }
     mUserAgent += mMisc;
     mUserAgent += ')';
@@ -696,6 +701,31 @@ nsHttpHandler::InitUserAgentComponents()
         mCompatDevice.AssignLiteral("Tablet");
     else
         mCompatDevice.AssignLiteral("Mobile");
+#endif
+
+#if defined(MOZ_WIDGET_GONK)
+    // Device model identifier should be a simple token, which can be composed
+    // of letters, numbers, hyphen ("-") and dot (".").
+    // Any other characters means the identifier is invalid and ignored.
+    nsCString deviceId;
+    rv = Preferences::GetCString("general.useragent.device_id", &deviceId);
+    if (NS_SUCCEEDED(rv)) {
+        bool valid = true;
+        deviceId.Trim(" ", true, true);
+        for (int i = 0; i < deviceId.Length(); i++) {
+            char c = deviceId.CharAt(i);
+            if (!(isalnum(c) || c == '-' || c == '.')) {
+                valid = false;
+                break;
+            }
+        }
+        if (valid) {
+            mDeviceModelId = deviceId;
+        } else {
+            LOG(("nsHttpHandler: Ignore invalid device ID: [%s]\n",
+                  deviceId.get()));
+        }
+    }
 #endif
 
 #ifndef MOZ_UA_OS_AGNOSTIC
@@ -856,6 +886,12 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
         rv = prefs->GetIntPref(HTTP_PREF("response.timeout"), &val);
         if (NS_SUCCEEDED(rv))
             mResponseTimeout = PR_SecondsToInterval(clamped(val, 0, 0xffff));
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("network-changed.timeout"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("network-changed.timeout"), &val);
+        if (NS_SUCCEEDED(rv))
+            mNetworkChangedTimeout = clamped(val, 1, 600) * 1000;
     }
 
     if (PREF_CHANGED(HTTP_PREF("max-connections"))) {
@@ -1221,6 +1257,21 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mAllowPush = cVar;
     }
 
+    if (PREF_CHANGED(HTTP_PREF("altsvc.enabled"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("atsvc.enabled"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mEnableAltSvc = cVar;
+    }
+
+
+    if (PREF_CHANGED(HTTP_PREF("altsvc.oe"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("atsvc.oe"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mEnableAltSvcOE = cVar;
+    }
+
     if (PREF_CHANGED(HTTP_PREF("spdy.push-allowance"))) {
         rv = prefs->GetIntPref(HTTP_PREF("spdy.push-allowance"), &val);
         if (NS_SUCCEEDED(rv)) {
@@ -1300,14 +1351,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mDoNotTrackEnabled = cVar;
         }
     }
-    if (PREF_CHANGED(DONOTTRACK_HEADER_VALUE)) {
-        val = 1;
-        rv = prefs->GetIntPref(DONOTTRACK_HEADER_VALUE, &val);
-        if (NS_SUCCEEDED(rv)) {
-            mDoNotTrackValue = val;
-        }
-    }
-
     // Hint option
     if (PREF_CHANGED(SAFE_HINT_HEADER_VALUE)) {
         cVar = false;
@@ -1780,13 +1823,12 @@ nsHttpHandler::Observe(nsISupports *subject,
 {
     LOG(("nsHttpHandler::Observe [topic=\"%s\"]\n", topic));
 
-    if (strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {
+    if (!strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
         nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(subject);
         if (prefBranch)
             PrefsChanged(prefBranch, NS_ConvertUTF16toUTF8(data).get());
-    }
-    else if (strcmp(topic, "profile-change-net-teardown")    == 0 ||
-             strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)    == 0) {
+    } else if (!strcmp(topic, "profile-change-net-teardown") ||
+               !strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) ) {
 
         mHandlerActive = false;
 
@@ -1805,37 +1847,47 @@ nsHttpHandler::Observe(nsISupports *subject,
         mSessionStartTime = NowInSeconds();
 
         if (!mDoNotTrackEnabled) {
-            Telemetry::Accumulate(Telemetry::DNT_USAGE, DONOTTRACK_VALUE_UNSET);
+            Telemetry::Accumulate(Telemetry::DNT_USAGE, 2);
+        } else {
+            Telemetry::Accumulate(Telemetry::DNT_USAGE, 1);
         }
-        else {
-            Telemetry::Accumulate(Telemetry::DNT_USAGE, mDoNotTrackValue);
-        }
-    }
-    else if (strcmp(topic, "profile-change-net-restore") == 0) {
+    } else if (!strcmp(topic, "profile-change-net-restore")) {
         // initialize connection manager
         InitConnectionMgr();
-    }
-    else if (strcmp(topic, "net:clear-active-logins") == 0) {
+    } else if (!strcmp(topic, "net:clear-active-logins")) {
         mAuthCache.ClearAll();
         mPrivateAuthCache.ClearAll();
-    }
-    else if (strcmp(topic, "net:prune-dead-connections") == 0) {
+    } else if (!strcmp(topic, "net:prune-dead-connections")) {
         if (mConnMgr) {
             mConnMgr->PruneDeadConnections();
         }
-    }
-    else if (strcmp(topic, "net:failed-to-process-uri-content") == 0) {
+    } else if (!strcmp(topic, "net:failed-to-process-uri-content")) {
         nsCOMPtr<nsIURI> uri = do_QueryInterface(subject);
-        if (uri && mConnMgr)
+        if (uri && mConnMgr) {
             mConnMgr->ReportFailedToProcess(uri);
-    }
-    else if (strcmp(topic, "last-pb-context-exited") == 0) {
+        }
+    } else if (!strcmp(topic, "last-pb-context-exited")) {
         mPrivateAuthCache.ClearAll();
-    } else if (strcmp(topic, "browser:purge-session-history") == 0) {
-        if (mConnMgr && gSocketTransportService) {
-            nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethod(mConnMgr,
-                &nsHttpConnectionMgr::ClearConnectionHistory);
-            gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+        if (mConnMgr) {
+            mConnMgr->ClearAltServiceMappings();
+        }
+    } else if (!strcmp(topic, "browser:purge-session-history")) {
+        if (mConnMgr) {
+            if (gSocketTransportService) {
+                nsCOMPtr<nsIRunnable> event =
+                    NS_NewRunnableMethod(mConnMgr,
+                                         &nsHttpConnectionMgr::ClearConnectionHistory);
+                gSocketTransportService->Dispatch(event, NS_DISPATCH_NORMAL);
+            }
+            mConnMgr->ClearAltServiceMappings();
+        }
+    } else if (!strcmp(topic, NS_NETWORK_LINK_TOPIC)) {
+        nsAutoCString converted = NS_ConvertUTF16toUTF8(data);
+        if (!strcmp(converted.get(), NS_NETWORK_LINK_DATA_CHANGED)) {
+            if (mConnMgr) {
+                mConnMgr->PruneDeadConnections();
+                mConnMgr->VerifyTraffic();
+            }
         }
     }
 
@@ -1906,7 +1958,7 @@ nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
     aURI->GetUsername(username);
 
     nsHttpConnectionInfo *ci =
-        new nsHttpConnectionInfo(host, port, username, nullptr, usingSSL);
+        new nsHttpConnectionInfo(host, port, EmptyCString(), username, nullptr, usingSSL);
 
     return SpeculativeConnect(ci, aCallbacks);
 }

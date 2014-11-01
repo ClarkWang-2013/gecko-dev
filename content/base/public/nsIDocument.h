@@ -38,7 +38,6 @@ class nsHTMLDocument;
 class nsHTMLStyleSheet;
 class nsIAtom;
 class nsIBFCacheEntry;
-class nsIBoxObject;
 class nsIChannel;
 class nsIContent;
 class nsIContentSink;
@@ -95,6 +94,7 @@ class ImageLoader;
 namespace dom {
 class AnimationTimeline;
 class Attr;
+class BoxObject;
 class CDATASection;
 class Comment;
 struct CustomElementDefinition;
@@ -106,6 +106,7 @@ class Element;
 struct ElementRegistrationOptions;
 class Event;
 class EventTarget;
+class FontFaceSet;
 class FrameRequestCallback;
 class ImportManager;
 class OverfillCallback;
@@ -134,8 +135,8 @@ typedef CallbackObjectHolder<NodeFilter, nsIDOMNodeFilter> NodeFilterHolder;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x613ea294, 0x0288, 0x48b4, \
-  { 0x9e, 0x7b, 0x0f, 0xe9, 0x3f, 0x8c, 0xf8, 0x95 } }
+{ 0x42a263db, 0x6ac6, 0x40ff, \
+  { 0x89, 0xe2, 0x25, 0x12, 0xe4, 0xbc, 0x2d, 0x2d } }
 
 // Enum for requesting a particular type of document when creating a doc
 enum DocumentFlavor {
@@ -1499,7 +1500,7 @@ public:
    * Get the box object for an element. This is not exposed through a
    * scriptable interface except for XUL documents.
    */
-  virtual already_AddRefed<nsIBoxObject>
+  virtual already_AddRefed<mozilla::dom::BoxObject>
     GetBoxObjectFor(mozilla::dom::Element* aElement,
                     mozilla::ErrorResult& aRv) = 0;
 
@@ -2360,12 +2361,17 @@ public:
   virtual nsHTMLDocument* AsHTMLDocument() { return nullptr; }
   virtual mozilla::dom::SVGDocument* AsSVGDocument() { return nullptr; }
 
-  // Each import tree has exactly one master document which is
-  // the root of the tree, and owns the browser context.
-  virtual already_AddRefed<nsIDocument> MasterDocument() = 0;
+  // The root document of the import tree. If this document is not an import
+  // this will return the document itself.
+  virtual nsIDocument* MasterDocument() = 0;
   virtual void SetMasterDocument(nsIDocument* master) = 0;
   virtual bool IsMasterDocument() = 0;
-  virtual already_AddRefed<mozilla::dom::ImportManager> ImportManager() = 0;
+  virtual mozilla::dom::ImportManager* ImportManager() = 0;
+  // We keep track of the order of sub imports were added to the document.
+  virtual bool HasSubImportLink(nsINode* aLink) = 0;
+  virtual uint32_t IndexOfSubImportLink(nsINode* aLink) = 0;
+  virtual void AddSubImportLink(nsINode* aLink) = 0;
+  virtual nsINode* GetSubImportLink(uint32_t aIdx) = 0;
 
   /*
    * Given a node, get a weak reference to it and append that reference to
@@ -2384,6 +2390,11 @@ public:
       mBlockedTrackingNodes.AppendElement(weakNode);
     }
   }
+
+  // FontFaceSource
+  mozilla::dom::FontFaceSet* GetFonts(mozilla::ErrorResult& aRv);
+
+  bool DidFireDOMContentLoaded() const { return mDidFireDOMContentLoaded; }
 
 private:
   uint64_t mWarnedAbout;

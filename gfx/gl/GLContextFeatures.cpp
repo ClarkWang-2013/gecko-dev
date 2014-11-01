@@ -220,6 +220,25 @@ static const FeatureInfo sFeatureInfoArr[] = {
         }
     },
     {
+        "get_integer_indexed",
+        300, // OpenGL version
+        300, // OpenGL ES version
+        GLContext::Extension_None,
+        {
+            GLContext::EXT_draw_buffers2,
+            GLContext::Extensions_End
+        }
+    },
+    {
+        "get_integer64_indexed",
+        320, // OpenGL version
+        300, // OpenGL ES version
+        GLContext::Extension_None,
+        {
+            GLContext::Extensions_End
+        }
+    },
+    {
         "get_query_object_iv",
         200, // OpenGL version
         0,   // OpenGL ES version
@@ -268,6 +287,15 @@ static const FeatureInfo sFeatureInfoArr[] = {
          * ANGLE_instanced_arrays and NV_instanced_arrays forbid this, but GLES3
          * has no such restriction.
          */
+    },
+    {
+        "invalidate_framebuffer",
+        430, // OpenGL version
+        300, // OpenGL ES version
+        GLContext::ARB_invalidate_subdata,
+        {
+            GLContext::Extensions_End
+        }
     },
     {
         "map_buffer_range",
@@ -526,9 +554,8 @@ static const FeatureInfo sFeatureInfoArr[] = {
         "transform_feedback2",
         400, // OpenGL version
         300, // OpenGL ES version
-        GLContext::Extension_None,
+        GLContext::ARB_transform_feedback2,
         {
-            GLContext::ARB_transform_feedback2,
             GLContext::NV_transform_feedback2,
             GLContext::Extensions_End
         }

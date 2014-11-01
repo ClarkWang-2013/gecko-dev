@@ -190,6 +190,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitTypedObjectElements(MTypedObjectElements *ins);
     bool visitSetTypedObjectOffset(MSetTypedObjectOffset *ins);
     bool visitTypedObjectProto(MTypedObjectProto *ins);
+    bool visitTypedObjectUnsizedLength(MTypedObjectUnsizedLength *ins);
     bool visitInitializedLength(MInitializedLength *ins);
     bool visitSetInitializedLength(MSetInitializedLength *ins);
     bool visitNot(MNot *ins);
@@ -271,10 +272,16 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitSimdExtractElement(MSimdExtractElement *ins);
     bool visitSimdInsertElement(MSimdInsertElement *ins);
     bool visitSimdSignMask(MSimdSignMask *ins);
+    bool visitSimdSwizzle(MSimdSwizzle *ins);
+    bool visitSimdShuffle(MSimdShuffle *ins);
+    bool visitSimdUnaryArith(MSimdUnaryArith *ins);
     bool visitSimdBinaryComp(MSimdBinaryComp *ins);
     bool visitSimdBinaryArith(MSimdBinaryArith *ins);
     bool visitSimdBinaryBitwise(MSimdBinaryBitwise *ins);
+    bool visitSimdShift(MSimdShift *ins);
     bool visitSimdConstant(MSimdConstant *ins);
+    bool visitSimdConvert(MSimdConvert *ins);
+    bool visitSimdReinterpretCast(MSimdReinterpretCast *ins);
     bool visitPhi(MPhi *ins);
     bool visitBeta(MBeta *ins);
     bool visitObjectState(MObjectState *ins);

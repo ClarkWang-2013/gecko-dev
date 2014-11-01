@@ -14,6 +14,7 @@
 #define NSDISPLAYLIST_H_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
 #include "nsCOMPtr.h"
 #include "nsContainerFrame.h"
 #include "nsPoint.h"
@@ -26,8 +27,10 @@
 #include "LayerState.h"
 #include "FrameMetrics.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/gfx/UserData.h"
 
 #include <stdint.h>
+#include "nsTHashtable.h"
 
 #include <stdlib.h>
 #include <algorithm>
@@ -323,9 +326,7 @@ public:
   }
   bool IsBuildingLayerEventRegions()
   {
-    // Disable for now.
-    return false;
-    // return mMode == PAINTING;
+    return (gfxPrefs::LayoutEventRegionsEnabled() && mMode == PAINTING);
   }
 
   bool GetAncestorHasTouchEventHandler() { return mAncestorHasTouchEventHandler; }
@@ -721,6 +722,17 @@ public:
 
   DisplayListClipState& ClipState() { return mClipState; }
 
+  /**
+   * The will-change budget is calculated during the display list building
+   * phase for all the frames that want will change on a per-document basis.
+   * The cost should be fully calculated during the layer building phase
+   * and a decission to allow or disallow will-change for all frames of
+   * that document will be made by IsInWillChangeBudget.
+   */
+  void AddToWillChangeBudget(nsIFrame* aFrame, const nsSize& aSize);
+
+  bool IsInWillChangeBudget(nsIFrame* aFrame) const;
+
 private:
   void MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
                                     const nsRect& aDirtyRect);
@@ -732,11 +744,20 @@ private:
     uint32_t      mFirstFrameMarkedForDisplay;
     bool          mIsBackgroundOnly;
   };
+
   PresShellState* CurrentPresShellState() {
     NS_ASSERTION(mPresShellStates.Length() > 0,
                  "Someone forgot to enter a presshell");
     return &mPresShellStates[mPresShellStates.Length() - 1];
   }
+
+  struct DocumentWillChangeBudget {
+    DocumentWillChangeBudget()
+      : mBudget(0)
+    {}
+
+    uint32_t mBudget;
+  };
 
   nsIFrame*                      mReferenceFrame;
   nsIFrame*                      mIgnoreScrollFrame;
@@ -755,6 +776,11 @@ private:
   const nsIFrame*                mCurrentReferenceFrame;
   // The offset from mCurrentFrame to mCurrentReferenceFrame.
   nsPoint                        mCurrentOffsetToReferenceFrame;
+  // will-change budget tracker
+  nsDataHashtable<nsPtrHashKey<nsPresContext>, DocumentWillChangeBudget>
+                                 mWillChangeBudget;
+  // Assert that we never check the budget before its fully calculated.
+  mutable mozilla::DebugOnly<bool> mWillChangeBudgetCalculated;
   // Relative to mCurrentFrame.
   nsRect                         mDirtyRect;
   nsRegion                       mWindowOpaqueRegion;
@@ -1098,14 +1124,14 @@ public:
    * Return LAYER_INACTIVE if there is a layer --- BuildLayer will
    * not return null (unless there's an error) --- but the layer contents
    * are not changing frequently. In this case it makes sense to composite
-   * the layer into a ThebesLayer with other content, so we don't have to
+   * the layer into a PaintedLayer with other content, so we don't have to
    * recomposite it every time we paint.
    * Note: GetLayerState is only allowed to return LAYER_INACTIVE if all
    * descendant display items returned LAYER_INACTIVE or LAYER_NONE. Also,
    * all descendant display item frames must have an active scrolled root
    * that's either the same as this item's frame's active scrolled root, or
    * a descendant of this item's frame. This ensures that the entire
-   * set of display items can be collapsed onto a single ThebesLayer.
+   * set of display items can be collapsed onto a single PaintedLayer.
    * Return LAYER_ACTIVE if the layer is active, that is, its contents are
    * changing frequently. In this case it makes sense to keep the layer
    * as a separate buffer in VRAM and composite it into the destination
@@ -1133,7 +1159,7 @@ public:
 
 #ifdef MOZ_DUMP_PAINTING
   /**
-   * Mark this display item as being painted via FrameLayerBuilder::DrawThebesLayer.
+   * Mark this display item as being painted via FrameLayerBuilder::DrawPaintedLayer.
    */
   bool Painted() { return mPainted; }
 
@@ -1380,7 +1406,7 @@ class nsDisplayList {
 public:
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
-  typedef mozilla::layers::ThebesLayer ThebesLayer;
+  typedef mozilla::layers::PaintedLayer PaintedLayer;
 
   /**
    * Create an empty list.
@@ -1540,7 +1566,7 @@ public:
    * been removed from aVisibleRegion when we return.
    * This does not remove any items from the list, so we can recompute
    * visiblity with different regions later (see
-   * FrameLayerBuilder::DrawThebesLayer).
+   * FrameLayerBuilder::DrawPaintedLayer).
    * This method needs to be idempotent.
    * 
    * @param aVisibleRegion the area that is visible, relative to the
@@ -2497,14 +2523,14 @@ public:
  * One of these is created for each stacking context and pseudo-stacking-context.
  * It accumulates regions for event targets contributed by the border-boxes of
  * frames in its (pseudo) stacking context. A nsDisplayLayerEventRegions
- * eventually contributes its regions to the ThebesLayer it is placed in by
+ * eventually contributes its regions to the PaintedLayer it is placed in by
  * FrameLayerBuilder. (We don't create a display item for every frame that
  * could be an event target (i.e. almost all frames), because that would be
  * high overhead.)
  *
- * We always make leaf layers other than ThebesLayers transparent to events.
+ * We always make leaf layers other than PaintedLayers transparent to events.
  * For example, an event targeting a canvas or video will actually target the
- * background of that element, which is logically in the ThebesLayer behind the
+ * background of that element, which is logically in the PaintedLayer behind the
  * CanvasFrame or ImageFrame. We only need to create a
  * nsDisplayLayerEventRegions when an element's background could be in front
  * of a lower z-order element with its own layer.
@@ -2740,7 +2766,7 @@ public:
                             float aOpacity,
                             const DisplayItemClip* aClip) MOZ_OVERRIDE;
   virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
-  bool NeedsActiveLayer();
+  bool NeedsActiveLayer(nsDisplayListBuilder* aBuilder);
   NS_DISPLAY_DECL_NAME("Opacity", TYPE_OPACITY)
 #ifdef MOZ_DUMP_PAINTING
   virtual void WriteDebugInfo(nsACString& aTo) MOZ_OVERRIDE;
@@ -2844,7 +2870,7 @@ public:
    * for this layer are send to our nsPresContext.
    * GENERATE_SCROLLABLE_LAYER : only valid on nsDisplaySubDocument (and
    * subclasses), indicates this layer is to be a scrollable layer, so call
-   * RecordFrameMetrics, etc.
+   * ComputeFrameMetrics, etc.
    * @param aScrollTarget when VERTICAL_SCROLLBAR or HORIZONTAL_SCROLLBAR
    * is set in the flags, this parameter should be the ViewID of the
    * scrollable content this scrollbar is for.
@@ -3441,7 +3467,16 @@ public:
                                                 bool aLogAnimations = false);
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
 
-  bool ShouldPrerender() const { return mPrerender; }
+  /**
+   * This will return if it's possible for this element to be prerendered.
+   * This should never return false if we're going to prerender.
+   */
+  bool MaybePrerender() const { return mMaybePrerender; }
+  /**
+   * Check if this element will be prerendered. This must be done after the
+   * display list has been fully built.
+   */
+  bool ShouldPrerender(nsDisplayListBuilder* aBuilder);
 
 #ifdef MOZ_DUMP_PAINTING
   virtual void WriteDebugInfo(nsACString& aTo) MOZ_OVERRIDE;
@@ -3463,7 +3498,9 @@ private:
   ComputeTransformFunction mTransformGetter;
   nsRect mChildrenVisibleRect;
   uint32_t mIndex;
-  bool mPrerender;
+  // We wont know if we pre-render until the layer building phase where we can
+  // check layers will-change budget.
+  bool mMaybePrerender;
 };
 
 /**

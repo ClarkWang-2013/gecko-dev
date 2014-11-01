@@ -237,6 +237,16 @@ public:
   bool HitTestAPZC(const ScreenIntPoint& aPoint);
 
   /**
+   * See AsyncPanZoomController::CalculatePendingDisplayPort. This
+   * function simply delegates to that one, so that non-layers code
+   * never needs to include AsyncPanZoomController.h
+   */
+  static const LayerMargin CalculatePendingDisplayPort(
+    const FrameMetrics& aFrameMetrics,
+    const ScreenPoint& aVelocity,
+    double aEstimatedPaintDuration);
+
+  /**
    * Set the dpi value used by all AsyncPanZoomControllers.
    * DPI defaults to 72 if not set using SetDPI() at any point.
    */
@@ -341,8 +351,6 @@ public:
                      nsRefPtr<const OverscrollHandoffChain> aOverscrollHandoffChain,
                      bool aHandoff);
 
-  void SnapBackOverscrolledApzc(AsyncPanZoomController* aStart);
-
   /*
    * Build the chain of APZCs that will handle overscroll for a pan starting at |aInitialTarget|.
    */
@@ -380,6 +388,7 @@ private:
                              ScrollableLayerGuid* aOutTargetGuid);
   void UpdateZoomConstraintsRecursively(AsyncPanZoomController* aApzc,
                                         const ZoomConstraints& aConstraints);
+  void FlushRepaintsRecursively(AsyncPanZoomController* aApzc);
 
   AsyncPanZoomController* PrepareAPZCForLayer(const LayerMetricsWrapper& aLayer,
                                               const FrameMetrics& aMetrics,

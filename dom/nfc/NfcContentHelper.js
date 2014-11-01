@@ -36,13 +36,16 @@ const NFC_ENABLED = libcutils.property_get("ro.moz.nfc.enabled", "false") === "t
 let DEBUG = NFC.DEBUG_CONTENT_HELPER;
 
 let debug;
-if (DEBUG) {
-  debug = function (s) {
-    dump("-*- NfcContentHelper: " + s + "\n");
-  };
-} else {
-  debug = function (s) {};
-}
+function updateDebug() {
+  if (DEBUG) {
+    debug = function (s) {
+      dump("-*- NfcContentHelper: " + s + "\n");
+    };
+  } else {
+    debug = function (s) {};
+  }
+};
+updateDebug();
 
 const NFCCONTENTHELPER_CID =
   Components.ID("{4d72c120-da5f-11e1-9b23-0800200c9a66}");
@@ -50,12 +53,11 @@ const NFCCONTENTHELPER_CID =
 const NFC_IPC_MSG_NAMES = [
   "NFC:ReadNDEFResponse",
   "NFC:WriteNDEFResponse",
-  "NFC:GetDetailsNDEFResponse",
   "NFC:MakeReadOnlyNDEFResponse",
   "NFC:ConnectResponse",
   "NFC:CloseResponse",
   "NFC:CheckP2PRegistrationResponse",
-  "NFC:PeerEvent",
+  "NFC:DOMEvent",
   "NFC:NotifySendFileStatusResponse",
   "NFC:ConfigResponse"
 ];
@@ -64,19 +66,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
                                    "nsISyncMessageSender");
 
-function GetDetailsNDEFResponse(details) {
-  this.canBeMadeReadOnly = details.canBeMadeReadOnly;
-  this.isReadOnly = details.isReadOnly;
-  this.maxSupportedLength = details.maxSupportedLength;
-}
-GetDetailsNDEFResponse.prototype = {
-  __exposedProps__ : {canBeMadeReadOnly: 'r',
-                      isReadOnly: 'r',
-                      maxSupportedLength: 'r'}
-};
-
 function NfcContentHelper() {
   this.initDOMRequestHelper(/* aWindow */ null, NFC_IPC_MSG_NAMES);
+
+  Services.obs.addObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED, false);
   Services.obs.addObserver(this, "xpcom-shutdown", false);
 
   this._requestMap = [];
@@ -96,7 +89,18 @@ NfcContentHelper.prototype = {
   }),
 
   _requestMap: null,
-  peerEventListener: null,
+  eventTarget: null,
+
+  init: function init(aWindow) {
+    if (aWindow && aWindow.navigator.mozSettings) {
+      let lock = aWindow.navigator.mozSettings.createLock();
+      var nfcDebug = lock.get(NFC.SETTING_NFC_DEBUG);
+      nfcDebug.onsuccess = function _nfcDebug() {
+        DEBUG = nfcDebug.result[NFC.SETTING_NFC_DEBUG];
+        updateDebug();
+      };
+    }
+  },
 
   encodeNDEFRecords: function encodeNDEFRecords(records) {
     let encodedRecords = [];
@@ -127,22 +131,6 @@ NfcContentHelper.prototype = {
   },
 
   // NFCTag interface
-  getDetailsNDEF: function getDetailsNDEF(window, sessionToken) {
-    if (window == null) {
-      throw Components.Exception("Can't get window object",
-                                  Cr.NS_ERROR_UNEXPECTED);
-    }
-    let request = Services.DOMRequest.createRequest(window);
-    let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = window;
-
-    cpmm.sendAsyncMessage("NFC:GetDetailsNDEF", {
-      requestId: requestId,
-      sessionToken: sessionToken
-    });
-    return request;
-  },
-
   readNDEF: function readNDEF(window, sessionToken) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
@@ -257,8 +245,9 @@ NfcContentHelper.prototype = {
     });
   },
 
-  registerPeerEventListener: function registerPeerEventListener(listener) {
-    this.peerEventListener = listener;
+  registerEventTarget: function registerEventTarget(target) {
+    this.eventTarget = target;
+    cpmm.sendAsyncMessage("NFC:AddEventTarget");
   },
 
   registerTargetForPeerReady: function registerTargetForPeerReady(window, appId) {
@@ -355,8 +344,16 @@ NfcContentHelper.prototype = {
   observe: function observe(subject, topic, data) {
     if (topic == "xpcom-shutdown") {
       this.destroyDOMRequestHelper();
+      Services.obs.removeObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED);
       Services.obs.removeObserver(this, "xpcom-shutdown");
       cpmm = null;
+    } else if (topic == NFC.TOPIC_MOZSETTINGS_CHANGED) {
+      if ("wrappedJSObject" in subject) {
+        subject = subject.wrappedJSObject;
+      }
+      if (subject) {
+        this.handle(subject.key, subject.value);
+      }
     }
   },
 
@@ -394,9 +391,6 @@ NfcContentHelper.prototype = {
       case "NFC:ReadNDEFResponse":
         this.handleReadNDEFResponse(result);
         break;
-      case "NFC:GetDetailsNDEFResponse":
-        this.handleGetDetailsNDEFResponse(result);
-        break;
       case "NFC:CheckP2PRegistrationResponse":
         this.handleCheckP2PRegistrationResponse(result);
         break;
@@ -412,15 +406,24 @@ NfcContentHelper.prototype = {
           this.fireRequestSuccess(atob(result.requestId), result);
         }
         break;
-      case "NFC:PeerEvent":
+      case "NFC:DOMEvent":
         switch (result.event) {
           case NFC.NFC_PEER_EVENT_READY:
-            this.peerEventListener.notifyPeerReady(result.sessionToken);
+            this.eventTarget.notifyPeerReady(result.sessionToken);
             break;
           case NFC.NFC_PEER_EVENT_LOST:
-            this.peerEventListener.notifyPeerLost(result.sessionToken);
+            this.eventTarget.notifyPeerLost(result.sessionToken);
             break;
         }
+        break;
+    }
+  },
+
+  handle: function handle(name, result) {
+    switch (name) {
+      case NFC.SETTING_NFC_DEBUG:
+        DEBUG = result;
+        updateDebug();
         break;
     }
   },
@@ -449,16 +452,6 @@ NfcContentHelper.prototype = {
                                                 payload: record.payload}));
     }
     this.fireRequestSuccess(requestId, ndefMsg);
-  },
-
-  handleGetDetailsNDEFResponse: function handleGetDetailsNDEFResponse(result) {
-    if (result.errorMsg) {
-      this.fireRequestError(atob(result.requestId), result.errorMsg);
-      return;
-    }
-
-    let requestId = atob(result.requestId);
-    this.fireRequestSuccess(requestId, new GetDetailsNDEFResponse(result));
   },
 
   handleCheckP2PRegistrationResponse: function handleCheckP2PRegistrationResponse(result) {

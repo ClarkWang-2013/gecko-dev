@@ -33,7 +33,6 @@ const NS_PREFBRANCH_PREFCHANGE_TOPIC_ID = "nsPref:changed";
 
 const kPrefRilNumRadioInterfaces = "ril.numRadioInterfaces";
 const kPrefRilDebuggingEnabled = "ril.debugging.enabled";
-const kPrefVoicemailDefaultServiceId = "dom.voicemail.defaultServiceId";
 
 let DEBUG;
 function debug(s) {
@@ -42,31 +41,14 @@ function debug(s) {
 
 const RILCONTENTHELPER_CID =
   Components.ID("{472816e1-1fd6-4405-996c-806f9ea68174}");
-const ICCINFO_CID =
-  Components.ID("{39d64d90-26a6-11e4-8c21-0800200c9a66}");
-const GSMICCINFO_CID =
-  Components.ID("{e0fa785b-ad3f-46ed-bc56-fcb0d6fe4fa8}");
-const CDMAICCINFO_CID =
-  Components.ID("{3d1f844f-9ec5-48fb-8907-aed2e5421709}");
-const VOICEMAILSTATUS_CID=
-  Components.ID("{5467f2eb-e214-43ea-9b89-67711241ec8e}");
-const CELLBROADCASTMESSAGE_CID =
-  Components.ID("{29474c96-3099-486f-bb4a-3c9a1da834e4}");
-const CELLBROADCASTETWSINFO_CID =
-  Components.ID("{59f176ee-9dcd-4005-9d47-f6be0cd08e17}");
-const ICCCARDLOCKERROR_CID =
-  Components.ID("{08a71987-408c-44ff-93fd-177c0a85c3dd}");
 
 const RIL_IPC_MSG_NAMES = [
   "RIL:CardStateChanged",
   "RIL:IccInfoChanged",
-  "RIL:VoicemailNotification",
-  "RIL:VoicemailInfoChanged",
   "RIL:CardLockResult",
   "RIL:CardLockRetryCount",
   "RIL:StkCommand",
   "RIL:StkSessionEnd",
-  "RIL:CellBroadcastReceived",
   "RIL:IccOpenChannel",
   "RIL:IccCloseChannel",
   "RIL:IccExchangeAPDU",
@@ -118,16 +100,9 @@ MobileIccCardLockRetryCount.prototype = {
 
 function IccInfo() {}
 IccInfo.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozIccInfo]),
-  classID: ICCINFO_CID,
-  classInfo: XPCOMUtils.generateCI({
-    classID:          ICCINFO_CID,
-    classDescription: "MozIccInfo",
-    flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozIccInfo]
-  }),
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIIccInfo]),
 
-  // nsIDOMMozIccInfo
+  // nsIIccInfo
 
   iccType: null,
   iccid: null,
@@ -140,137 +115,23 @@ IccInfo.prototype = {
 
 function GsmIccInfo() {}
 GsmIccInfo.prototype = {
-  __proto__: IccInfo.prototype,
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozGsmIccInfo]),
-  classID: GSMICCINFO_CID,
-  classInfo: XPCOMUtils.generateCI({
-    classID:          GSMICCINFO_CID,
-    classDescription: "MozGsmIccInfo",
-    flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozGsmIccInfo]
-  }),
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIGsmIccInfo,
+                                         Ci.nsIIccInfo]),
 
-  // nsIDOMMozGsmIccInfo
+  // nsIGsmIccInfo
 
   msisdn: null
 };
 
 function CdmaIccInfo() {}
 CdmaIccInfo.prototype = {
-  __proto__: IccInfo.prototype,
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozCdmaIccInfo]),
-  classID: CDMAICCINFO_CID,
-  classInfo: XPCOMUtils.generateCI({
-    classID:          CDMAICCINFO_CID,
-    classDescription: "MozCdmaIccInfo",
-    flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozCdmaIccInfo]
-  }),
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsICdmaIccInfo,
+                                         Ci.nsIIccInfo]),
 
-  // nsIDOMMozCdmaIccInfo
+  // nsICdmaIccInfo
 
   mdn: null,
   prlVersion: 0
-};
-
-function VoicemailInfo() {}
-VoicemailInfo.prototype = {
-  number: null,
-  displayName: null
-};
-
-function VoicemailStatus(clientId) {
-  this.serviceId = clientId;
-}
-VoicemailStatus.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([]),
-  classID:        VOICEMAILSTATUS_CID,
-  contractID:     "@mozilla.org/voicemailstatus;1",
-
-  serviceId: -1,
-  hasMessages: false,
-  messageCount: -1, // Count unknown.
-  returnNumber: null,
-  returnMessage: null
-};
-
-function CellBroadcastMessage(clientId, pdu) {
-  this.serviceId = clientId;
-  this.gsmGeographicalScope = RIL.CB_GSM_GEOGRAPHICAL_SCOPE_NAMES[pdu.geographicalScope];
-  this.messageCode = pdu.messageCode;
-  this.messageId = pdu.messageId;
-  this.language = pdu.language;
-  this.body = pdu.fullBody;
-  this.messageClass = pdu.messageClass;
-  this.timestamp = pdu.timestamp;
-
-  if (pdu.etws != null) {
-    this.etws = new CellBroadcastEtwsInfo(pdu.etws);
-  }
-
-  this.cdmaServiceCategory = pdu.serviceCategory;
-}
-CellBroadcastMessage.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozCellBroadcastMessage]),
-  classID:        CELLBROADCASTMESSAGE_CID,
-  classInfo:      XPCOMUtils.generateCI({
-    classID:          CELLBROADCASTMESSAGE_CID,
-    classDescription: "CellBroadcastMessage",
-    flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozCellBroadcastMessage]
-  }),
-
-  // nsIDOMMozCellBroadcastMessage
-  serviceId: -1,
-
-  gsmGeographicalScope: null,
-  messageCode: null,
-  messageId: null,
-  language: null,
-  body: null,
-  messageClass: null,
-  timestamp: null,
-
-  etws: null,
-  cdmaServiceCategory: null
-};
-
-function CellBroadcastEtwsInfo(etwsInfo) {
-  if (etwsInfo.warningType != null) {
-    this.warningType = RIL.CB_ETWS_WARNING_TYPE_NAMES[etwsInfo.warningType];
-  }
-  this.emergencyUserAlert = etwsInfo.emergencyUserAlert;
-  this.popup = etwsInfo.popup;
-}
-CellBroadcastEtwsInfo.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozCellBroadcastEtwsInfo]),
-  classID:        CELLBROADCASTETWSINFO_CID,
-  classInfo:      XPCOMUtils.generateCI({
-    classID:          CELLBROADCASTETWSINFO_CID,
-    classDescription: "CellBroadcastEtwsInfo",
-    flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozCellBroadcastEtwsInfo]
-  }),
-
-  // nsIDOMMozCellBroadcastEtwsInfo
-
-  warningType: null,
-  emergencyUserAlert: null,
-  popup: null
-};
-
-function IccCardLockError() {
-}
-IccCardLockError.prototype = {
-  classDescription: "IccCardLockError",
-  classID:          ICCCARDLOCKERROR_CID,
-  contractID:       "@mozilla.org/dom/icccardlock-error;1",
-  QueryInterface:   XPCOMUtils.generateQI([Ci.nsISupports]),
-  __init: function(lockType, errorMsg, retryCount) {
-    this.__DOM_IMPL__.init(errorMsg);
-    this.lockType = lockType;
-    this.retryCount = retryCount;
-  },
 };
 
 function RILContentHelper() {
@@ -280,45 +141,32 @@ function RILContentHelper() {
   if (DEBUG) debug("Number of clients: " + this.numClients);
 
   this.rilContexts = [];
-  this.voicemailInfos = [];
-  this.voicemailStatuses = [];
   for (let clientId = 0; clientId < this.numClients; clientId++) {
     this.rilContexts[clientId] = {
-      cardState:            RIL.GECKO_CARDSTATE_UNKNOWN,
-      iccInfo:              null
+      cardState: Ci.nsIIccProvider.CARD_STATE_UNKNOWN,
+      iccInfo: null
     };
-
-    this.voicemailInfos[clientId] = new VoicemailInfo();
   }
-
-  this.voicemailDefaultServiceId = this.getVoicemailDefaultServiceId();
 
   this.initDOMRequestHelper(/* aWindow */ null, RIL_IPC_MSG_NAMES);
   this._windowsMap = [];
-  this._cellBroadcastListeners = [];
-  this._voicemailListeners = [];
   this._iccListeners = [];
 
   Services.obs.addObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
 
   Services.prefs.addObserver(kPrefRilDebuggingEnabled, this, false);
-  Services.prefs.addObserver(kPrefVoicemailDefaultServiceId, this, false);
 }
 
 RILContentHelper.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsICellBroadcastProvider,
-                                         Ci.nsIVoicemailProvider,
-                                         Ci.nsIIccProvider,
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIIccProvider,
                                          Ci.nsIObserver,
                                          Ci.nsISupportsWeakReference]),
   classID:   RILCONTENTHELPER_CID,
   classInfo: XPCOMUtils.generateCI({classID: RILCONTENTHELPER_CID,
                                     classDescription: "RILContentHelper",
-                                    interfaces: [Ci.nsICellBroadcastProvider,
-                                                 Ci.nsIVoicemailProvider,
-                                                 Ci.nsIIccProvider]}),
+                                    interfaces: [Ci.nsIIccProvider]}),
 
   updateDebugFlag: function() {
     try {
@@ -674,52 +522,7 @@ RILContentHelper.prototype = {
     return request;
   },
 
-  _cellBroadcastListeners: null,
-  _voicemailListeners: null,
   _iccListeners: null,
-
-  voicemailInfos: null,
-  voicemailStatuses: null,
-
-  voicemailDefaultServiceId: 0,
-  getVoicemailDefaultServiceId: function() {
-    let id = Services.prefs.getIntPref(kPrefVoicemailDefaultServiceId);
-
-    if (id >= gNumRadioInterfaces || id < 0) {
-      id = 0;
-    }
-
-    return id;
-  },
-
-  getVoicemailInfo: function(clientId) {
-    // Get voicemail infomation by IPC only on first time.
-    this.getVoicemailInfo = function getVoicemailInfo(clientId) {
-      return this.voicemailInfos[clientId];
-    };
-
-    for (let cId = 0; cId < gNumRadioInterfaces; cId++) {
-      let voicemailInfo =
-        cpmm.sendSyncMessage("RIL:GetVoicemailInfo", {clientId: cId})[0];
-      if (voicemailInfo) {
-        this.updateInfo(voicemailInfo, this.voicemailInfos[cId]);
-      }
-    }
-
-    return this.voicemailInfos[clientId];
-  },
-
-  getVoicemailNumber: function(clientId) {
-    return this.getVoicemailInfo(clientId).number;
-  },
-
-  getVoicemailDisplayName: function(clientId) {
-    return this.getVoicemailInfo(clientId).displayName;
-  },
-
-  getVoicemailStatus: function(clientId) {
-    return this.voicemailStatuses[clientId];
-  },
 
   registerListener: function(listenerType, clientId, listener) {
     if (!this[listenerType]) {
@@ -754,38 +557,6 @@ RILContentHelper.prototype = {
     }
   },
 
-  registerVoicemailMsg: function(listener) {
-    if (DEBUG) debug("Registering for voicemail-related messages");
-    // To follow the listener registration scheme, we add a dummy clientId 0.
-    // All voicemail events are routed to listener for client id 0.
-    // See |handleVoicemailNotification|.
-    this.registerListener("_voicemailListeners", 0, listener);
-    cpmm.sendAsyncMessage("RIL:RegisterVoicemailMsg");
-  },
-
-  unregisterVoicemailMsg: function(listener) {
-    // To follow the listener unregistration scheme, we add a dummy clientId 0.
-    // All voicemail events are routed to listener for client id 0.
-    // See |handleVoicemailNotification|.
-    this.unregisterListener("_voicemailListeners", 0, listener);
-  },
-
-  registerCellBroadcastMsg: function(listener) {
-    if (DEBUG) debug("Registering for Cell Broadcast related messages");
-    // Instead of registering multiple listeners for Multi-SIM, we reuse
-    // clientId 0 to route all CBS messages to single listener and provide the
-    // |clientId| info by |CellBroadcastMessage.serviceId|.
-    this.registerListener("_cellBroadcastListeners", 0, listener);
-    cpmm.sendAsyncMessage("RIL:RegisterCellBroadcastMsg");
-  },
-
-  unregisterCellBroadcastMsg: function(listener) {
-    // Instead of unregistering multiple listeners for Multi-SIM, we reuse
-    // clientId 0 to route all CBS messages to single listener and provide the
-    // |clientId| info by |CellBroadcastMessage.serviceId|.
-    this.unregisterListener("_cellBroadcastListeners", 0, listener);
-  },
-
   registerIccMsg: function(clientId, listener) {
     if (DEBUG) debug("Registering for ICC related messages");
     this.registerListener("_iccListeners", clientId, listener);
@@ -803,8 +574,6 @@ RILContentHelper.prototype = {
       case NS_PREFBRANCH_PREFCHANGE_TOPIC_ID:
         if (data == kPrefRilDebuggingEnabled) {
           this.updateDebugFlag();
-        } else if (data == kPrefVoicemailDefaultServiceId) {
-          this.voicemailDefaultServiceId = this.getVoicemailDefaultServiceId();
         }
         break;
 
@@ -903,12 +672,6 @@ RILContentHelper.prototype = {
                            "notifyIccInfoChanged",
                            null);
         break;
-      case "RIL:VoicemailNotification":
-        this.handleVoicemailNotification(clientId, data);
-        break;
-      case "RIL:VoicemailInfoChanged":
-        this.updateInfo(data, this.voicemailInfos[clientId]);
-        break;
       case "RIL:CardLockResult": {
         let requestId = data.requestId;
         let requestWindow = this._windowsMap[requestId];
@@ -964,16 +727,6 @@ RILContentHelper.prototype = {
       case "RIL:MatchMvno":
         this.handleSimpleRequest(data.requestId, data.errorMsg, data.result);
         break;
-      case "RIL:CellBroadcastReceived": {
-        // All CBS messages are to routed the listener for clientId 0 and
-        // provide the |clientId| info by |CellBroadcastMessage.serviceId|.
-        let message = new CellBroadcastMessage(clientId, data);
-        this._deliverEvent(0, // route to clientId 0.
-                           "_cellBroadcastListeners",
-                           "notifyMessageReceived",
-                           [message]);
-        break;
-      }
     }
   },
 
@@ -1003,7 +756,8 @@ RILContentHelper.prototype = {
     let window = this._windowsMap[message.requestId];
     delete this._windowsMap[message.requestId];
     let contacts = message.contacts;
-    let result = contacts.map(function(c) {
+    let result = new window.Array();
+    contacts.forEach(function(c) {
       let prop = {name: [c.alphaId], tel: [{value: c.number}]};
 
       if (c.email) {
@@ -1018,7 +772,7 @@ RILContentHelper.prototype = {
 
       let contact = new window.mozContact(prop);
       contact.id = c.contactId;
-      return contact;
+      result.push(contact);
     });
 
     this.fireRequestSuccess(message.requestId, result);
@@ -1050,46 +804,6 @@ RILContentHelper.prototype = {
     this.fireRequestSuccess(message.requestId, contact);
   },
 
-  handleVoicemailNotification: function(clientId, message) {
-    let changed = false;
-    if (!this.voicemailStatuses[clientId]) {
-      this.voicemailStatuses[clientId] = new VoicemailStatus(clientId);
-    }
-
-    let voicemailStatus = this.voicemailStatuses[clientId];
-    if (voicemailStatus.hasMessages != message.active) {
-      changed = true;
-      voicemailStatus.hasMessages = message.active;
-    }
-
-    if (voicemailStatus.messageCount != message.msgCount) {
-      changed = true;
-      voicemailStatus.messageCount = message.msgCount;
-    } else if (message.msgCount == -1) {
-      // For MWI using DCS the message count is not available
-      changed = true;
-    }
-
-    if (voicemailStatus.returnNumber != message.returnNumber) {
-      changed = true;
-      voicemailStatus.returnNumber = message.returnNumber;
-    }
-
-    if (voicemailStatus.returnMessage != message.returnMessage) {
-      changed = true;
-      voicemailStatus.returnMessage = message.returnMessage;
-    }
-
-    if (changed) {
-      // To follow the event delivering scheme, we add a dummy clientId 0.
-      // All voicemail events are routed to listener for client id 0.
-      this._deliverEvent(0,
-                         "_voicemailListeners",
-                         "notifyStatusChanged",
-                         [voicemailStatus]);
-    }
-  },
-
   _deliverEvent: function(clientId, listenerType, name, args) {
     if (!this[listenerType]) {
       return;
@@ -1117,5 +831,4 @@ RILContentHelper.prototype = {
   }
 };
 
-this.NSGetFactory = XPCOMUtils.generateNSGetFactory([RILContentHelper,
-                                                     IccCardLockError]);
+this.NSGetFactory = XPCOMUtils.generateNSGetFactory([RILContentHelper]);

@@ -18,7 +18,7 @@
 #include "Layers.h"                     // for Layer, ContainerLayer, etc
 #include "LayerScope.h"                 // for LayerScope Tool
 #include "protobuf/LayerScopePacket.pb.h" // for protobuf (LayerScope)
-#include "ThebesLayerComposite.h"       // for ThebesLayerComposite
+#include "PaintedLayerComposite.h"      // for PaintedLayerComposite
 #include "TiledLayerBuffer.h"           // for TiledLayerComposer
 #include "Units.h"                      // for ScreenIntRect
 #include "gfx2DGlue.h"                  // for ToMatrix4x4
@@ -212,7 +212,7 @@ LayerManagerComposite::EndEmptyTransaction(EndTransactionFlags aFlags)
 }
 
 void
-LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
+LayerManagerComposite::EndTransaction(DrawPaintedLayerCallback aCallback,
                                       void* aCallbackData,
                                       EndTransactionFlags aFlags)
 {
@@ -280,8 +280,8 @@ LayerManagerComposite::CreateOptimalMaskDrawTarget(const IntSize &aSize)
   return nullptr;
 }
 
-already_AddRefed<ThebesLayer>
-LayerManagerComposite::CreateThebesLayer()
+already_AddRefed<PaintedLayer>
+LayerManagerComposite::CreatePaintedLayer()
 {
   NS_RUNTIMEABORT("Should only be called on the drawing side");
   return nullptr;
@@ -757,15 +757,15 @@ LayerManagerComposite::ComputeRenderIntegrityInternal(Layer* aLayer,
     return;
   }
 
-  // Only thebes layers can be incomplete
-  ThebesLayer* thebesLayer = aLayer->AsThebesLayer();
-  if (!thebesLayer) {
+  // Only painted layers can be incomplete
+  PaintedLayer* paintedLayer = aLayer->AsPaintedLayer();
+  if (!paintedLayer) {
     return;
   }
 
   // See if there's any incomplete rendering
   nsIntRegion incompleteRegion = aLayer->GetEffectiveVisibleRegion();
-  incompleteRegion.Sub(incompleteRegion, thebesLayer->GetValidRegion());
+  incompleteRegion.Sub(incompleteRegion, paintedLayer->GetValidRegion());
 
   if (!incompleteRegion.IsEmpty()) {
     // Calculate the transform to get between screen and layer space
@@ -855,7 +855,7 @@ LayerManagerComposite::ComputeRenderIntegrity()
     Layer* rootScrollable = rootScrollableLayers[0];
     const FrameMetrics& metrics = LayerMetricsWrapper::TopmostScrollableMetrics(rootScrollable);
     Matrix4x4 transform = rootScrollable->GetEffectiveTransform();
-    transform.ScalePost(metrics.mResolution.scale, metrics.mResolution.scale, 1);
+    transform.PostScale(metrics.mResolution.scale, metrics.mResolution.scale, 1);
 
     // Clip the screen rect to the document bounds
     Rect documentBounds =
@@ -922,14 +922,14 @@ LayerManagerComposite::ComputeRenderIntegrity()
   return 1.f;
 }
 
-already_AddRefed<ThebesLayerComposite>
-LayerManagerComposite::CreateThebesLayerComposite()
+already_AddRefed<PaintedLayerComposite>
+LayerManagerComposite::CreatePaintedLayerComposite()
 {
   if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return nullptr;
   }
-  return nsRefPtr<ThebesLayerComposite>(new ThebesLayerComposite(this)).forget();
+  return nsRefPtr<PaintedLayerComposite>(new PaintedLayerComposite(this)).forget();
 }
 
 already_AddRefed<ContainerLayerComposite>
@@ -1081,6 +1081,13 @@ LayerManagerComposite::NotifyShadowTreeTransaction()
   if (mFPS) {
     mFPS->NotifyShadowTreeTransaction();
   }
+}
+
+void
+LayerComposite::SetLayerManager(LayerManagerComposite* aManager)
+{
+  mCompositeManager = aManager;
+  mCompositor = aManager->GetCompositor();
 }
 
 #ifndef MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS

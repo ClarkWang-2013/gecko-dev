@@ -98,7 +98,7 @@ ValidatePropertyDescriptor(JSContext *cx, bool extensible, Handle<PropDesc> desc
 
     // step 8
     if (IsDataDescriptor(current)) {
-        JS_ASSERT(desc.isDataDescriptor()); // by step 7a
+        MOZ_ASSERT(desc.isDataDescriptor()); // by step 7a
         if (current.isPermanent() && current.isReadonly()) {
             if (desc.hasWritable() && desc.writable()) {
                 *bp = false;
@@ -121,8 +121,8 @@ ValidatePropertyDescriptor(JSContext *cx, bool extensible, Handle<PropDesc> desc
     }
 
     // step 9
-    JS_ASSERT(IsAccessorDescriptor(current)); // by step 8
-    JS_ASSERT(desc.isAccessorDescriptor()); // by step 7a
+    MOZ_ASSERT(IsAccessorDescriptor(current)); // by step 8
+    MOZ_ASSERT(desc.isAccessorDescriptor()); // by step 7a
     *bp = (!current.isPermanent() ||
            ((!desc.hasSet() || desc.setter() == current.setter()) &&
             (!desc.hasGet() || desc.getter() == current.getter())));
@@ -157,7 +157,7 @@ HasOwn(JSContext *cx, HandleObject obj, HandleId id, bool *bp)
 static JSObject *
 GetDirectProxyHandlerObject(JSObject *proxy)
 {
-    JS_ASSERT(proxy->as<ProxyObject>().handler() == &ScriptedDirectProxyHandler::singleton);
+    MOZ_ASSERT(proxy->as<ProxyObject>().handler() == &ScriptedDirectProxyHandler::singleton);
     return proxy->as<ProxyObject>().extra(ScriptedDirectProxyHandler::HANDLER_EXTRA).toObjectOrNull();
 }
 
@@ -172,12 +172,13 @@ ReportInvalidTrapResult(JSContext *cx, JSObject *proxy, JSAtom *atom)
                          js::NullPtr(), bytes.ptr());
 }
 
-// This function is shared between getOwnPropertyNames, enumerate, and keys
+// This function is shared between ownPropertyKeys, enumerate, and
+// getOwnEnumerablePropertyKeys.
 static bool
 ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleValue v,
                 AutoIdVector &props, unsigned flags, JSAtom *trapName_)
 {
-    JS_ASSERT(v.isObject());
+    MOZ_ASSERT(v.isObject());
     RootedObject array(cx, &v.toObject());
     RootedAtom trapName(cx, trapName_);
 
@@ -227,7 +228,7 @@ ArrayToIdVector(JSContext *cx, HandleObject proxy, HandleObject target, HandleVa
 
     // step l
     AutoIdVector ownProps(cx);
-    if (!GetPropertyNames(cx, target, flags, &ownProps))
+    if (!GetPropertyKeys(cx, target, flags, &ownProps))
         return false;
 
     // step m
@@ -343,7 +344,7 @@ ScriptedDirectProxyHandler::getPropertyDescriptor(JSContext *cx, HandleObject pr
     if (!JSObject::getProto(cx, proxy, &proto))
         return false;
     if (!proto) {
-        JS_ASSERT(!desc.object());
+        MOZ_ASSERT(!desc.object());
         return true;
     }
     return JS_GetPropertyDescriptorById(cx, proto, id, desc);
@@ -558,11 +559,10 @@ ScriptedDirectProxyHandler::defineProperty(JSContext *cx, HandleObject proxy, Ha
     return true;
 }
 
-// This is secretly [[OwnPropertyKeys]]. SM uses the old wiki name, internally.
 // ES6 (5 April 2014) 9.5.12 Proxy.[[OwnPropertyKeys]]()
 bool
-ScriptedDirectProxyHandler::getOwnPropertyNames(JSContext *cx, HandleObject proxy,
-                                                AutoIdVector &props) const
+ScriptedDirectProxyHandler::ownPropertyKeys(JSContext *cx, HandleObject proxy,
+                                            AutoIdVector &props) const
 {
     // step 1
     RootedObject handler(cx, GetDirectProxyHandlerObject(proxy));
@@ -583,7 +583,7 @@ ScriptedDirectProxyHandler::getOwnPropertyNames(JSContext *cx, HandleObject prox
 
     // step 6
     if (trap.isUndefined())
-        return DirectProxyHandler::getOwnPropertyNames(cx, proxy, props);
+        return DirectProxyHandler::ownPropertyKeys(cx, proxy, props);
 
     // step 7-8
     Value argv[] = {
@@ -1090,6 +1090,35 @@ ScriptedDirectProxyHandler::isCallable(JSObject *obj) const
     return obj->as<ProxyObject>().extra(IS_CALLABLE_EXTRA).toBoolean();
 }
 
+// ES6 implements both getPrototypeOf and setPrototypeOf traps. We don't have them yet (see bug
+// 888969). For now, use these, to account for proxy revocation.
+bool
+ScriptedDirectProxyHandler::getPrototypeOf(JSContext *cx, HandleObject proxy,
+                                           MutableHandleObject protop) const
+{
+    RootedObject target(cx, proxy->as<ProxyObject>().target());
+    // Though handler is used elsewhere, spec mandates that both get set to null.
+    if (!target) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
+        return false;
+    }
+
+    return DirectProxyHandler::getPrototypeOf(cx, proxy, protop);
+}
+
+bool
+ScriptedDirectProxyHandler::setPrototypeOf(JSContext *cx, HandleObject proxy,
+                                           HandleObject proto, bool *bp) const
+{
+    RootedObject target(cx, proxy->as<ProxyObject>().target());
+    if (!target) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
+        return false;
+    }
+
+    return DirectProxyHandler::setPrototypeOf(cx, proxy, proto, bp);
+}
+
 const char ScriptedDirectProxyHandler::family = 0;
 const ScriptedDirectProxyHandler ScriptedDirectProxyHandler::singleton;
 
@@ -1109,14 +1138,15 @@ js::proxy(JSContext *cx, unsigned argc, jsval *vp)
     if (!handler)
         return false;
     RootedValue priv(cx, ObjectValue(*target));
-    JSObject *proxy =
+    JSObject *proxy_ =
         NewProxyObject(cx, &ScriptedDirectProxyHandler::singleton,
                        priv, TaggedProto::LazyProto, cx->global());
-    if (!proxy)
+    if (!proxy_)
         return false;
-    proxy->as<ProxyObject>().setExtra(ScriptedDirectProxyHandler::HANDLER_EXTRA, ObjectValue(*handler));
-    proxy->as<ProxyObject>().setExtra(ScriptedDirectProxyHandler::IS_CALLABLE_EXTRA,
-                                      BooleanValue(target->isCallable()));
+    Rooted<ProxyObject*> proxy(cx, &proxy_->as<ProxyObject>());
+    bool targetIsCallable = target->isCallable(); // Can GC - don't compute it inline.
+    proxy->setExtra(ScriptedDirectProxyHandler::HANDLER_EXTRA, ObjectValue(*handler));
+    proxy->setExtra(ScriptedDirectProxyHandler::IS_CALLABLE_EXTRA, BooleanValue(targetIsCallable));
     args.rval().setObject(*proxy);
     return true;
 }

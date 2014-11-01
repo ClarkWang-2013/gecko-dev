@@ -18,6 +18,9 @@
 #include "nsIObserverService.h"
 #include "GMPTimerParent.h"
 #include "runnable_utils.h"
+#if defined(XP_LINUX) && defined(MOZ_GMP_SANDBOX)
+#include "mozilla/Sandbox.h"
+#endif
 
 #include "mozilla/dom/CrashReporterParent.h"
 using mozilla::dom::CrashReporterParent;
@@ -57,6 +60,7 @@ GMPParent::GMPParent()
   , mAbnormalShutdownInProgress(false)
   , mAsyncShutdownRequired(false)
   , mAsyncShutdownInProgress(false)
+  , mHasAccessedStorage(false)
 {
 }
 
@@ -147,11 +151,70 @@ GMPParent::LoadProcess()
       return NS_ERROR_FAILURE;
     }
     LOGD(("%s::%s: Created new process %p", __CLASS__, __FUNCTION__, (void *)mProcess));
+
+    bool ok = SendSetNodeId(mNodeId);
+    if (!ok) {
+      mProcess->Delete();
+      mProcess = nullptr;
+      return NS_ERROR_FAILURE;
+    }
+    LOGD(("%s::%s: Failed to send node id %p", __CLASS__, __FUNCTION__, (void *)mProcess));
+
+    ok = SendStartPlugin();
+    if (!ok) {
+      mProcess->Delete();
+      mProcess = nullptr;
+      return NS_ERROR_FAILURE;
+    }
+    LOGD(("%s::%s: Failed to send start %p", __CLASS__, __FUNCTION__, (void *)mProcess));
   }
 
   mState = GMPStateLoaded;
 
   return NS_OK;
+}
+
+void
+AbortWaitingForGMPAsyncShutdown(nsITimer* aTimer, void* aClosure)
+{
+  NS_WARNING("Timed out waiting for GMP async shutdown!");
+  GMPParent* parent = reinterpret_cast<GMPParent*>(aClosure);
+  nsRefPtr<GeckoMediaPluginService> service =
+    GeckoMediaPluginService::GetGeckoMediaPluginService();
+  if (service) {
+    service->AsyncShutdownComplete(parent);
+  }
+}
+
+nsresult
+GMPParent::EnsureAsyncShutdownTimeoutSet()
+{
+  if (mAsyncShutdownTimeout) {
+    return NS_OK;
+  }
+
+  nsresult rv;
+  mAsyncShutdownTimeout = do_CreateInstance(NS_TIMER_CONTRACTID, &rv);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // Set timer to abort waiting for plugin to shutdown if it takes
+  // too long.
+  rv = mAsyncShutdownTimeout->SetTarget(mGMPThread);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+   return rv;
+  }
+
+  int32_t timeout = GMP_DEFAULT_ASYNC_SHUTDONW_TIMEOUT;
+  nsRefPtr<GeckoMediaPluginService> service =
+    GeckoMediaPluginService::GetGeckoMediaPluginService();
+  if (service) {
+    timeout = service->AsyncShutdownTimeoutMs();
+  }
+  return mAsyncShutdownTimeout->InitWithFuncCallback(
+    &AbortWaitingForGMPAsyncShutdown, this, timeout,
+    nsITimer::TYPE_ONE_SHOT);
 }
 
 void
@@ -179,7 +242,8 @@ GMPParent::CloseIfUnused()
         LOGD(("%s::%s: %p sending async shutdown notification", __CLASS__,
               __FUNCTION__, this));
         mAsyncShutdownInProgress = true;
-        if (!SendBeginAsyncShutdown()) {
+        if (!SendBeginAsyncShutdown() ||
+            NS_FAILED(EnsureAsyncShutdownTimeoutSet())) {
           AbortAsyncShutdown();
         }
       }
@@ -198,6 +262,15 @@ GMPParent::AbortAsyncShutdown()
 {
   MOZ_ASSERT(GMPThread() == NS_GetCurrentThread());
   LOGD(("%s::%s: %p", __CLASS__, __FUNCTION__, this));
+
+  if (mAsyncShutdownTimeout) {
+    mAsyncShutdownTimeout->Cancel();
+    mAsyncShutdownTimeout = nullptr;
+  }
+
+  if (!mAsyncShutdownRequired || !mAsyncShutdownInProgress) {
+    return;
+  }
 
   nsRefPtr<GMPParent> kungFuDeathGrip(this);
   mService->AsyncShutdownComplete(this);
@@ -264,6 +337,8 @@ GMPParent::Shutdown()
 {
   LOGD(("%s::%s: %p", __CLASS__, __FUNCTION__, this));
   MOZ_ASSERT(GMPThread() == NS_GetCurrentThread());
+
+  MOZ_ASSERT(!mAsyncShutdownTimeout, "Should have canceled shutdown timeout");
 
   if (mAbnormalShutdownInProgress) {
     return;
@@ -592,6 +667,12 @@ GMPParent::ActorDestroy(ActorDestroyReason aWhy)
   }
 }
 
+bool
+GMPParent::HasAccessedStorage() const
+{
+  return mHasAccessedStorage;
+}
+
 mozilla::dom::PCrashReporterParent*
 GMPParent::AllocPCrashReporterParent(const NativeThreadId& aThread)
 {
@@ -677,7 +758,7 @@ GMPParent::DeallocPGMPAudioDecoderParent(PGMPAudioDecoderParent* aActor)
 PGMPStorageParent*
 GMPParent::AllocPGMPStorageParent()
 {
-  GMPStorageParent* p = new GMPStorageParent(mOrigin, this);
+  GMPStorageParent* p = new GMPStorageParent(mNodeId, this);
   mStorage.AppendElement(p); // Addrefs, released in DeallocPGMPStorageParent.
   return p;
 }
@@ -692,8 +773,13 @@ GMPParent::DeallocPGMPStorageParent(PGMPStorageParent* aActor)
 }
 
 bool
-GMPParent::RecvPGMPStorageConstructor(PGMPStorageParent* actor)
+GMPParent::RecvPGMPStorageConstructor(PGMPStorageParent* aActor)
 {
+  GMPStorageParent* p  = (GMPStorageParent*)aActor;
+  if (NS_WARN_IF(NS_FAILED(p->Init()))) {
+    return false;
+  }
+  mHasAccessedStorage = true;
   return true;
 }
 
@@ -852,6 +938,17 @@ GMPParent::ReadGMPMetaData()
       }
     }
 
+#if defined(XP_LINUX) && defined(MOZ_GMP_SANDBOX)
+    if (cap->mAPIName.EqualsLiteral("eme-decrypt") &&
+        !mozilla::CanSandboxMediaPlugin()) {
+      printf_stderr("GMPParent::ReadGMPMetaData: Plugin \"%s\" is an EME CDM"
+                    " but this system can't sandbox it; not loading.\n",
+                    mDisplayName.get());
+      delete cap;
+      return NS_ERROR_FAILURE;
+    }
+#endif
+
     mCapabilities.AppendElement(cap);
   }
 
@@ -863,24 +960,24 @@ GMPParent::ReadGMPMetaData()
 }
 
 bool
-GMPParent::CanBeSharedCrossOrigin() const
+GMPParent::CanBeSharedCrossNodeIds() const
 {
-  return mOrigin.IsEmpty();
+  return mNodeId.IsEmpty();
 }
 
 bool
-GMPParent::CanBeUsedFrom(const nsAString& aOrigin) const
+GMPParent::CanBeUsedFrom(const nsACString& aNodeId) const
 {
-  return (mOrigin.IsEmpty() && State() == GMPStateNotLoaded) ||
-         mOrigin.Equals(aOrigin);
+  return (mNodeId.IsEmpty() && State() == GMPStateNotLoaded) ||
+         mNodeId == aNodeId;
 }
 
 void
-GMPParent::SetOrigin(const nsAString& aOrigin)
+GMPParent::SetNodeId(const nsACString& aNodeId)
 {
-  MOZ_ASSERT(!aOrigin.IsEmpty());
-  MOZ_ASSERT(CanBeUsedFrom(aOrigin));
-  mOrigin = aOrigin;
+  MOZ_ASSERT(!aNodeId.IsEmpty());
+  MOZ_ASSERT(CanBeUsedFrom(aNodeId));
+  mNodeId = aNodeId;
 }
 
 bool

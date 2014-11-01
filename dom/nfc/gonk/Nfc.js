@@ -22,6 +22,10 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
+XPCOMUtils.defineLazyServiceGetter(this, "gSettingsService",
+                                   "@mozilla.org/settingsService;1",
+                                   "nsISettingsService");
+
 XPCOMUtils.defineLazyGetter(this, "NFC", function () {
   let obj = {};
   Cu.import("resource://gre/modules/nfc_consts.js", obj);
@@ -35,17 +39,24 @@ const NFC_ENABLED = libcutils.property_get("ro.moz.nfc.enabled", "false") === "t
 let DEBUG = NFC.DEBUG_NFC;
 
 let debug;
-if (DEBUG) {
-  debug = function (s) {
-    dump("-*- Nfc: " + s + "\n");
-  };
-} else {
-  debug = function (s) {};
-}
+function updateDebug() {
+  if (DEBUG) {
+    debug = function (s) {
+      dump("-*- Nfc: " + s + "\n");
+    };
+  } else {
+    debug = function (s) {};
+  }
+};
+updateDebug();
 
 const NFC_CONTRACTID = "@mozilla.org/nfc;1";
 const NFC_CID =
   Components.ID("{2ff24790-5e74-11e1-b86c-0800200c9a66}");
+
+const NFC_IPC_ADD_EVENT_TARGET_MSG_NAMES = [
+  "NFC:AddEventTarget"
+];
 
 const NFC_IPC_MSG_NAMES = [
   "NFC:CheckSessionToken"
@@ -53,7 +64,6 @@ const NFC_IPC_MSG_NAMES = [
 
 const NFC_IPC_READ_PERM_MSG_NAMES = [
   "NFC:ReadNDEF",
-  "NFC:GetDetailsNDEF",
   "NFC:Connect",
   "NFC:Close",
 ];
@@ -95,9 +105,15 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
     peerTargets: {},
     currentPeer: null,
 
+    eventTargets: [],
+
     init: function init(nfc) {
       this.nfc = nfc;
 
+      let lock = gSettingsService.createLock();
+      lock.get(NFC.SETTING_NFC_DEBUG, this.nfc);
+
+      Services.obs.addObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED, false);
       Services.obs.addObserver(this, NFC.TOPIC_XPCOM_SHUTDOWN, false);
       this._registerMessageListeners();
     },
@@ -106,12 +122,17 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       this.nfc.shutdown();
       this.nfc = null;
 
+      Services.obs.removeObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED);
       Services.obs.removeObserver(this, NFC.TOPIC_XPCOM_SHUTDOWN);
       this._unregisterMessageListeners();
     },
 
     _registerMessageListeners: function _registerMessageListeners() {
       ppmm.addMessageListener("child-process-shutdown", this);
+
+      for (let message of NFC_IPC_ADD_EVENT_TARGET_MSG_NAMES) {
+        ppmm.addMessageListener(message, this);
+      }
 
       for (let message of NFC_IPC_MSG_NAMES) {
         ppmm.addMessageListener(message, this);
@@ -132,6 +153,10 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
     _unregisterMessageListeners: function _unregisterMessageListeners() {
       ppmm.removeMessageListener("child-process-shutdown", this);
+
+      for (let message of NFC_IPC_ADD_EVENT_TARGET_MSG_NAMES) {
+        ppmm.removeMessageListener(message, this);
+      }
 
       for (let message of NFC_IPC_MSG_NAMES) {
         ppmm.removeMessageListener(message, this);
@@ -175,16 +200,28 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       });
     },
 
-    notifyPeerEvent: function notifyPeerEvent(target, event, sessionToken) {
+    notifyDOMEvent: function notifyDOMEvent(target, options) {
       if (!target) {
         dump("invalid target");
         return;
       }
 
-      target.sendAsyncMessage("NFC:PeerEvent", {
-        event: event,
-        sessionToken: sessionToken
-      });
+      target.sendAsyncMessage("NFC:DOMEvent", options);
+    },
+
+    addEventTarget: function addEventTarget(target) {
+      if (this.eventTargets.indexOf(target) != -1) {
+        return;
+      }
+
+      this.eventTargets.push(target);
+    },
+
+    removeEventTarget: function removeEventTarget(target) {
+      let index = this.eventTargets.indexOf(target);
+      if (index != -1) {
+        delete this.eventTargets[index];
+      }
     },
 
     checkP2PRegistration: function checkP2PRegistration(message) {
@@ -210,7 +247,8 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
       // Remember the target that receives onpeerready.
       this.currentPeer = target;
-      this.notifyPeerEvent(target, NFC.NFC_PEER_EVENT_READY, sessionToken);
+      this.notifyDOMEvent(target, {event: NFC.NFC_PEER_EVENT_READY,
+                                   sessionToken: sessionToken});
     },
 
     onPeerLost: function onPeerLost(sessionToken) {
@@ -221,7 +259,8 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
       // For peerlost, the message is delievered to the target which
       // onpeerready has been called before.
-      this.notifyPeerEvent(this.currentPeer, NFC.NFC_PEER_EVENT_LOST, sessionToken);
+      this.notifyDOMEvent(this.currentPeer, {event: NFC.NFC_PEER_EVENT_LOST,
+                                             sessionToken: sessionToken});
       this.currentPeer = null;
     },
 
@@ -235,10 +274,12 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       if (message.name == "child-process-shutdown") {
         this.removePeerTarget(message.target);
         this.nfc.removeTarget(message.target);
+        this.removeEventTarget(message.target);
         return null;
       }
 
-      if (NFC_IPC_MSG_NAMES.indexOf(message.name) != -1) {
+      if (NFC_IPC_MSG_NAMES.indexOf(message.name) != -1 ||
+          NFC_IPC_ADD_EVENT_TARGET_MSG_NAMES.indexOf(message.name) != -1 ) {
         // Do nothing.
       } else if (NFC_IPC_READ_PERM_MSG_NAMES.indexOf(message.name) != -1) {
         if (!message.target.assertPermission("nfc-read")) {
@@ -264,6 +305,9 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       }
 
       switch (message.name) {
+        case "NFC:AddEventTarget":
+          this.addEventTarget(message.target);
+          return null;
         case "NFC:CheckSessionToken":
           if (!SessionHelper.isValidToken(message.data.sessionToken)) {
             debug("Received invalid Session Token: " + message.data.sessionToken);
@@ -303,6 +347,14 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
     observe: function observe(subject, topic, data) {
       switch (topic) {
+        case NFC.TOPIC_MOZSETTINGS_CHANGED:
+          if ("wrappedJSObject" in subject) {
+            subject = subject.wrappedJSObject;
+          }
+          if (subject) {
+            this.nfc.handle(subject.key, subject.value);
+          }
+          break;
         case NFC.TOPIC_XPCOM_SHUTDOWN:
           this._shutdown();
           break;
@@ -472,6 +524,7 @@ Nfc.prototype = {
         // Update the upper layers with a session token (alias)
         message.sessionToken =
           SessionHelper.registerSession(message.sessionId, message.techList);
+
         // Do not expose the actual session to the content
         delete message.sessionId;
 
@@ -504,7 +557,6 @@ Nfc.prototype = {
         break;
       case "ConnectResponse": // Fall through.
       case "CloseResponse":
-      case "GetDetailsNDEFResponse":
       case "ReadNDEFResponse":
       case "MakeReadOnlyNDEFResponse":
       case "WriteNDEFResponse":
@@ -574,13 +626,11 @@ Nfc.prototype = {
         this.setConfig({powerLevel: NFC.NFC_POWER_LEVEL_DISABLED,
                         requestId: message.data.requestId});
         break;
-      case "NFC:GetDetailsNDEF":
-        this.sendToNfcService("getDetailsNDEF", message.data);
-        break;
       case "NFC:ReadNDEF":
         this.sendToNfcService("readNDEF", message.data);
         break;
       case "NFC:WriteNDEF":
+        message.data.isP2P = SessionHelper.isP2PSession(message.data.sessionId);
         this.sendToNfcService("writeNDEF", message.data);
         break;
       case "NFC:MakeReadOnlyNDEF":
@@ -618,6 +668,18 @@ Nfc.prototype = {
         delete this.targetsByRequestId[requestId];
       }
     });
+  },
+
+  /**
+   * nsISettingsServiceCallback
+   */
+  handle: function handle(name, result) {
+    switch (name) {
+      case NFC.SETTING_NFC_DEBUG:
+        DEBUG = result;
+        updateDebug();
+        break;
+    }
   },
 
   /**

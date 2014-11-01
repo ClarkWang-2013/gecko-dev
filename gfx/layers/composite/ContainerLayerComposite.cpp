@@ -5,6 +5,7 @@
 
 #include "ContainerLayerComposite.h"
 #include <algorithm>                    // for min
+#include "apz/src/AsyncPanZoomController.h"  // for AsyncPanZoomController
 #include "FrameMetrics.h"               // for FrameMetrics
 #include "Units.h"                      // for LayerRect, LayerPixel, etc
 #include "gfx2DGlue.h"                  // for ToMatrix4x4
@@ -21,7 +22,6 @@
 #include "mozilla/layers/CompositorTypes.h"  // for DiagnosticFlags::CONTAINER
 #include "mozilla/layers/Effects.h"     // for Effect, EffectChain, etc
 #include "mozilla/layers/TextureHost.h"  // for CompositingRenderTarget
-#include "mozilla/layers/AsyncPanZoomController.h"  // for AsyncPanZoomController
 #include "mozilla/layers/AsyncCompositionManager.h" // for ViewTransform
 #include "mozilla/layers/LayerMetricsWrapper.h" // for LayerMetricsWrapper
 #include "mozilla/mozalloc.h"           // for operator delete, etc
@@ -297,7 +297,7 @@ RenderLayers(ContainerT* aContainer,
     if (LayerHasCheckerboardingAPZC(layer, &color)) {
       // Ideally we would want to intersect the checkerboard region from the APZ with the layer bounds
       // and only fill in that area. However the layer bounds takes into account the base translation
-      // for the thebes layer whereas the checkerboard region does not. One does not simply
+      // for the painted layer whereas the checkerboard region does not. One does not simply
       // intersect areas in different coordinate spaces. So we do this a little more permissively
       // and only fill in the background when we know there is checkerboard, which in theory
       // should only occur transiently.

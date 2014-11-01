@@ -13,6 +13,8 @@
 #include "mozilla/net/PHttpChannelParent.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "mozilla/net/NeckoParent.h"
+#include "OfflineObserver.h"
+#include "nsIObserver.h"
 #include "nsIParentRedirectingChannel.h"
 #include "nsIProgressEventSink.h"
 #include "nsHttpChannel.h"
@@ -38,6 +40,7 @@ class HttpChannelParent : public PHttpChannelParent
                         , public nsIInterfaceRequestor
                         , public ADivertableParentChannel
                         , public nsIAuthPromptProvider
+                        , public DisconnectableParent
 {
   virtual ~HttpChannelParent();
 
@@ -69,6 +72,13 @@ public:
   // Handles calling OnStart/Stop if there are errors during diversion.
   // Called asynchronously from FailDiversion.
   void NotifyDiversionFailed(nsresult aErrorCode, bool aSkipResume = true);
+
+  // Forwarded to nsHttpChannel::SetApplyConversion.
+  void SetApplyConversion(bool aApplyConversion) {
+    if (mChannel) {
+      mChannel->SetApplyConversion(aApplyConversion);
+    }
+  }
 
 protected:
   // used to connect redirected-to channel in parent with just created
@@ -129,6 +139,9 @@ protected:
   friend class HttpChannelParentListener;
   nsRefPtr<mozilla::dom::TabParent> mTabParent;
 
+  void OfflineDisconnect() MOZ_OVERRIDE;
+  uint32_t GetAppId() MOZ_OVERRIDE;
+
 private:
   nsRefPtr<nsHttpChannel>       mChannel;
   nsCOMPtr<nsICacheEntry>       mCacheEntry;
@@ -150,12 +163,16 @@ private:
   bool mSentRedirect1BeginFailed    : 1;
   bool mReceivedRedirect2Verify     : 1;
 
+  nsRefPtr<OfflineObserver> mObserver;
+
   PBOverrideStatus mPBOverride;
 
   nsCOMPtr<nsILoadContext> mLoadContext;
   nsRefPtr<nsHttpHandler>  mHttpHandler;
 
   nsRefPtr<HttpChannelParentListener> mParentListener;
+  // The first listener in the decode chain if channel decoding is applied.
+  nsCOMPtr<nsIStreamListener> mConverterListener;
   // Set to the canceled status value if the main channel was canceled.
   nsresult mStatus;
   // Once set, no OnStart/OnData/OnStop calls should be accepted; conversely, it

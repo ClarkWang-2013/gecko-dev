@@ -9,6 +9,7 @@
 #include <sys/types.h>                  // for int32_t
 #include <algorithm>                    // for max, min
 #include "AsyncPanZoomController.h"     // for AsyncPanZoomController, etc
+#include "Axis.h"                       // for AxisX, AxisY, Axis, etc
 #include "Compositor.h"                 // for Compositor
 #include "CompositorParent.h"           // for CompositorParent
 #include "FrameMetrics.h"               // for FrameMetrics, etc
@@ -16,6 +17,7 @@
 #include "InputData.h"                  // for MultiTouchInput, etc
 #include "InputBlockState.h"            // for InputBlockState, TouchBlockState
 #include "OverscrollHandoffState.h"     // for OverscrollHandoffState
+#include "TaskThrottler.h"              // for TaskThrottler
 #include "Units.h"                      // for CSSRect, CSSPoint, etc
 #include "UnitTransforms.h"             // for TransformTo
 #include "base/message_loop.h"          // for MessageLoop
@@ -41,12 +43,10 @@
 #include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
 #include "mozilla/layers/APZCTreeManager.h"  // for ScrollableLayerGuid
 #include "mozilla/layers/AsyncCompositionManager.h"  // for ViewTransform
-#include "mozilla/layers/Axis.h"        // for AxisX, AxisY, Axis, etc
 #include "mozilla/layers/AxisPhysicsModel.h" // for AxisPhysicsModel
 #include "mozilla/layers/AxisPhysicsMSDModel.h" // for AxisPhysicsMSDModel
 #include "mozilla/layers/LayerTransactionParent.h" // for LayerTransactionParent
 #include "mozilla/layers/PCompositorParent.h" // for PCompositorParent
-#include "mozilla/layers/TaskThrottler.h"  // for TaskThrottler
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "mozilla/unused.h"             // for unused
 #include "mozilla/FloatingPoint.h"      // for FuzzyEquals*
@@ -75,7 +75,7 @@
     { std::stringstream ss; \
       ss << nsPrintfCString(prefix, __VA_ARGS__).get(); \
       AppendToString(ss, fm, ":", "", true); \
-      APZC_LOG("%s", ss.str().c_str()); \
+      APZC_LOG("%s\n", ss.str().c_str()); \
     }
 #else
 #  define APZC_LOG(...)
@@ -520,7 +520,8 @@ public:
       //   is this one, then the SetState(NOTHING) in UpdateAnimation will
       //   stomp on the SetState(SNAP_BACK) it does.
       mDeferredTasks.append(NewRunnableMethod(mOverscrollHandoffChain.get(),
-                                              &OverscrollHandoffChain::SnapBackOverscrolledApzc));
+                                              &OverscrollHandoffChain::SnapBackOverscrolledApzc,
+                                              &mApzc));
       return false;
     }
 
@@ -1027,7 +1028,7 @@ nsEventStatus AsyncPanZoomController::ReceiveInputEvent(const InputData& aEvent)
     // being processed) we only do this animation-cancellation if there are no older
     // touch blocks still in the queue.
     if (block == CurrentTouchBlock()) {
-      if (GetVelocityVector().Length() > gfxPrefs::APZFlingStopOnTapThreshold()) {
+      if (block->GetOverscrollHandoffChain()->HasFastMovingApzc()) {
         // If we're already in a fast fling, then we want the touch event to stop the fling
         // and to disallow the touch event from being used as part of a fling.
         block->DisallowSingleTap();
@@ -1288,6 +1289,10 @@ nsEventStatus AsyncPanZoomController::OnTouchEnd(const MultiTouchInput& aEvent) 
   case TOUCHING:
   case CROSS_SLIDING_X:
   case CROSS_SLIDING_Y:
+    // We may have some velocity stored on the axis from move events
+    // that were not big enough to trigger scrolling. Clear that out.
+    mX.SetVelocity(0);
+    mY.SetVelocity(0);
     SetState(NOTHING);
     return nsEventStatus_eIgnore;
 
@@ -1578,8 +1583,9 @@ nsEventStatus AsyncPanZoomController::OnPan(const PanGestureInput& aEvent, bool 
 
   // TODO: Handle pan events sent without pan begin / pan end events properly.
   if (mPanGestureState) {
+    ScreenPoint panDistance(fabs(panDisplacement.x), fabs(panDisplacement.y));
     OverscrollHandoffState handoffState(
-        *mPanGestureState->GetOverscrollHandoffChain(), panDisplacement);
+        *mPanGestureState->GetOverscrollHandoffChain(), panDistance);
     CallDispatchScroll(aEvent.mPanStartPoint, aEvent.mPanStartPoint + aEvent.mPanDisplacement,
                        handoffState);
   }
@@ -1741,9 +1747,8 @@ static void TransformVector(const Matrix4x4& aTransform,
 void AsyncPanZoomController::ToGlobalScreenCoordinates(ScreenPoint* aVector,
                                                        const ScreenPoint& aAnchor) const {
   if (APZCTreeManager* treeManagerLocal = GetApzcTreeManager()) {
-    Matrix4x4 transform = treeManagerLocal->GetScreenToApzcTransform(this);
-    transform.Invert();
-    TransformVector(transform, aVector, aAnchor);
+    Matrix4x4 apzcToScreen = treeManagerLocal->GetScreenToApzcTransform(this).Inverse();
+    TransformVector(apzcToScreen, aVector, aAnchor);
   }
 }
 
@@ -1771,7 +1776,7 @@ ScreenPoint AsyncPanZoomController::PanStart() const {
   return ScreenPoint(mX.PanStart(), mY.PanStart());
 }
 
-const ScreenPoint AsyncPanZoomController::GetVelocityVector() {
+const ScreenPoint AsyncPanZoomController::GetVelocityVector() const {
   return ScreenPoint(mX.GetVelocity(), mY.GetVelocity());
 }
 
@@ -2299,6 +2304,22 @@ void AsyncPanZoomController::FlushRepaintForOverscrollHandoff() {
   UpdateSharedCompositorFrameMetrics();
 }
 
+void AsyncPanZoomController::FlushRepaintForNewInputBlock() {
+  APZC_LOG("%p flushing repaint for new input block\n", this);
+
+  ReentrantMonitorAutoEnter lock(mMonitor);
+  // We need to send a new repaint request unthrottled, but that
+  // will obsolete any pending repaint request in the paint throttler.
+  // Therefore we should clear out the pending task and restore the
+  // state of mLastPaintRequestMetrics to what it was before the
+  // pending task was queued.
+  mPaintThrottler.CancelPendingTask();
+  mLastPaintRequestMetrics = mLastDispatchedPaintMetrics;
+
+  RequestContentRepaint(mFrameMetrics, false /* not throttled */);
+  UpdateSharedCompositorFrameMetrics();
+}
+
 bool AsyncPanZoomController::SnapBackIfOverscrolled() {
   ReentrantMonitorAutoEnter lock(mMonitor);
   if (IsOverscrolled()) {
@@ -2307,6 +2328,11 @@ bool AsyncPanZoomController::SnapBackIfOverscrolled() {
     return true;
   }
   return false;
+}
+
+bool AsyncPanZoomController::IsMovingFast() const {
+  ReentrantMonitorAutoEnter lock(mMonitor);
+  return (GetVelocityVector().Length() > gfxPrefs::APZFlingStopOnTapThreshold());
 }
 
 bool AsyncPanZoomController::IsPannable() const {
@@ -2323,7 +2349,7 @@ void AsyncPanZoomController::RequestContentRepaint() {
   RequestContentRepaint(mFrameMetrics);
 }
 
-void AsyncPanZoomController::RequestContentRepaint(FrameMetrics& aFrameMetrics) {
+void AsyncPanZoomController::RequestContentRepaint(FrameMetrics& aFrameMetrics, bool aThrottled) {
   aFrameMetrics.SetDisplayPortMargins(
     CalculatePendingDisplayPort(aFrameMetrics,
                                 GetVelocityVector(),
@@ -2349,12 +2375,16 @@ void AsyncPanZoomController::RequestContentRepaint(FrameMetrics& aFrameMetrics) 
   }
 
   SendAsyncScrollEvent();
-  mPaintThrottler.PostTask(
-    FROM_HERE,
-    UniquePtr<CancelableTask>(NewRunnableMethod(this,
-                      &AsyncPanZoomController::DispatchRepaintRequest,
-                      aFrameMetrics)),
-    GetFrameTime());
+  if (aThrottled) {
+    mPaintThrottler.PostTask(
+      FROM_HERE,
+      UniquePtr<CancelableTask>(NewRunnableMethod(this,
+                        &AsyncPanZoomController::DispatchRepaintRequest,
+                        aFrameMetrics)),
+      GetFrameTime());
+  } else {
+    DispatchRepaintRequest(aFrameMetrics);
+  }
 
   aFrameMetrics.SetPresShellId(mLastContentPaintMetrics.GetPresShellId());
   mLastPaintRequestMetrics = aFrameMetrics;
@@ -2378,7 +2408,12 @@ AsyncPanZoomController::DispatchRepaintRequest(const FrameMetrics& aFrameMetrics
     APZC_LOG_FM(aFrameMetrics, "%p requesting content repaint", this);
     LogRendertraceRect(GetGuid(), "requested displayport", "yellow", GetDisplayPortRect(aFrameMetrics));
 
-    controller->RequestContentRepaint(aFrameMetrics);
+    if (NS_IsMainThread()) {
+      controller->RequestContentRepaint(aFrameMetrics);
+    } else {
+      NS_DispatchToMainThread(NS_NewRunnableMethodWithArg<FrameMetrics>(
+        controller, &GeckoContentController::RequestContentRepaint, aFrameMetrics));
+    }
     mLastDispatchedPaintMetrics = aFrameMetrics;
   }
 }
@@ -2428,7 +2463,12 @@ bool AsyncPanZoomController::UpdateAnimation(const TimeStamp& aSampleTime,
   return false;
 }
 
-void AsyncPanZoomController::GetOverscrollTransform(Matrix4x4* aTransform) const {
+Matrix4x4 AsyncPanZoomController::GetOverscrollTransform() const {
+  ReentrantMonitorAutoEnter lock(mMonitor);
+  if (!IsOverscrolled()) {
+    return Matrix4x4();
+  }
+
   // The overscroll effect is a uniform stretch along the overscrolled axis,
   // with the edge of the content where we have reached the end of the
   // scrollable area pinned into place.
@@ -2463,8 +2503,8 @@ void AsyncPanZoomController::GetOverscrollTransform(Matrix4x4* aTransform) const
   }
 
   // Combine the transformations into a matrix.
-  *aTransform = Matrix4x4().Scale(scaleX, scaleY, 1)
-                           .PostTranslate(translation.x, translation.y, 0);
+  return Matrix4x4::Scaling(scaleX, scaleY, 1)
+                    .PostTranslate(translation.x, translation.y, 0);
 }
 
 bool AsyncPanZoomController::AdvanceAnimations(const TimeStamp& aSampleTime)
@@ -2540,19 +2580,12 @@ bool AsyncPanZoomController::AdvanceAnimations(const TimeStamp& aSampleTime)
 }
 
 void AsyncPanZoomController::SampleContentTransformForFrame(ViewTransform* aOutTransform,
-                                                            ScreenPoint& aScrollOffset,
-                                                            Matrix4x4* aOutOverscrollTransform)
+                                                            ScreenPoint& aScrollOffset)
 {
   ReentrantMonitorAutoEnter lock(mMonitor);
 
   aScrollOffset = mFrameMetrics.GetScrollOffset() * mFrameMetrics.GetZoom();
   *aOutTransform = GetCurrentAsyncTransform();
-
-  // If we are overscrolled, we would like the compositor to apply an
-  // additional transform that produces an overscroll effect.
-  if (aOutOverscrollTransform && IsOverscrolled()) {
-    GetOverscrollTransform(aOutOverscrollTransform);
-  }
 }
 
 ViewTransform AsyncPanZoomController::GetCurrentAsyncTransform() const {
@@ -2595,9 +2628,9 @@ ViewTransform AsyncPanZoomController::GetCurrentAsyncTransform() const {
 
 Matrix4x4 AsyncPanZoomController::GetNontransientAsyncTransform() const {
   ReentrantMonitorAutoEnter lock(mMonitor);
-  return Matrix4x4().Scale(mLastContentPaintMetrics.mResolution.scale,
-                           mLastContentPaintMetrics.mResolution.scale,
-                           1.0f);
+  return Matrix4x4::Scaling(mLastContentPaintMetrics.mResolution.scale,
+                            mLastContentPaintMetrics.mResolution.scale,
+                            1.0f);
 }
 
 Matrix4x4 AsyncPanZoomController::GetTransformToLastDispatchedPaint() const {
@@ -2616,8 +2649,8 @@ Matrix4x4 AsyncPanZoomController::GetTransformToLastDispatchedPaint() const {
 
   float zoomChange = mLastContentPaintMetrics.GetZoom().scale / mLastDispatchedPaintMetrics.GetZoom().scale;
 
-  return Matrix4x4().Translate(scrollChange.x, scrollChange.y, 0) *
-         Matrix4x4().Scale(zoomChange, zoomChange, 1);
+  return Matrix4x4::Translation(scrollChange.x, scrollChange.y, 0).
+           PostScale(zoomChange, zoomChange, 1);
 }
 
 bool AsyncPanZoomController::IsCurrentlyCheckerboarding() const {
@@ -2629,6 +2662,7 @@ bool AsyncPanZoomController::IsCurrentlyCheckerboarding() const {
 
   CSSPoint currentScrollOffset = mFrameMetrics.GetScrollOffset() + mTestAsyncScrollOffset;
   CSSRect painted = mLastContentPaintMetrics.mDisplayPort + mLastContentPaintMetrics.GetScrollOffset();
+  painted.Inflate(CSSMargin::FromAppUnits(nsMargin(1, 1, 1, 1)));   // fuzz for rounding error
   CSSRect visible = CSSRect(currentScrollOffset, mFrameMetrics.CalculateCompositedSizeInCssPixels());
   return !painted.Contains(visible);
 }
@@ -3115,6 +3149,7 @@ AsyncPanZoomController::GetZoomConstraints() const
 
 
 void AsyncPanZoomController::PostDelayedTask(Task* aTask, int aDelayMs) {
+  AssertOnControllerThread();
   nsRefPtr<GeckoContentController> controller = GetGeckoContentController();
   if (controller) {
     controller->PostDelayedTask(aTask, aDelayMs);

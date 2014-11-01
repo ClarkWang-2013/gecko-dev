@@ -3069,7 +3069,7 @@ nsXPCComponents_Utils::MakeObjectPropsNormal(HandleValue vobj, JSContext *cx)
 
         RootedObject propobj(cx, &v.toObject());
         // TODO Deal with non-functions.
-        if (!js::IsWrapper(propobj) || !JS_ObjectIsCallable(cx, propobj))
+        if (!js::IsWrapper(propobj) || !JS::IsCallable(propobj))
             continue;
 
         FunctionForwarderOptions forwarderOptions;
@@ -3147,6 +3147,14 @@ nsXPCComponents_Utils::ForcePermissiveCOWs(JSContext *cx)
 {
     CrashIfNotInAutomation();
     CompartmentPrivate::Get(CurrentGlobalOrNull(cx))->forcePermissiveCOWs = true;
+    return NS_OK;
+}
+
+/* jsval skipCOWCallableChecks(); */
+NS_IMETHODIMP
+nsXPCComponents_Utils::SkipCOWCallableChecks(JSContext *cx)
+{
+    CompartmentPrivate::Get(CurrentGlobalOrNull(cx))->skipCOWCallableChecks = true;
     return NS_OK;
 }
 

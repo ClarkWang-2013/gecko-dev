@@ -22,7 +22,6 @@
 #include "nsTArray.h"
 #include "nsIRunnable.h"
 #include "nsISupportsImpl.h"
-#include "nsIDOMMediaStream.h"
 
 class nsIDOMWindow;
 
@@ -71,6 +70,8 @@ class Fake_MediaStream {
 
  public:
   Fake_MediaStream () : mListeners(), mMutex("Fake MediaStream") {}
+
+  uint32_t GraphRate() { return 16000; }
 
   void AddListener(Fake_MediaStreamListener *aListener) {
     mozilla::MutexAutoLock lock(mMutex);
@@ -232,7 +233,7 @@ private:
   const bool mIsVideo;
 };
 
-class Fake_DOMMediaStream : public nsIDOMMediaStream
+class Fake_DOMMediaStream : public nsISupports
 {
 protected:
   virtual ~Fake_DOMMediaStream() {
