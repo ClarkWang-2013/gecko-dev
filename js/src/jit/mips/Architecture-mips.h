@@ -568,8 +568,8 @@ class FloatRegister
     { }
 
     bool operator==(const FloatRegister &other) const {
-        JS_ASSERT(!isInvalid());
-        JS_ASSERT(!other.isInvalid());
+        MOZ_ASSERT(!isInvalid());
+        MOZ_ASSERT(!other.isInvalid());
         return code_ == other.code_;
     }
     bool equiv(const FloatRegister &other) const { return true; }
@@ -582,14 +582,14 @@ class FloatRegister
     FloatRegister singleOverlay(unsigned int which = 0) const;
 
     Code code() const {
-        JS_ASSERT(!isInvalid());
+        MOZ_ASSERT(!isInvalid());
         return Code(code_);
     }
     uint32_t id() const {
         return code_;
     }
     static FloatRegister FromCode(uint32_t i) {
-        JS_ASSERT(i < FloatRegisters::Total);
+        MOZ_ASSERT(i < FloatRegisters::Total);
         FloatRegister r = { (FloatRegisters::Code)i };
         return r;
     }
@@ -610,14 +610,14 @@ class FloatRegister
         return 1;
     }
     void aliased(uint32_t aliasIdx, FloatRegister *ret) {
-        JS_ASSERT(aliasIdx == 0);
+        MOZ_ASSERT(aliasIdx == 0);
         *ret = *this;
     }
     uint32_t numAlignedAliased() const {
         return 1;
     }
     void alignedAliased(uint32_t aliasIdx, FloatRegister *ret) {
-        JS_ASSERT(aliasIdx == 0);
+        MOZ_ASSERT(aliasIdx == 0);
         *ret = *this;
     }
     typedef FloatRegisters::SetType SetType;
