@@ -215,6 +215,7 @@ const TELEPHONY_REQUESTS = [
   REQUEST_DIAL,
   REQUEST_DIAL_EMERGENCY_CALL,
   REQUEST_HANGUP,
+  REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND,
   REQUEST_HANGUP_WAITING_OR_BACKGROUND,
   REQUEST_SEPARATE_CONNECTION,
   REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE,
@@ -1332,8 +1333,8 @@ RilObject.prototype = {
    *                RIL_PREFERRED_NETWORK_TYPE_TO_GECKO as its `type` attribute.
    */
   setPreferredNetworkType: function(options) {
-    let networkType = RIL_PREFERRED_NETWORK_TYPE_TO_GECKO.indexOf(options.type);
-    if (networkType < 0) {
+    let networkType = options.type;
+    if (networkType < 0 || networkType >= RIL_PREFERRED_NETWORK_TYPE_TO_GECKO.length) {
       options.errorMsg = GECKO_ERROR_INVALID_PARAMETER;
       this.sendChromeMessage(options);
       return;
@@ -1420,18 +1421,10 @@ RilObject.prototype = {
    * Set the roaming preference mode
    */
   setRoamingPreference: function(options) {
-    let roamingMode = CDMA_ROAMING_PREFERENCE_TO_GECKO.indexOf(options.mode);
-
-    if (roamingMode === -1) {
-      options.errorMsg = GECKO_ERROR_INVALID_PARAMETER;
-      this.sendChromeMessage(options);
-      return;
-    }
-
     let Buf = this.context.Buf;
     Buf.newParcel(REQUEST_CDMA_SET_ROAMING_PREFERENCE, options);
     Buf.writeInt32(1);
-    Buf.writeInt32(roamingMode);
+    Buf.writeInt32(options.mode);
     Buf.sendParcel();
   },
 
@@ -1762,30 +1755,42 @@ RilObject.prototype = {
     if (call.state === CALL_STATE_HOLDING) {
       this.sendHangUpBackgroundRequest();
     } else {
-      this.sendHangUpRequest(call.callIndex);
+      this.sendHangUpRequest(options);
     }
   },
 
-  sendHangUpRequest: function(callIndex) {
+  sendHangUpRequest: function(options) {
     this.telephonyRequestQueue.push(REQUEST_HANGUP, this.sendRilRequestHangUp,
-                                    callIndex);
+                                    options);
   },
 
-  sendRilRequestHangUp: function(callIndex) {
+  sendRilRequestHangUp: function(options) {
     let Buf = this.context.Buf;
-    Buf.newParcel(REQUEST_HANGUP);
+    Buf.newParcel(REQUEST_HANGUP, options);
     Buf.writeInt32(1);
-    Buf.writeInt32(callIndex);
+    Buf.writeInt32(options.callIndex);
     Buf.sendParcel();
   },
 
-  sendHangUpBackgroundRequest: function() {
-    this.telephonyRequestQueue.push(REQUEST_HANGUP_WAITING_OR_BACKGROUND,
-                                   this.sendRilRequestHangUpWaiting, null);
+  sendHangUpForegroundRequest: function(options) {
+    this.telephonyRequestQueue.push(REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND,
+                                    this.sendRilRequestHangUpForeground,
+                                    options);
   },
 
-  sendRilRequestHangUpWaiting: function() {
-    this.context.Buf.simpleRequest(REQUEST_HANGUP_WAITING_OR_BACKGROUND);
+  sendRilRequestHangUpForeground: function(options) {
+    this.context.Buf.simpleRequest(REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND,
+                                   options);
+  },
+
+  sendHangUpBackgroundRequest: function(options) {
+    this.telephonyRequestQueue.push(REQUEST_HANGUP_WAITING_OR_BACKGROUND,
+                                    this.sendRilRequestHangUpWaiting, options);
+  },
+
+  sendRilRequestHangUpWaiting: function(options) {
+    this.context.Buf.simpleRequest(REQUEST_HANGUP_WAITING_OR_BACKGROUND,
+                                   options);
   },
 
   /**
@@ -1959,6 +1964,27 @@ RilObject.prototype = {
     Buf.writeInt32(1);
     Buf.writeInt32(options.callIndex);
     Buf.sendParcel();
+  },
+
+  hangUpConference: function(options) {
+    if (this._isCdma) {
+      // In cdma, ril only maintains one call index.
+      let call = this.currentCalls[1];
+      if (!call) {
+        options.success = false;
+        options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+        this.sendChromeMessage(options);
+        return;
+      }
+      call.hangUpLocal = true;
+      this.sendHangUpRequest(1);
+    } else {
+      if (this.currentConferenceState === CALL_STATE_ACTIVE) {
+        this.sendHangUpForegroundRequest(options);
+      } else {
+        this.sendHangUpBackgroundRequest(options);
+      }
+    }
   },
 
   holdConference: function() {
@@ -3909,12 +3935,31 @@ RilObject.prototype = {
   /**
    * Helpers for processing call state changes.
    */
-  _processClassifiedCalls: function(removedCalls, remainedCalls, addedCalls,
-                                    failCause) {
+  _processCalls: function(newCalls, failCause) {
+    // Let's get the failCause first if there are removed calls. Otherwise, we
+    // need to trigger another async request when removing call and it cause
+    // the order of callDisconnected and conferenceCallStateChanged
+    // unpredictable.
+    if (failCause === undefined) {
+      for each (let currentCall in this.currentCalls) {
+        if (!newCalls[currentCall.callIndex] && !currentCall.hangUpLocal) {
+          this.getFailCauseCode((function(newCalls, failCause) {
+            this._processCalls(newCalls, failCause);
+          }).bind(this, newCalls));
+          return;
+        }
+      }
+    }
+
+    let [removedCalls, remainedCalls, addedCalls] =
+      this._classifyCalls(newCalls);
+
     // Handle removed calls.
+    // Only remove it from the map here. Notify callDisconnected later.
     for (let call of removedCalls) {
-      this._removeVoiceCall(call, call.hangUpLocal ?
-                            GECKO_CALL_ERROR_NORMAL_CALL_CLEARING : failCause);
+      delete this.currentCalls[call.callIndex];
+      call.failCause = call.hangUpLocal ? GECKO_CALL_ERROR_NORMAL_CALL_CLEARING
+                                        : failCause;
     }
 
     let changedCalls = new Set();
@@ -3939,6 +3984,8 @@ RilObject.prototype = {
       }
 
       oldCall.state = newCall.state;
+      oldCall.number =
+        this._formatInternationalNumber(newCall.number, newCall.toa);
       changedCalls.add(oldCall);
     }
 
@@ -3963,12 +4010,17 @@ RilObject.prototype = {
       }
     }
 
-    // Update audio state. We have to send the message before callstatechange
-    // to make sure that the audio state is ready first.
+    // Update audio state. We have to send this message before callStateChange
+    // and callDisconnected to make sure that the audio state is ready first.
     this.sendChromeMessage({
       rilMessageType: "audioStateChanged",
       state: this._detectAudioState()
     });
+
+    // Notify call disconnected.
+    for (let call of removedCalls) {
+      this._handleDisconnectedCall(call);
+    }
 
     // Notify call state change.
     for (let call of changedCalls) {
@@ -3981,22 +4033,6 @@ RilObject.prototype = {
       let message = {rilMessageType: "conferenceCallStateChanged",
                      state: newConferenceState};
       this.sendChromeMessage(message);
-    }
-  },
-
-  _processCalls: function(newCalls) {
-    let [removed, remained, added] = this._classifyCalls(newCalls);
-
-    // Let's get the failCause first if there are removed calls. Otherwise, we
-    // need to trigger another async request when removing call and it cause
-    // the order of callDisconnected and conferenceCallStateChanged
-    // unpredictable.
-    if (removed.length) {
-      this.getFailCauseCode((function(removed, remained, added, failCause) {
-        this._processClassifiedCalls(removed, remained, added, failCause);
-      }).bind(this, removed, remained, added));
-    } else {
-      this._processClassifiedCalls(removed, remained, added);
     }
   },
 
@@ -4015,23 +4051,21 @@ RilObject.prototype = {
     return AUDIO_STATE_IN_CALL;
   },
 
-  _addVoiceCall: function(newCall) {
-    // Format international numbers appropriately.
-    if (newCall.number && newCall.toa == TOA_INTERNATIONAL &&
-        newCall.number[0] != "+") {
-      newCall.number = "+" + newCall.number;
+  // Format international numbers appropriately.
+  _formatInternationalNumber: function(number, toa) {
+    if (number && toa == TOA_INTERNATIONAL && number[0] != "+") {
+      number = "+" + number;
     }
 
+    return number;
+  },
+
+  _addVoiceCall: function(newCall) {
+    newCall.number = this._formatInternationalNumber(newCall.number, newCall.toa);
     newCall.isOutgoing = !(newCall.state == CALL_STATE_INCOMING);
     newCall.isConference = false;
 
     this.currentCalls[newCall.callIndex] = newCall;
-  },
-
-  _removeVoiceCall: function(call, failCause) {
-    delete this.currentCalls[call.callIndex];
-    call.failCause = failCause;
-    this._handleDisconnectedCall(call);
   },
 
   _handleChangedCallState: function(changedCall) {
@@ -4107,6 +4141,10 @@ RilObject.prototype = {
     // can be removed if is the same as the current one.
     for each (let newDataCall in datacalls) {
       if (newDataCall.status != DATACALL_FAIL_NONE) {
+        if (newDataCallOptions) {
+          newDataCallOptions.status = newDataCall.status;
+          newDataCallOptions.suggestedRetryTime = newDataCall.suggestedRetryTime;
+        }
         this._sendDataCallError(newDataCallOptions || newDataCall,
                                 newDataCall.status);
       }
@@ -5237,13 +5275,13 @@ RilObject.prototype = {
       return;
     }
 
-    cmdDetails.rilMessageType = "stkcommand";
-    cmdDetails.options =
-      this.context.StkCommandParamsFactory.createParam(cmdDetails, ctlvs);
-
-    if (!cmdDetails.options || !cmdDetails.options.pending) {
+    this.context.StkCommandParamsFactory.createParam(cmdDetails,
+                                                     ctlvs,
+                                                     (aResult) => {
+      cmdDetails.options = aResult;
+      cmdDetails.rilMessageType = "stkcommand";
       this.sendChromeMessage(cmdDetails);
-    }
+    });
   },
 
   /**
@@ -5356,10 +5394,6 @@ RilObject.prototype[REQUEST_GET_CURRENT_CALLS] = function REQUEST_GET_CURRENT_CA
   if (length) {
     calls_length = Buf.readInt32();
   }
-  if (!calls_length) {
-    this._processCalls(null);
-    return;
-  }
 
   let calls = {};
   for (let i = 0; i < calls_length; i++) {
@@ -5430,33 +5464,17 @@ RilObject.prototype[REQUEST_GET_IMSI] = function REQUEST_GET_IMSI(length, option
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_HANGUP] = function REQUEST_HANGUP(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  this.getCurrentCalls();
+  options.success = options.rilRequestError === 0;
+  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_HANGUP_WAITING_OR_BACKGROUND] = function REQUEST_HANGUP_WAITING_OR_BACKGROUND(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  this.getCurrentCalls();
+  RilObject.prototype[REQUEST_HANGUP].call(this, length, options);
 };
-// TODO Bug 1012599: This one is not used.
 RilObject.prototype[REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND] = function REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  this.getCurrentCalls();
+  RilObject.prototype[REQUEST_HANGUP].call(this, length, options);
 };
 RilObject.prototype[REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE] = function REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  this.getCurrentCalls();
 };
 RilObject.prototype[REQUEST_CONFERENCE] = function REQUEST_CONFERENCE(length, options) {
   options.success = (options.rilRequestError === 0);
@@ -5847,6 +5865,12 @@ RilObject.prototype[REQUEST_QUERY_CALL_WAITING] =
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
     options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+
+    if (options.callback) {
+      // Prevent DataCloneError when sending chrome messages.
+      delete options.callback;
+    }
+
     this.sendChromeMessage(options);
     return;
   }
@@ -5867,6 +5891,12 @@ RilObject.prototype[REQUEST_SET_CALL_WAITING] = function REQUEST_SET_CALL_WAITIN
   options.success = (options.rilRequestError === 0);
   if (!options.success) {
     options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+
+    if (options.callback) {
+      // Prevent DataCloneError when sending chrome messages.
+      delete options.callback;
+    }
+
     this.sendChromeMessage(options);
     return;
   }
@@ -6265,8 +6295,7 @@ RilObject.prototype[REQUEST_GET_PREFERRED_NETWORK_TYPE] = function REQUEST_GET_P
     return;
   }
 
-  let networkType = this.context.Buf.readInt32List()[0];
-  options.type = RIL_PREFERRED_NETWORK_TYPE_TO_GECKO[networkType];
+  options.type = this.context.Buf.readInt32List()[0];
   this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_GET_NEIGHBORING_CELL_IDS] = function REQUEST_GET_NEIGHBORING_CELL_IDS(length, options) {
@@ -6403,8 +6432,7 @@ RilObject.prototype[REQUEST_CDMA_QUERY_ROAMING_PREFERENCE] = function REQUEST_CD
   if (options.rilRequestError) {
     options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
   } else {
-    let mode = this.context.Buf.readInt32List();
-    options.mode = CDMA_ROAMING_PREFERENCE_TO_GECKO[mode[0]];
+    options.mode = this.context.Buf.readInt32List()[0];
   }
   this.sendChromeMessage(options);
 };
@@ -7844,6 +7872,12 @@ GsmPDUHelperObject.prototype = {
 
     msg.body = null;
     msg.data = null;
+
+    if (length <= 0) {
+      // No data to read.
+      return;
+    }
+
     switch (msg.encoding) {
       case PDU_DCS_MSG_CODING_7BITS_ALPHABET:
         // 7 bit encoding allows 140 octets, which means 160 characters
@@ -8486,7 +8520,7 @@ GsmPDUHelperObject.prototype = {
     switch (msg.encoding) {
       case PDU_DCS_MSG_CODING_7BITS_ALPHABET:
         msg.body = this.readSeptetsToString.call(bufAdapter,
-                                                 (length * 8 / 7), 0,
+                                                 Math.floor(length * 8 / 7), 0,
                                                  PDU_NL_IDENTIFIER_DEFAULT,
                                                  PDU_NL_IDENTIFIER_DEFAULT);
         if (msg.hasLanguageIndicator) {
@@ -8583,7 +8617,7 @@ GsmPDUHelperObject.prototype = {
         msg.body = "";
         for (let i = 0; i < numOfPages; i++) {
           body = this.readSeptetsToString.call(bufAdapter,
-                                               (pageLengths[i] * 8 / 7),
+                                               Math.floor(pageLengths[i] * 8 / 7),
                                                0,
                                                PDU_NL_IDENTIFIER_DEFAULT,
                                                PDU_NL_IDENTIFIER_DEFAULT);
@@ -8813,13 +8847,13 @@ GsmPDUHelperObject.prototype = {
     case 0:
       // GSM Default alphabet.
       resultString = this.readSeptetsToString(
-        ((len - 1) * 8 - spareBits) / 7, 0,
+        Math.floor(((len - 1) * 8 - spareBits) / 7), 0,
         PDU_NL_IDENTIFIER_DEFAULT,
         PDU_NL_IDENTIFIER_DEFAULT);
       break;
     case 1:
       // UCS2 encoded.
-      resultString = this.readUCS2String(len - 1);
+      resultString = this.context.ICCPDUHelper.readAlphaIdentifier(len - 1);
       break;
     default:
       // Not an available text coding.
@@ -10507,42 +10541,48 @@ function StkCommandParamsFactoryObject(aContext) {
 StkCommandParamsFactoryObject.prototype = {
   context: null,
 
-  createParam: function(cmdDetails, ctlvs) {
+  createParam: function(cmdDetails, ctlvs, onComplete) {
     let method = this[cmdDetails.typeOfCommand];
     if (typeof method != "function") {
       if (DEBUG) {
         this.context.debug("Unknown proactive command " +
                            cmdDetails.typeOfCommand.toString(16));
       }
-      return null;
+      return;
     }
-    return method.call(this, cmdDetails, ctlvs);
+    method.call(this, cmdDetails, ctlvs, onComplete);
   },
 
-  loadIconIfNecessary: function(cmdDetails, ctlvs, ret) {
-    let ctlv =
-      this.context.StkProactiveCmdHelper
-                  .searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
-    if (!ctlv || !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return ret;
+  loadIcons: function(iconIdCtlvs, callback) {
+    if (!iconIdCtlvs ||
+        !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
+      callback(null);
+      return;
     }
 
-    let iconId = ctlv.value;
-    ret.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-
     let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
+      callback(null);
     }).bind(this);
 
-    let onsuccess = (function(result) {
-      ret.icons = result[0];
-      this.context.RIL.sendChromeMessage(cmdDetails);
+    let onsuccess = (function(aIcons) {
+      callback(aIcons);
     }).bind(this);
 
-    ret.pending = true;
-    this.context.IconLoader.loadIcons([iconId.identifier], onsuccess, onerror);
+    this.context.IconLoader.loadIcons(iconIdCtlvs.map(aCtlv => aCtlv.value.identifier),
+                                      onsuccess,
+                                      onerror);
+  },
 
-    return ret;
+  appendIconIfNecessary: function(iconIdCtlvs, result, onComplete) {
+    this.loadIcons(iconIdCtlvs, (aIcons) => {
+      if (aIcons) {
+        result.icons = aIcons[0];
+        result.iconSelfExplanatory =
+          iconIdCtlvs[0].value.qualifier == 0 ? true : false;
+      }
+
+      onComplete(result);
+    });
   },
 
   /**
@@ -10553,7 +10593,7 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processRefresh: function(cmdDetails, ctlvs) {
+  processRefresh: function(cmdDetails, ctlvs, onComplete) {
     let refreshType = cmdDetails.commandQualifier;
     switch (refreshType) {
       case STK_REFRESH_FILE_CHANGE:
@@ -10569,7 +10609,8 @@ StkCommandParamsFactoryObject.prototype = {
         }
         break;
     }
-    return null;
+
+    onComplete(null);
   },
 
   /**
@@ -10580,7 +10621,7 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processPollInterval: function(cmdDetails, ctlvs) {
+  processPollInterval: function(cmdDetails, ctlvs, onComplete) {
     let ctlv = this.context.StkProactiveCmdHelper.searchForTag(
         COMPREHENSIONTLV_TAG_DURATION, ctlvs);
     if (!ctlv) {
@@ -10590,7 +10631,7 @@ StkCommandParamsFactoryObject.prototype = {
       throw new Error("Stk Poll Interval: Required value missing : Duration");
     }
 
-    return ctlv.value;
+    onComplete(ctlv.value);
   },
 
   /**
@@ -10601,8 +10642,8 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processPollOff: function(cmdDetails, ctlvs) {
-    return null;
+  processPollOff: function(cmdDetails, ctlvs, onComplete) {
+    onComplete(null);
   },
 
   /**
@@ -10613,7 +10654,7 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processSetUpEventList: function(cmdDetails, ctlvs) {
+  processSetUpEventList: function(cmdDetails, ctlvs, onComplete) {
     let ctlv = this.context.StkProactiveCmdHelper.searchForTag(
         COMPREHENSIONTLV_TAG_EVENT_LIST, ctlvs);
     if (!ctlv) {
@@ -10623,7 +10664,7 @@ StkCommandParamsFactoryObject.prototype = {
       throw new Error("Stk Event List: Required value missing : Event List");
     }
 
-    return ctlv.value || {eventList: null};
+    onComplete(ctlv.value || { eventList: null });
   },
 
   /**
@@ -10634,31 +10675,34 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processSelectItem: function(cmdDetails, ctlvs) {
+  processSelectItem: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let menu = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_ITEM,
+      COMPREHENSIONTLV_TAG_ITEM_ID,
+      COMPREHENSIONTLV_TAG_NEXT_ACTION_IND,
+      COMPREHENSIONTLV_TAG_ICON_ID,
+      COMPREHENSIONTLV_TAG_ICON_ID_LIST
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
     if (ctlv) {
       menu.title = ctlv.value.identifier;
     }
 
-    menu.items = [];
-    for (let i = 0; i < ctlvs.length; i++) {
-      let ctlv = ctlvs[i];
-      if (ctlv.tag == COMPREHENSIONTLV_TAG_ITEM) {
-        menu.items.push(ctlv.value);
-      }
-    }
-
-    if (menu.items.length === 0) {
+    let menuCtlvs = selectedCtlvs[COMPREHENSIONTLV_TAG_ITEM];
+    if (!menuCtlvs) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
         resultCode: STK_RESULT_REQUIRED_VALUES_MISSING});
       throw new Error("Stk Menu: Required value missing : items");
     }
+    menu.items = menuCtlvs.map(aCtlv => aCtlv.value);
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ITEM_ID, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ITEM_ID);
     if (ctlv) {
       menu.defaultItem = ctlv.value.identifier - 1;
     }
@@ -10671,61 +10715,61 @@ StkCommandParamsFactoryObject.prototype = {
       menu.isHelpAvailable = true;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_NEXT_ACTION_IND, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_NEXT_ACTION_IND);
     if (ctlv) {
       menu.nextActionList = ctlv.value;
     }
 
-    let iconId;
-    let ids = [];
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID, ctlvs);
+    let iconIdCtlvs = null;
+    let menuIconCtlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ICON_ID);
+    if (menuIconCtlv) {
+      iconIdCtlvs = [menuIconCtlv];
+    }
+
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ICON_ID_LIST);
     if (ctlv) {
-      iconId = ctlv.value;
-      menu.iconSelfExplanatory = iconId.qualifier == 0 ? true : false;
-      ids[0] = iconId.identifier;
+      if (!iconIdCtlvs) {
+        iconIdCtlvs = [];
+      };
+      let iconIdList = ctlv.value;
+      iconIdCtlvs = iconIdCtlvs.concat(iconIdList.identifiers.map((aId) => {
+        return {
+          value: { qualifier: iconIdList.qualifier, identifier: aId }
+        };
+      }));
     }
 
-    let iconIdList;
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ICON_ID_LIST, ctlvs);
-    if (ctlv) {
-      iconIdList = ctlv.value;
-      ids = ids.concat(iconIdList.identifiers);
-    }
+    this.loadIcons(iconIdCtlvs, (aIcons) => {
+      if (aIcons) {
+        if (menuIconCtlv) {
+          menu.iconSelfExplanatory =
+            (iconIdCtlvs.shift().value.qualifier == 0) ? true: false;
+          menu.icons = aIcons.shift();
+        }
 
-    if (!ids.length ||
-        !this.context.ICCUtilsHelper.isICCServiceAvailable("IMG")) {
-      return menu;
-    }
-
-    let onerror = (function() {
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    let onsuccess = (function(result) {
-      if (iconId) {
-        menu.icons = result.shift();
+        for (let i = 0; i < aIcons.length; i++) {
+          menu.items[i].icons = aIcons[i];
+          menu.items[i].iconSelfExplanatory =
+            (iconIdCtlvs[i].value.qualifier == 0) ? true: false;
+        }
       }
 
-      let iconSelfExplanatory = iconIdList.qualifier == 0 ? true : false;
-      for (let i = 0; i < result.length; i++) {
-        menu.items[i].icons = result[i];
-        menu.items[i].iconSelfExplanatory = iconSelfExplanatory;
-      }
-
-      this.context.RIL.sendChromeMessage(cmdDetails);
-    }).bind(this);
-
-    menu.pending = true;
-    this.context.IconLoader.loadIcons(ids, onsuccess, onerror);
-
-    return menu;
+      onComplete(menu);
+    });
   },
 
-  processDisplayText: function(cmdDetails, ctlvs) {
+  processDisplayText: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let textMsg = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_TEXT_STRING,
+      COMPREHENSIONTLV_TAG_IMMEDIATE_RESPONSE,
+      COMPREHENSIONTLV_TAG_DURATION,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TEXT_STRING);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
@@ -10734,12 +10778,12 @@ StkCommandParamsFactoryObject.prototype = {
     }
     textMsg.text = ctlv.value.textString;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_IMMEDIATE_RESPONSE, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_IMMEDIATE_RESPONSE);
     if (ctlv) {
       textMsg.responseNeeded = true;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_DURATION);
     if (ctlv) {
       textMsg.duration = ctlv.value;
     }
@@ -10754,15 +10798,21 @@ StkCommandParamsFactoryObject.prototype = {
       textMsg.userClear = true;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               textMsg,
+                               onComplete);
   },
 
-  processSetUpIdleModeText: function(cmdDetails, ctlvs) {
+  processSetUpIdleModeText: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let textMsg = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_TEXT_STRING,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TEXT_STRING);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
@@ -10771,14 +10821,22 @@ StkCommandParamsFactoryObject.prototype = {
     }
     textMsg.text = ctlv.value.textString;
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               textMsg,
+                               onComplete);
   },
 
-  processGetInkey: function(cmdDetails, ctlvs) {
+  processGetInkey: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let input = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_TEXT_STRING,
+      COMPREHENSIONTLV_TAG_DURATION,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TEXT_STRING);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
@@ -10788,8 +10846,7 @@ StkCommandParamsFactoryObject.prototype = {
     input.text = ctlv.value.textString;
 
     // duration
-    ctlv = StkProactiveCmdHelper.searchForTag(
-        COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_DURATION);
     if (ctlv) {
       input.duration = ctlv.value;
     }
@@ -10818,14 +10875,23 @@ StkCommandParamsFactoryObject.prototype = {
       input.isHelpAvailable = true;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, input);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               input,
+                               onComplete);
   },
 
-  processGetInput: function(cmdDetails, ctlvs) {
+  processGetInput: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let input = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_TEXT_STRING,
+      COMPREHENSIONTLV_TAG_RESPONSE_LENGTH,
+      COMPREHENSIONTLV_TAG_DEFAULT_TEXT,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TEXT_STRING);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
@@ -10834,13 +10900,13 @@ StkCommandParamsFactoryObject.prototype = {
     }
     input.text = ctlv.value.textString;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_RESPONSE_LENGTH, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_RESPONSE_LENGTH);
     if (ctlv) {
       input.minLength = ctlv.value.minLength;
       input.maxLength = ctlv.value.maxLength;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_DEFAULT_TEXT, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_DEFAULT_TEXT);
     if (ctlv) {
       input.defaultText = ctlv.value.textString;
     }
@@ -10870,60 +10936,102 @@ StkCommandParamsFactoryObject.prototype = {
       input.isHelpAvailable = true;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, input);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               input,
+                               onComplete);
   },
 
-  processEventNotify: function(cmdDetails, ctlvs) {
+  processEventNotify: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let textMsg = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
     if (ctlv) {
       textMsg.text = ctlv.value.identifier;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, textMsg);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               textMsg,
+                               onComplete);
   },
 
-  processSetupCall: function(cmdDetails, ctlvs) {
+  processSetupCall: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let call = {};
-    let iter = Iterator(ctlvs);
+    let confirmMessage = {};
+    let callMessage = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
-    if (ctlv) {
-      call.confirmMessage = ctlv.value.identifier;
-    }
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_ADDRESS,
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_ICON_ID,
+      COMPREHENSIONTLV_TAG_DURATION
+    ]);
 
-    ctlv = StkProactiveCmdHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
-    if (ctlv) {
-      call.callMessage = ctlv.value.identifier;
-    }
-
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ADDRESS, ctlvs);
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ADDRESS);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
         resultCode: STK_RESULT_REQUIRED_VALUES_MISSING});
-      throw new Error("Stk Set Up Call: Required value missing : Adress");
+      throw new Error("Stk Set Up Call: Required value missing : Address");
     }
     call.address = ctlv.value.number;
 
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
+    if (ctlv) {
+      confirmMessage.text = ctlv.value.identifier;
+      call.confirmMessage = confirmMessage;
+    }
+
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
+    if (ctlv) {
+      callMessage.text = ctlv.value.identifier;
+      call.callMessage = callMessage;
+    }
+
     // see 3GPP TS 31.111 section 6.4.13
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_DURATION);
     if (ctlv) {
       call.duration = ctlv.value;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, call);
+    let iconIdCtlvs = selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null;
+    this.loadIcons(iconIdCtlvs, (aIcons) => {
+      if (aIcons) {
+        confirmMessage.icons = aIcons[0];
+        confirmMessage.iconSelfExplanatory =
+          (iconIdCtlvs[0].value.qualifier == 0) ? true: false;
+        call.confirmMessage = confirmMessage;
+
+        if (aIcons.length > 1) {
+          callMessage.icons = aIcons[1];
+          callMessage.iconSelfExplanatory =
+            (iconIdCtlvs[1].value.qualifier == 0) ? true: false;
+          call.callMessage = callMessage;
+        }
+      }
+
+      onComplete(call);
+    });
   },
 
-  processLaunchBrowser: function(cmdDetails, ctlvs) {
+  processLaunchBrowser: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let browser = {};
+    let confirmMessage = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_URL, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_URL,
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_URL);
     if (!ctlv) {
       this.context.RIL.sendStkTerminalResponse({
         command: cmdDetails,
@@ -10932,33 +11040,49 @@ StkCommandParamsFactoryObject.prototype = {
     }
     browser.url = ctlv.value.url;
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
-    if (ctlv) {
-      browser.confirmMessage = ctlv.value.identifier;
-    }
-
     browser.mode = cmdDetails.commandQualifier & 0x03;
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, browser);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
+    if (ctlv) {
+      confirmMessage.text = ctlv.value.identifier;
+      browser.confirmMessage = confirmMessage;
+    }
+
+    let iconIdCtlvs = selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null;
+    this.loadIcons(iconIdCtlvs, (aIcons) => {
+       if (aIcons) {
+         confirmMessage.icons = aIcons[0];
+         confirmMessage.iconSelfExplanatory =
+           (iconIdCtlvs[0].value.qualifier == 0) ? true: false;
+         browser.confirmMessage = confirmMessage;
+       }
+
+       onComplete(browser);
+    });
   },
 
-  processPlayTone: function(cmdDetails, ctlvs) {
+  processPlayTone: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let playTone = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_TONE,
+      COMPREHENSIONTLV_TAG_DURATION,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
     if (ctlv) {
       playTone.text = ctlv.value.identifier;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(COMPREHENSIONTLV_TAG_TONE, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TONE);
     if (ctlv) {
       playTone.tone = ctlv.value.tone;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(
-        COMPREHENSIONTLV_TAG_DURATION, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_DURATION);
     if (ctlv) {
       playTone.duration = ctlv.value;
     }
@@ -10966,7 +11090,9 @@ StkCommandParamsFactoryObject.prototype = {
     // vibrate is only defined in TS 102.223
     playTone.isVibrate = (cmdDetails.commandQualifier & 0x01) !== 0x00;
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, playTone);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               playTone,
+                               onComplete);
   },
 
   /**
@@ -10977,32 +11103,36 @@ StkCommandParamsFactoryObject.prototype = {
    * @param ctlvs
    *        The all TLVs in this proactive command.
    */
-  processProvideLocalInfo: function(cmdDetails, ctlvs) {
+  processProvideLocalInfo: function(cmdDetails, ctlvs, onComplete) {
     let provideLocalInfo = {
       localInfoType: cmdDetails.commandQualifier
     };
-    return provideLocalInfo;
+
+    onComplete(provideLocalInfo);
   },
 
-  processTimerManagement: function(cmdDetails, ctlvs) {
+  processTimerManagement: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let timer = {
       timerAction: cmdDetails.commandQualifier
     };
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(
-        COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER,
+      COMPREHENSIONTLV_TAG_TIMER_VALUE
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TIMER_IDENTIFIER);
     if (ctlv) {
       timer.timerId = ctlv.value.timerId;
     }
 
-    ctlv = StkProactiveCmdHelper.searchForTag(
-        COMPREHENSIONTLV_TAG_TIMER_VALUE, ctlvs);
+    ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_TIMER_VALUE);
     if (ctlv) {
       timer.timerValue = ctlv.value.timerValue;
     }
 
-    return timer;
+    onComplete(timer);
   },
 
    /**
@@ -11013,87 +11143,93 @@ StkCommandParamsFactoryObject.prototype = {
     * @param ctlvs
     *        The all TLVs in this proactive command.
     */
-  processBipMessage: function(cmdDetails, ctlvs) {
+  processBipMessage: function(cmdDetails, ctlvs, onComplete) {
     let StkProactiveCmdHelper = this.context.StkProactiveCmdHelper;
     let bipMsg = {};
 
-    let ctlv = StkProactiveCmdHelper.searchForTag(
-      COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+    let selectedCtlvs = StkProactiveCmdHelper.searchForSelectedTags(ctlvs, [
+      COMPREHENSIONTLV_TAG_ALPHA_ID,
+      COMPREHENSIONTLV_TAG_ICON_ID
+    ]);
+
+    let ctlv = selectedCtlvs.retrieve(COMPREHENSIONTLV_TAG_ALPHA_ID);
     if (ctlv) {
       bipMsg.text = ctlv.value.identifier;
     }
 
-    return this.loadIconIfNecessary(cmdDetails, ctlvs, bipMsg);
+    this.appendIconIfNecessary(selectedCtlvs[COMPREHENSIONTLV_TAG_ICON_ID] || null,
+                               bipMsg,
+                               onComplete);
   }
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_REFRESH] = function STK_CMD_REFRESH(cmdDetails, ctlvs) {
-  return this.processRefresh(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_REFRESH] = function STK_CMD_REFRESH(cmdDetails, ctlvs, onComplete) {
+  return this.processRefresh(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_POLL_INTERVAL] = function STK_CMD_POLL_INTERVAL(cmdDetails, ctlvs) {
-  return this.processPollInterval(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_POLL_INTERVAL] = function STK_CMD_POLL_INTERVAL(cmdDetails, ctlvs, onComplete) {
+  return this.processPollInterval(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_POLL_OFF] = function STK_CMD_POLL_OFF(cmdDetails, ctlvs) {
-  return this.processPollOff(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_POLL_OFF] = function STK_CMD_POLL_OFF(cmdDetails, ctlvs, onComplete) {
+  return this.processPollOff(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_PROVIDE_LOCAL_INFO] = function STK_CMD_PROVIDE_LOCAL_INFO(cmdDetails, ctlvs) {
-  return this.processProvideLocalInfo(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_PROVIDE_LOCAL_INFO] = function STK_CMD_PROVIDE_LOCAL_INFO(cmdDetails, ctlvs, onComplete) {
+  return this.processProvideLocalInfo(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_EVENT_LIST] = function STK_CMD_SET_UP_EVENT_LIST(cmdDetails, ctlvs) {
-  return this.processSetUpEventList(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_EVENT_LIST] = function STK_CMD_SET_UP_EVENT_LIST(cmdDetails, ctlvs, onComplete) {
+  return this.processSetUpEventList(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_MENU] = function STK_CMD_SET_UP_MENU(cmdDetails, ctlvs) {
-  return this.processSelectItem(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_MENU] = function STK_CMD_SET_UP_MENU(cmdDetails, ctlvs, onComplete) {
+  return this.processSelectItem(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SELECT_ITEM] = function STK_CMD_SELECT_ITEM(cmdDetails, ctlvs) {
-  return this.processSelectItem(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SELECT_ITEM] = function STK_CMD_SELECT_ITEM(cmdDetails, ctlvs, onComplete) {
+  return this.processSelectItem(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_DISPLAY_TEXT] = function STK_CMD_DISPLAY_TEXT(cmdDetails, ctlvs) {
-  return this.processDisplayText(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_DISPLAY_TEXT] = function STK_CMD_DISPLAY_TEXT(cmdDetails, ctlvs, onComplete) {
+  return this.processDisplayText(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_IDLE_MODE_TEXT] = function STK_CMD_SET_UP_IDLE_MODE_TEXT(cmdDetails, ctlvs) {
-  return this.processSetUpIdleModeText(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_IDLE_MODE_TEXT] = function STK_CMD_SET_UP_IDLE_MODE_TEXT(cmdDetails, ctlvs, onComplete) {
+  return this.processSetUpIdleModeText(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_GET_INKEY] = function STK_CMD_GET_INKEY(cmdDetails, ctlvs) {
-  return this.processGetInkey(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_GET_INKEY] = function STK_CMD_GET_INKEY(cmdDetails, ctlvs, onComplete) {
+  return this.processGetInkey(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_GET_INPUT] = function STK_CMD_GET_INPUT(cmdDetails, ctlvs) {
-  return this.processGetInput(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_GET_INPUT] = function STK_CMD_GET_INPUT(cmdDetails, ctlvs, onComplete) {
+  return this.processGetInput(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_SS] = function STK_CMD_SEND_SS(cmdDetails, ctlvs) {
-  return this.processEventNotify(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_SS] = function STK_CMD_SEND_SS(cmdDetails, ctlvs, onComplete) {
+  return this.processEventNotify(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_USSD] = function STK_CMD_SEND_USSD(cmdDetails, ctlvs) {
-  return this.processEventNotify(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_USSD] = function STK_CMD_SEND_USSD(cmdDetails, ctlvs, onComplete) {
+  return this.processEventNotify(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_SMS] = function STK_CMD_SEND_SMS(cmdDetails, ctlvs) {
-  return this.processEventNotify(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_SMS] = function STK_CMD_SEND_SMS(cmdDetails, ctlvs, onComplete) {
+  return this.processEventNotify(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_DTMF] = function STK_CMD_SEND_DTMF(cmdDetails, ctlvs) {
-  return this.processEventNotify(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_DTMF] = function STK_CMD_SEND_DTMF(cmdDetails, ctlvs, onComplete) {
+  return this.processEventNotify(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_CALL] = function STK_CMD_SET_UP_CALL(cmdDetails, ctlvs) {
-  return this.processSetupCall(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SET_UP_CALL] = function STK_CMD_SET_UP_CALL(cmdDetails, ctlvs, onComplete) {
+  return this.processSetupCall(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_LAUNCH_BROWSER] = function STK_CMD_LAUNCH_BROWSER(cmdDetails, ctlvs) {
-  return this.processLaunchBrowser(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_LAUNCH_BROWSER] = function STK_CMD_LAUNCH_BROWSER(cmdDetails, ctlvs, onComplete) {
+  return this.processLaunchBrowser(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_PLAY_TONE] = function STK_CMD_PLAY_TONE(cmdDetails, ctlvs) {
-  return this.processPlayTone(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_PLAY_TONE] = function STK_CMD_PLAY_TONE(cmdDetails, ctlvs, onComplete) {
+  return this.processPlayTone(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_TIMER_MANAGEMENT] = function STK_CMD_TIMER_MANAGEMENT(cmdDetails, ctlvs) {
-  return this.processTimerManagement(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_TIMER_MANAGEMENT] = function STK_CMD_TIMER_MANAGEMENT(cmdDetails, ctlvs, onComplete) {
+  return this.processTimerManagement(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_OPEN_CHANNEL] = function STK_CMD_OPEN_CHANNEL(cmdDetails, ctlvs) {
-  return this.processBipMessage(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_OPEN_CHANNEL] = function STK_CMD_OPEN_CHANNEL(cmdDetails, ctlvs, onComplete) {
+  return this.processBipMessage(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_CLOSE_CHANNEL] = function STK_CMD_CLOSE_CHANNEL(cmdDetails, ctlvs) {
-  return this.processBipMessage(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_CLOSE_CHANNEL] = function STK_CMD_CLOSE_CHANNEL(cmdDetails, ctlvs, onComplete) {
+  return this.processBipMessage(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_RECEIVE_DATA] = function STK_CMD_RECEIVE_DATA(cmdDetails, ctlvs) {
-  return this.processBipMessage(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_RECEIVE_DATA] = function STK_CMD_RECEIVE_DATA(cmdDetails, ctlvs, onComplete) {
+  return this.processBipMessage(cmdDetails, ctlvs, onComplete);
 };
-StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_DATA] = function STK_CMD_SEND_DATA(cmdDetails, ctlvs) {
-  return this.processBipMessage(cmdDetails, ctlvs);
+StkCommandParamsFactoryObject.prototype[STK_CMD_SEND_DATA] = function STK_CMD_SEND_DATA(cmdDetails, ctlvs, onComplete) {
+  return this.processBipMessage(cmdDetails, ctlvs, onComplete);
 };
 
 function StkProactiveCmdHelperObject(aContext) {
@@ -11226,9 +11362,10 @@ StkProactiveCmdHelperObject.prototype = {
     };
 
     length--; // -1 for the codingScheme.
-    switch (text.codingScheme & 0x0f) {
+    switch (text.codingScheme & 0x0c) {
       case STK_TEXT_CODING_GSM_7BIT_PACKED:
-        text.textString = GsmPDUHelper.readSeptetsToString(length * 8 / 7, 0, 0, 0);
+        text.textString =
+          GsmPDUHelper.readSeptetsToString(Math.floor(length * 8 / 7), 0, 0, 0);
         break;
       case STK_TEXT_CODING_GSM_8BIT:
         text.textString =
@@ -11497,16 +11634,34 @@ StkProactiveCmdHelperObject.prototype = {
 
   searchForTag: function(tag, ctlvs) {
     let iter = Iterator(ctlvs);
-    return this.searchForNextTag(tag, iter);
-  },
-
-  searchForNextTag: function(tag, iter) {
     for (let [index, ctlv] in iter) {
       if ((ctlv.tag & ~COMPREHENSIONTLV_FLAG_CR) == tag) {
         return ctlv;
       }
     }
     return null;
+  },
+
+  searchForSelectedTags: function(ctlvs, tags) {
+    let ret = {
+      // Handy utility to de-queue the 1st ctlv of the specified tag.
+      retrieve: function(aTag) {
+        return (this[aTag]) ? this[aTag].shift() : null;
+      }
+    };
+
+    ctlvs.forEach((aCtlv) => {
+      tags.forEach((aTag) => {
+        if ((aCtlv.tag & ~COMPREHENSIONTLV_FLAG_CR) == aTag) {
+          if (!ret[aTag]) {
+            ret[aTag] = [];
+          }
+          ret[aTag].push(aCtlv);
+        }
+      });
+    });
+
+    return ret;
   },
 };
 StkProactiveCmdHelperObject.prototype[COMPREHENSIONTLV_TAG_COMMAND_DETAILS] = function COMPREHENSIONTLV_TAG_COMMAND_DETAILS(length) {
@@ -12117,6 +12272,8 @@ ICCFileHelperObject.prototype = {
       case ICC_EF_OPL:
       case ICC_EF_PNN:
       case ICC_EF_GID1:
+      case ICC_EF_CPHS_INFO:
+      case ICC_EF_CPHS_MBN:
         return EF_PATH_MF_SIM + EF_PATH_DF_GSM;
       default:
         return null;
@@ -12143,6 +12300,12 @@ ICCFileHelperObject.prototype = {
       case ICC_EF_PNN:
       case ICC_EF_SMS:
       case ICC_EF_GID1:
+      // CPHS spec was provided in 1997 based on SIM requirement, there is no
+      // detailed info about how these ICC_EF_CPHS_XXX are allocated in USIM.
+      // What we can do now is to follow what has been done in AOSP to have file
+      // path equal to MF_SIM/DF_GSM.
+      case ICC_EF_CPHS_INFO:
+      case ICC_EF_CPHS_MBN:
         return EF_PATH_MF_SIM + EF_PATH_ADF_USIM;
       default:
         // The file ids in USIM phone book entries are decided by the
@@ -13068,7 +13231,18 @@ SimRecordHelperObject.prototype = {
   fetchSimRecords: function() {
     this.context.RIL.getIMSI();
     this.readAD();
-    this.readSST();
+    // CPHS was widely introduced in Europe during GSM(2G) era to provide easier
+    // access to carrier's core service like voicemail, call forwarding, manual
+    // PLMN selection, and etc.
+    // Addition EF like EF_CPHS_MBN, EF_CPHS_CPHS_CFF, EF_CPHS_VWI, etc are
+    // introduced to support these feature.
+    // In USIM, the replancement of these EFs are provided. (EF_MBDN, EF_MWIS, ...)
+    // However, some carriers in Europe still rely on these EFs.
+    this.readCphsInfo(() => this.readSST(),
+                      (aErrorMsg) => {
+                        this.context.debug("Failed to read CPHS_INFO: " + aErrorMsg);
+                        this.readSST();
+                      });
   },
 
   /**
@@ -13399,6 +13573,13 @@ SimRecordHelperObject.prototype = {
         this.readMBDN();
       } else {
         if (DEBUG) this.context.debug("MDN: MDN service is not available");
+
+        if (ICCUtilsHelper.isCphsServiceAvailable("MBN")) {
+          // read CPHS_MBN in advance if MBDN is not available.
+          this.readCphsMBN();
+        } else {
+          if (DEBUG) this.context.debug("CPHS_MBN: CPHS_MBN service is not available");
+        }
       }
 
       if (ICCUtilsHelper.isICCServiceAvailable("MWIS")) {
@@ -13471,6 +13652,15 @@ SimRecordHelperObject.prototype = {
       let RIL = this.context.RIL;
       let contact =
         this.context.ICCPDUHelper.readAlphaIdDiallingNumber(options.recordSize);
+      if ((!contact ||
+           ((!contact.alphaId || contact.alphaId == "") &&
+            (!contact.number || contact.number == ""))) &&
+          this.context.ICCUtilsHelper.isCphsServiceAvailable("MBN")) {
+        // read CPHS_MBN in advance if MBDN is invalid or empty.
+        this.readCphsMBN();
+        return;
+      }
+
       if (!contact ||
           (RIL.iccInfoPrivate.mbdn !== undefined &&
            RIL.iccInfoPrivate.mbdn === contact.number)) {
@@ -13889,13 +14079,10 @@ SimRecordHelperObject.prototype = {
       }
       Buf.readStringDelimiter(strLen);
 
-      if (pnnElement) {
-        pnn.push(pnnElement);
-      }
+      pnn.push(pnnElement);
 
       let RIL = this.context.RIL;
-      // Will ignore remaining records when got the contents of a record are all 0xff.
-      if (pnnElement && options.p1 < options.totalRecords) {
+      if (options.p1 < options.totalRecords) {
         ICCIOHelper.loadNextRecord(options);
       } else {
         if (DEBUG) {
@@ -14048,6 +14235,117 @@ SimRecordHelperObject.prototype = {
       callback: callback.bind(this)
     });
   },
+
+  /**
+   * Read CPHS Phase & Service Table from CPHS Info.
+   *
+   * @See  B.3.1.1 CPHS Information in CPHS Phase 2.
+   *
+   * @param onsuccess     Callback to be called when success.
+   * @param onerror       Callback to be called when error.
+   */
+  readCphsInfo: function(onsuccess, onerror) {
+    function callback() {
+      try {
+        let Buf = this.context.Buf;
+        let RIL = this.context.RIL;
+
+        let strLen = Buf.readInt32();
+        // Each octet is encoded into two chars.
+        let octetLen = strLen / 2;
+        let cphsInfo = this.context.GsmPDUHelper.readHexOctetArray(octetLen);
+        Buf.readStringDelimiter(strLen);
+        if (DEBUG) {
+          let str = "";
+          for (let i = 0; i < cphsInfo.length; i++) {
+            str += cphsInfo[i] + ", ";
+          }
+          this.context.debug("CPHS INFO: " + str);
+        }
+
+        /**
+         * CPHS INFORMATION
+         *
+         * Byte 1: CPHS Phase
+         * 01 phase 1
+         * 02 phase 2
+         * etc.
+         *
+         * Byte 2: CPHS Service Table
+         * +----+----+----+----+----+----+----+----+
+         * | b8 | b7 | b6 | b5 | b4 | b3 | b2 | b1 |
+         * +----+----+----+----+----+----+----+----+
+         * |   ONSF  |   MBN   |   SST   |   CSP   |
+         * | Phase 2 |   ALL   | Phase 1 |   All   |
+         * +----+----+----+----+----+----+----+----+
+         *
+         * Byte 3: CPHS Service Table continued
+         * +----+----+----+----+----+----+----+----+
+         * | b8 | b7 | b6 | b5 | b4 | b3 | b2 | b1 |
+         * +----+----+----+----+----+----+----+----+
+         * |   RFU   |   RFU   |   RFU   | INFO_NUM|
+         * |         |         |         | Phase 2 |
+         * +----+----+----+----+----+----+----+----+
+         */
+        let cphsPhase = cphsInfo[0];
+        if (cphsPhase == 1) {
+          // Clear 'Phase 2 only' services.
+          cphsInfo[1] &= 0x3F;
+          // We don't know whether Byte 3 is available in CPHS phase 1 or not.
+          // Add boundary check before accessing it.
+          if (cphsInfo.length > 2) {
+            cphsInfo[2] = 0x00;
+          }
+        } else if (cphsPhase == 2) {
+          // Clear 'Phase 1 only' services.
+          cphsInfo[1] &= 0xF3;
+        } else {
+          throw new Error("Unknown CPHS phase: " + cphsPhase);
+        }
+
+        RIL.iccInfoPrivate.cphsSt = cphsInfo.subarray(1);
+        onsuccess();
+      } catch(e) {
+        onerror(e.toString());
+      }
+    }
+
+    this.context.ICCIOHelper.loadTransparentEF({
+      fileId: ICC_EF_CPHS_INFO,
+      callback: callback.bind(this),
+      onerror: onerror
+    });
+  },
+
+  /**
+   * Read CPHS MBN. (Mailbox Numbers)
+   *
+   * @See B.4.2.2 Voice Message Retrieval and Indicator Clearing
+   */
+  readCphsMBN: function() {
+    function callback(options) {
+      let RIL = this.context.RIL;
+      let contact =
+        this.context.ICCPDUHelper.readAlphaIdDiallingNumber(options.recordSize);
+      if (!contact ||
+          (RIL.iccInfoPrivate.mbdn !== undefined &&
+           RIL.iccInfoPrivate.mbdn === contact.number)) {
+        return;
+      }
+      RIL.iccInfoPrivate.mbdn = contact.number;
+      if (DEBUG) {
+        this.context.debug("CPHS_MDN, alphaId=" + contact.alphaId +
+                           " number=" + contact.number);
+      }
+      contact.rilMessageType = "iccmbdn";
+      RIL.sendChromeMessage(contact);
+    }
+
+    this.context.ICCIOHelper.loadLinearFixedEF({
+      fileId: ICC_EF_CPHS_MBN,
+      callback: callback.bind(this)
+    });
+  }
 };
 
 function RuimRecordHelperObject(aContext) {
@@ -14629,8 +14927,8 @@ ICCUtilsHelperObject.prototype = {
        *
        * b1 = 0, service not allocated.
        *      1, service allocated.
-       * b2 = 0, service not activatd.
-       *      1, service allocated.
+       * b2 = 0, service not activated.
+       *      1, service activated.
        *
        * @see 3GPP TS 51.011 10.3.7.
        */
@@ -14656,8 +14954,6 @@ ICCUtilsHelperObject.prototype = {
        *
        * b1 = 0, service not avaiable.
        *      1, service available.
-       * b2 = 0, service not avaiable.
-       *      1, service available.
        *
        * @see 3GPP TS 31.102 4.2.8.
        */
@@ -14672,6 +14968,49 @@ ICCUtilsHelperObject.prototype = {
 
     return (serviceTable !== null) &&
            (index < serviceTable.length) &&
+           ((serviceTable[index] & bitmask) !== 0);
+  },
+
+  /**
+   * Get whether specificed CPHS service is available.
+   *
+   * @param geckoService
+   *        Service name like "MDN", etc.
+   *
+   * @return true if the service is enabled, false otherwise.
+   */
+  isCphsServiceAvailable: function(geckoService) {
+    let RIL = this.context.RIL;
+    let serviceTable = RIL.iccInfoPrivate.cphsSt;
+
+    if (!(serviceTable instanceof Uint8Array)) {
+      return false;
+    }
+
+    /**
+     * Service id is valid in 1..N, and 2 bits are used to code each service.
+     *
+     * +----+--  --+----+----+
+     * | b8 | ...  | b2 | b1 |
+     * +----+--  --+----+----+
+     *
+     * b1 = 0, service not allocated.
+     *      1, service allocated.
+     * b2 = 0, service not activated.
+     *      1, service activated.
+     *
+     * @See  B.3.1.1 CPHS Information in CPHS Phase 2.
+     */
+    let cphsService  = GECKO_ICC_SERVICES.cphs[geckoService];
+
+    if (!cphsService) {
+      return false;
+    }
+    cphsService -= 1;
+    let index = Math.floor(cphsService / 4);
+    let bitmask = 2 << ((cphsService % 4) << 1);
+
+    return (index < serviceTable.length) &&
            ((serviceTable[index] & bitmask) !== 0);
   },
 

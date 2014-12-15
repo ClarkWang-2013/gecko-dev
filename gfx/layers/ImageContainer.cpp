@@ -137,7 +137,7 @@ ImageContainer::ImageContainer(int flag)
   if (flag == ENABLE_ASYNC && ImageBridgeChild::IsCreated()) {
     // the refcount of this ImageClient is 1. we don't use a RefPtr here because the refcount
     // of this class must be done on the ImageBridge thread.
-    mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::BUFFER_IMAGE_SINGLE).drop();
+    mImageClient = ImageBridgeChild::GetSingleton()->CreateImageClient(CompositableType::IMAGE).drop();
     MOZ_ASSERT(mImageClient);
   }
 }
@@ -496,11 +496,33 @@ CairoImage::GetTextureClient(CompositableClient *aClient)
     return nullptr;
   }
 
-  // gfx::BackendType::NONE means default to content backend
-  textureClient = aClient->CreateTextureClientForDrawing(surface->GetFormat(),
-                                                         surface->GetSize(),
-                                                         gfx::BackendType::NONE,
-                                                         TextureFlags::DEFAULT);
+
+// XXX windows' TextureClients do not hold ISurfaceAllocator,
+// recycler does not work on windows.
+#ifndef XP_WIN
+
+// XXX only gonk ensure when TextureClient is recycled,
+// TextureHost is not used by CompositableHost.
+#ifdef MOZ_WIDGET_GONK
+  RefPtr<TextureClientRecycleAllocator> recycler =
+    aClient->GetTextureClientRecycler();
+  if (recycler) {
+    textureClient =
+      recycler->CreateOrRecycleForDrawing(surface->GetFormat(),
+                                          surface->GetSize(),
+                                          gfx::BackendType::NONE,
+                                          aClient->GetTextureFlags());
+  }
+#endif
+
+#endif
+  if (!textureClient) {
+    // gfx::BackendType::NONE means default to content backend
+    textureClient = aClient->CreateTextureClientForDrawing(surface->GetFormat(),
+                                                           surface->GetSize(),
+                                                           gfx::BackendType::NONE,
+                                                           TextureFlags::DEFAULT);
+  }
   if (!textureClient) {
     return nullptr;
   }

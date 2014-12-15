@@ -204,7 +204,7 @@ template <> struct ExecutionModeTraits<ParallelExecution>
 
 namespace jit {
     struct IonScript;
-    class IonAllocPolicy;
+    class JitAllocPolicy;
     class TempAllocator;
 }
 
@@ -395,9 +395,10 @@ enum MOZ_ENUM_TYPE(uint32_t) {
                           TYPE_FLAG_SYMBOL,
 
     /* Mask/shift for the number of objects in objectSet */
-    TYPE_FLAG_OBJECT_COUNT_MASK   = 0x3e00,
-    TYPE_FLAG_OBJECT_COUNT_SHIFT  = 9,
-    TYPE_FLAG_OBJECT_COUNT_LIMIT  =
+    TYPE_FLAG_OBJECT_COUNT_MASK     = 0x3e00,
+    TYPE_FLAG_OBJECT_COUNT_SHIFT    = 9,
+    TYPE_FLAG_OBJECT_COUNT_LIMIT    = 7,
+    TYPE_FLAG_DOMOBJECT_COUNT_LIMIT =
         TYPE_FLAG_OBJECT_COUNT_MASK >> TYPE_FLAG_OBJECT_COUNT_SHIFT,
 
     /* Whether the contents of this type set are totally unknown. */
@@ -483,22 +484,28 @@ enum MOZ_ENUM_TYPE(uint32_t) {
     OBJECT_FLAG_RUNONCE_INVALIDATED   = 0x00200000,
 
     /*
+     * For a global object, whether any array buffers in this compartment with
+     * typed object views have been neutered.
+     */
+    OBJECT_FLAG_TYPED_OBJECT_NEUTERED = 0x00400000,
+
+    /*
      * Whether objects with this type should be allocated directly in the
      * tenured heap.
      */
-    OBJECT_FLAG_PRE_TENURE            = 0x00400000,
+    OBJECT_FLAG_PRE_TENURE            = 0x00800000,
 
     /* Whether objects with this type might have copy on write elements. */
-    OBJECT_FLAG_COPY_ON_WRITE         = 0x00800000,
+    OBJECT_FLAG_COPY_ON_WRITE         = 0x01000000,
 
     /*
      * Whether all properties of this object are considered unknown.
      * If set, all other flags in DYNAMIC_MASK will also be set.
      */
-    OBJECT_FLAG_UNKNOWN_PROPERTIES    = 0x01000000,
+    OBJECT_FLAG_UNKNOWN_PROPERTIES    = 0x02000000,
 
     /* Flags which indicate dynamic properties of represented objects. */
-    OBJECT_FLAG_DYNAMIC_MASK          = 0x01ff0000,
+    OBJECT_FLAG_DYNAMIC_MASK          = 0x03ff0000,
 
     /* Mask for objects created with unknown properties. */
     OBJECT_FLAG_UNKNOWN_MASK =
@@ -507,8 +514,8 @@ enum MOZ_ENUM_TYPE(uint32_t) {
 
     // Mask/shift for this type object's generation. If out of sync with the
     // TypeZone's generation, this TypeObject hasn't been swept yet.
-    OBJECT_FLAG_GENERATION_MASK       = 0x02000000,
-    OBJECT_FLAG_GENERATION_SHIFT      = 25,
+    OBJECT_FLAG_GENERATION_MASK       = 0x04000000,
+    OBJECT_FLAG_GENERATION_SHIFT      = 26,
 };
 typedef uint32_t TypeObjectFlags;
 
@@ -615,6 +622,9 @@ class TypeSet
 
     /* Whether any values in this set might have the specified type. */
     bool mightBeMIRType(jit::MIRType type);
+
+    /* Whether all objects have JSCLASS_IS_DOMJSCLASS set. */
+    bool isDOMClass();
 
     /*
      * Get whether this type set is known to be a subset of other.
@@ -793,9 +803,6 @@ class TemporaryTypeSet : public TypeSet
 
     /* Get the shared typed array type of all objects in this set, or Scalar::TypeMax. */
     Scalar::Type getSharedTypedArrayType();
-
-    /* Whether all objects have JSCLASS_IS_DOMJSCLASS set. */
-    bool isDOMClass();
 
     /* Whether clasp->isCallable() is true for one or more objects in this set. */
     bool maybeCallable();
@@ -1106,12 +1113,12 @@ struct TypeObject : public gc::TenuredCell
     }
 
     void addFlags(TypeObjectFlags flags) {
-        MOZ_ASSERT(!needsSweep());
+        maybeSweep(nullptr);
         flags_ |= flags;
     }
 
     void clearFlags(TypeObjectFlags flags) {
-        MOZ_ASSERT(!needsSweep());
+        maybeSweep(nullptr);
         flags_ &= ~flags;
     }
 
@@ -1130,9 +1137,12 @@ struct TypeObject : public gc::TenuredCell
      *
      * The type sets in the properties of a type object describe the possible
      * values that can be read out of that property in actual JS objects.
-     * Properties only account for native properties (those with a slot and no
-     * specialized getter hook) and the elements of dense arrays. For accesses
-     * on such properties, the correspondence is as follows:
+     * In native objects, property types account for plain data properties
+     * (those with a slot and no getter or setter hook) and dense elements.
+     * In typed objects, property types account for object and value properties
+     * and elements in the object.
+     *
+     * For accesses on these properties, the correspondence is as follows:
      *
      * 1. If the type has unknownProperties(), the possible properties and
      *    value types for associated JSObjects are unknown.
@@ -1141,16 +1151,21 @@ struct TypeObject : public gc::TenuredCell
      *    which is a property in obj, before obj->getProperty(id) the property
      *    in type for id must reflect the result of the getProperty.
      *
-     *    There is an exception for properties of global JS objects which
-     *    are undefined at the point where the property was (lazily) generated.
-     *    In such cases the property type set will remain empty, and the
-     *    'undefined' type will only be added after a subsequent assignment or
-     *    deletion. After these properties have been assigned a defined value,
-     *    the only way they can become undefined again is after such an assign
-     *    or deletion.
+     * There are several exceptions to this:
      *
-     *    There is another exception for array lengths, which are special cased
-     *    by the compiler and VM and are not reflected in property types.
+     * 1. For properties of global JS objects which are undefined at the point
+     *    where the property was (lazily) generated, the property type set will
+     *    remain empty, and the 'undefined' type will only be added after a
+     *    subsequent assignment or deletion. After these properties have been
+     *    assigned a defined value, the only way they can become undefined
+     *    again is after such an assign or deletion.
+     *
+     * 2. Array lengths are special cased by the compiler and VM and are not
+     *    reflected in property types.
+     *
+     * 3. In typed objects, the initial values of properties (null pointers and
+     *    undefined values) are not reflected in the property types. These
+     *    values are always possible when reading the property.
      *
      * We establish these by using write barriers on calls to setProperty and
      * defineProperty which are on native properties, and on any jitcode which
@@ -1194,13 +1209,7 @@ struct TypeObject : public gc::TenuredCell
     gc::InitialHeap initialHeap(CompilerConstraintList *constraints);
 
     bool canPreTenure() {
-        // Only types associated with particular allocation sites or 'new'
-        // scripts can be marked as needing pretenuring. Other types can be
-        // used for different purposes across the compartment and can't use
-        // this bit reliably.
-        if (unknownProperties())
-            return false;
-        return fromAllocationSite() || newScript();
+        return !unknownProperties();
     }
 
     bool fromAllocationSite() {
@@ -1281,6 +1290,10 @@ struct TypeObject : public gc::TenuredCell
 
     static inline uint32_t offsetOfNewScript() {
         return offsetof(TypeObject, newScript_);
+    }
+
+    static inline uint32_t offsetOfFlags() {
+        return offsetof(TypeObject, flags_);
     }
 
   private:
@@ -1560,7 +1573,7 @@ class HeapTypeSetKey
     jit::MIRType knownMIRType(CompilerConstraintList *constraints);
     bool nonData(CompilerConstraintList *constraints);
     bool nonWritable(CompilerConstraintList *constraints);
-    bool isOwnProperty(CompilerConstraintList *constraints);
+    bool isOwnProperty(CompilerConstraintList *constraints, bool allowEmptyTypesForGlobal = false);
     bool knownSubset(CompilerConstraintList *constraints, const HeapTypeSetKey &other);
     JSObject *singleton(CompilerConstraintList *constraints);
     bool needsBarrier(CompilerConstraintList *constraints);

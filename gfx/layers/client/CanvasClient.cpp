@@ -6,7 +6,6 @@
 #include "CanvasClient.h"
 
 #include "ClientCanvasLayer.h"          // for ClientCanvasLayer
-#include "CompositorChild.h"            // for CompositorChild
 #include "GLContext.h"                  // for GLContext
 #include "GLScreenBuffer.h"             // for GLScreenBuffer
 #include "ScopedGLHelpers.h"
@@ -15,6 +14,7 @@
 #include "GLReadTexImageHelper.h"
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
 #include "mozilla/layers/CompositableForwarder.h"
+#include "mozilla/layers/CompositorChild.h" // for CompositorChild
 #include "mozilla/layers/GrallocTextureClient.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/TextureClient.h"  // for TextureClient, etc
@@ -127,7 +127,7 @@ CanvasClient2D::CreateTextureClientForCanvas(gfx::SurfaceFormat aFormat,
     // the most effective way to make this work.
     return TextureClient::CreateForRawBufferAccess(GetForwarder(),
                                                    aFormat, aSize, BackendType::CAIRO,
-                                                   mTextureInfo.mTextureFlags | aFlags);
+                                                   mTextureFlags | aFlags);
   }
 
   gfx::BackendType backend = gfxPlatform::GetPlatform()->GetPreferredCanvasBackend();
@@ -138,7 +138,7 @@ CanvasClient2D::CreateTextureClientForCanvas(gfx::SurfaceFormat aFormat,
   // to use double buffering.
   return TextureClient::CreateForRawBufferAccess(GetForwarder(),
                                                  aFormat, aSize, backend,
-                                                 mTextureInfo.mTextureFlags | aFlags);
+                                                 mTextureFlags | aFlags);
 #endif
 }
 
@@ -374,8 +374,7 @@ CanvasClientSharedSurface::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   MOZ_ASSERT(newTex);
 
   // Add the new TexClient.
-  MOZ_ALWAYS_TRUE( newTex->InitIPDLActor(forwarder) );
-  MOZ_ASSERT(newTex->GetIPDLActor());
+  MOZ_ALWAYS_TRUE( AddTextureClient(newTex) );
 
   // Remove the old TexClient.
   if (mFrontTex) {

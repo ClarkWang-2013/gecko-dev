@@ -75,11 +75,8 @@ UNIFIED_SOURCES += [
     'nsHttpResponseHead.cpp',
     'nsHttpTransaction.cpp',
     'NullHttpTransaction.cpp',
-    'SpdyPush3.cpp',
     'SpdyPush31.cpp',
-    'SpdySession3.cpp',
     'SpdySession31.cpp',
-    'SpdyStream3.cpp',
     'SpdyStream31.cpp',
     'SpdyZlibReporter.cpp',
     'TunnelUtils.cpp',
@@ -109,5 +106,5 @@ FINAL_LIBRARY = 'xul'
 
 LOCAL_INCLUDES += [
     '../../base/src',
-    '/content/base/src',
+    '/dom/base',
 ]

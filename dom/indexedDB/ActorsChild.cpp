@@ -551,59 +551,6 @@ ConvertActorsToBlobs(IDBDatabase* aDatabase,
 }
 
 void
-DispatchSuccessEvent(ResultHelper* aResultHelper,
-                     nsIDOMEvent* aEvent = nullptr)
-{
-  MOZ_ASSERT(aResultHelper);
-
-  PROFILER_LABEL("IndexedDB",
-                 "DispatchSuccessEvent",
-                 js::ProfileEntry::Category::STORAGE);
-
-  nsRefPtr<IDBRequest> request = aResultHelper->Request();
-  MOZ_ASSERT(request);
-  request->AssertIsOnOwningThread();
-
-  nsRefPtr<IDBTransaction> transaction = aResultHelper->Transaction();
-
-  nsCOMPtr<nsIDOMEvent> successEvent;
-  if (!aEvent) {
-    successEvent = CreateGenericEvent(request,
-                                      nsDependentString(kSuccessEventType),
-                                      eDoesNotBubble,
-                                      eNotCancelable);
-    if (NS_WARN_IF(!successEvent)) {
-      return;
-    }
-
-    aEvent = successEvent;
-  }
-
-  request->SetResultCallback(aResultHelper);
-
-  MOZ_ASSERT(aEvent);
-  MOZ_ASSERT_IF(transaction, transaction->IsOpen());
-
-  bool dummy;
-  nsresult rv = request->DispatchEvent(aEvent, &dummy);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return;
-  }
-
-  MOZ_ASSERT_IF(transaction,
-                transaction->IsOpen() || transaction->IsAborted());
-
-  WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
-  MOZ_ASSERT(internalEvent);
-
-  if (transaction &&
-      transaction->IsOpen() &&
-      internalEvent->mFlags.mExceptionHasBeenRisen) {
-    transaction->Abort(NS_ERROR_DOM_INDEXEDDB_ABORT_ERR);
-  }
-}
-
-void
 DispatchErrorEvent(IDBRequest* aRequest,
                    nsresult aErrorCode,
                    IDBTransaction* aTransaction = nullptr,
@@ -659,6 +606,64 @@ DispatchErrorEvent(IDBRequest* aRequest,
     } else if (doDefault) {
       transaction->Abort(request);
     }
+  }
+}
+
+void
+DispatchSuccessEvent(ResultHelper* aResultHelper,
+                     nsIDOMEvent* aEvent = nullptr)
+{
+  MOZ_ASSERT(aResultHelper);
+
+  PROFILER_LABEL("IndexedDB",
+                 "DispatchSuccessEvent",
+                 js::ProfileEntry::Category::STORAGE);
+
+  nsRefPtr<IDBRequest> request = aResultHelper->Request();
+  MOZ_ASSERT(request);
+  request->AssertIsOnOwningThread();
+
+  nsRefPtr<IDBTransaction> transaction = aResultHelper->Transaction();
+
+  if (transaction && transaction->IsAborted()) {
+    DispatchErrorEvent(request, transaction->AbortCode(), transaction);
+    return;
+  }
+
+  nsCOMPtr<nsIDOMEvent> successEvent;
+  if (!aEvent) {
+    successEvent = CreateGenericEvent(request,
+                                      nsDependentString(kSuccessEventType),
+                                      eDoesNotBubble,
+                                      eNotCancelable);
+    if (NS_WARN_IF(!successEvent)) {
+      return;
+    }
+
+    aEvent = successEvent;
+  }
+
+  request->SetResultCallback(aResultHelper);
+
+  MOZ_ASSERT(aEvent);
+  MOZ_ASSERT_IF(transaction, transaction->IsOpen());
+
+  bool dummy;
+  nsresult rv = request->DispatchEvent(aEvent, &dummy);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  MOZ_ASSERT_IF(transaction,
+                transaction->IsOpen() || transaction->IsAborted());
+
+  WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
+  MOZ_ASSERT(internalEvent);
+
+  if (transaction &&
+      transaction->IsOpen() &&
+      internalEvent->mFlags.mExceptionHasBeenRisen) {
+    transaction->Abort(NS_ERROR_DOM_INDEXEDDB_ABORT_ERR);
   }
 }
 
@@ -1240,8 +1245,14 @@ BackgroundDatabaseChild::RecvPBackgroundIDBVersionChangeTransactionConstructor(
 
   auto actor = static_cast<BackgroundVersionChangeTransactionChild*>(aActor);
 
+  nsRefPtr<IDBOpenDBRequest> request = mOpenRequestActor->GetOpenDBRequest();
+  MOZ_ASSERT(request);
+
   nsRefPtr<IDBTransaction> transaction =
-    IDBTransaction::CreateVersionChange(mDatabase, actor, aNextObjectStoreId,
+    IDBTransaction::CreateVersionChange(mDatabase,
+                                        actor,
+                                        request,
+                                        aNextObjectStoreId,
                                         aNextIndexId);
   if (NS_WARN_IF(!transaction)) {
     return false;
@@ -1252,9 +1263,6 @@ BackgroundDatabaseChild::RecvPBackgroundIDBVersionChangeTransactionConstructor(
   actor->SetDOMTransaction(transaction);
 
   mDatabase->EnterSetVersionTransaction(aRequestedVersion);
-
-  nsRefPtr<IDBOpenDBRequest> request = mOpenRequestActor->GetOpenDBRequest();
-  MOZ_ASSERT(request);
 
   request->SetTransaction(transaction);
 
@@ -1316,7 +1324,7 @@ BackgroundDatabaseChild::RecvVersionChange(const uint64_t& aOldVersion,
     if (shouldAbortAndClose) {
       // Invalidate() doesn't close the database in the parent, so we have
       // to call Close() and AbortTransactions() manually.
-      mDatabase->AbortTransactions();
+      mDatabase->AbortTransactions(/* aShouldWarn */ false);
       mDatabase->Close();
       return true;
     }
@@ -2027,7 +2035,6 @@ BackgroundCursorChild::SendContinueInternal(const CursorRequestParams& aParams)
   MOZ_ASSERT(!mStrongCursor);
 
   // Make sure all our DOM objects stay alive.
-  mStrongRequest = mRequest;
   mStrongCursor = mCursor;
 
   MOZ_ASSERT(mRequest->ReadyState() == IDBRequestReadyState::Done);
@@ -2119,9 +2126,7 @@ BackgroundCursorChild::HandleResponse(
   if (mCursor) {
     mCursor->Reset(Move(response.key()), Move(cloneReadInfo));
   } else {
-    newCursor = IDBCursor::Create(mObjectStore,
-                                  this,
-                                  mDirection,
+    newCursor = IDBCursor::Create(this,
                                   Move(response.key()),
                                   Move(cloneReadInfo));
     mCursor = newCursor;
@@ -2150,10 +2155,7 @@ BackgroundCursorChild::HandleResponse(
   if (mCursor) {
     mCursor->Reset(Move(response.key()));
   } else {
-    newCursor = IDBCursor::Create(mObjectStore,
-                                  this,
-                                  mDirection,
-                                  Move(response.key()));
+    newCursor = IDBCursor::Create(this, Move(response.key()));
     mCursor = newCursor;
   }
 
@@ -2187,9 +2189,7 @@ BackgroundCursorChild::HandleResponse(const IndexCursorResponse& aResponse)
                    Move(response.objectKey()),
                    Move(cloneReadInfo));
   } else {
-    newCursor = IDBCursor::Create(mIndex,
-                                  this,
-                                  mDirection,
+    newCursor = IDBCursor::Create(this,
                                   Move(response.key()),
                                   Move(response.objectKey()),
                                   Move(cloneReadInfo));
@@ -2218,9 +2218,7 @@ BackgroundCursorChild::HandleResponse(const IndexKeyCursorResponse& aResponse)
   if (mCursor) {
     mCursor->Reset(Move(response.key()), Move(response.objectKey()));
   } else {
-    newCursor = IDBCursor::Create(mIndex,
-                                  this,
-                                  mDirection,
+    newCursor = IDBCursor::Create(this,
                                   Move(response.key()),
                                   Move(response.objectKey()));
     mCursor = newCursor;
@@ -2265,8 +2263,8 @@ BackgroundCursorChild::RecvResponse(const CursorResponse& aResponse)
   MOZ_ASSERT(aResponse.type() != CursorResponse::T__None);
   MOZ_ASSERT(mRequest);
   MOZ_ASSERT(mTransaction);
-  MOZ_ASSERT(mStrongRequest);
   MOZ_ASSERT_IF(mCursor, mStrongCursor);
+  MOZ_ASSERT_IF(!mCursor, mStrongRequest);
 
   MaybeCollectGarbageOnIPCMessage();
 

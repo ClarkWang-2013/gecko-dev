@@ -12,6 +12,7 @@
 #include "mozilla/UniquePtr.h"
 
 #include "jsalloc.h"
+#include "jsgc.h"
 #include "jspubtd.h"
 
 #include "js/GCAPI.h"
@@ -26,6 +27,7 @@ class GCParallelTask;
 namespace gcstats {
 
 enum Phase {
+    PHASE_MUTATOR,
     PHASE_GC_BEGIN,
     PHASE_WAIT_BACKGROUND_THREAD,
     PHASE_MARK_DISCARD_CODE,
@@ -67,8 +69,9 @@ enum Phase {
     PHASE_COMPACT,
     PHASE_COMPACT_MOVE,
     PHASE_COMPACT_UPDATE,
-    PHASE_COMPACT_UPDATE_GRAY,
+    PHASE_COMPACT_UPDATE_CELLS,
     PHASE_GC_END,
+    PHASE_MINOR_GC,
 
     PHASE_LIMIT
 };
@@ -77,6 +80,10 @@ enum Stat {
     STAT_NEW_CHUNK,
     STAT_DESTROY_CHUNK,
     STAT_MINOR_GC,
+
+    // Number of times a 'put' into a storebuffer overflowed, triggering a
+    // compaction
+    STAT_STOREBUFFER_OVERFLOW,
 
     STAT_LIMIT
 };
@@ -113,8 +120,12 @@ struct Statistics
     void endPhase(Phase phase);
     void endParallelPhase(Phase phase, const GCParallelTask *task);
 
-    void beginSlice(const ZoneGCStats &zoneStats, JS::gcreason::Reason reason);
+    void beginSlice(const ZoneGCStats &zoneStats, JSGCInvocationKind gckind,
+                    JS::gcreason::Reason reason);
     void endSlice();
+
+    void startTimingMutator();
+    void stopTimingMutator(double &mutator_ms, double &gc_ms);
 
     void reset(const char *reason) { slices.back().resetReason = reason; }
     void nonincremental(const char *reason) { nonincrementalReason = reason; }
@@ -152,6 +163,8 @@ struct Statistics
 
     ZoneGCStats zoneStats;
 
+    JSGCInvocationKind gckind;
+
     const char *nonincrementalReason;
 
     struct SliceData {
@@ -175,6 +188,13 @@ struct Statistics
     /* Most recent time when the given phase started. */
     int64_t phaseStartTimes[PHASE_LIMIT];
 
+    /* Are we currently timing mutator vs GC time? */
+    bool timingMutator;
+
+    /* Bookkeeping for GC timings when timingMutator is true */
+    int64_t timedGCStart;
+    int64_t timedGCTime;
+
     /* Total time in a given phase for this GC. */
     int64_t phaseTimes[PHASE_LIMIT];
 
@@ -190,19 +210,17 @@ struct Statistics
     /* Records the maximum GC pause in an API-controlled interval (in us). */
     int64_t maxPauseInInterval;
 
-#ifdef DEBUG
     /* Phases that are currently on stack. */
     static const size_t MAX_NESTING = 8;
     Phase phaseNesting[MAX_NESTING];
-#endif
-    mozilla::DebugOnly<size_t> phaseNestingDepth;
+    size_t phaseNestingDepth;
 
     /* Sweep times for SCCs of compartments. */
     Vector<int64_t, 0, SystemAllocPolicy> sccTimes;
 
     JS::GCSliceCallback sliceCallback;
 
-    void beginGC();
+    void beginGC(JSGCInvocationKind kind);
     void endGC();
 
     void gcDuration(int64_t *total, int64_t *maxPause);
@@ -220,12 +238,13 @@ struct Statistics
 
 struct AutoGCSlice
 {
-    AutoGCSlice(Statistics &stats, const ZoneGCStats &zoneStats, JS::gcreason::Reason reason
+    AutoGCSlice(Statistics &stats, const ZoneGCStats &zoneStats, JSGCInvocationKind gckind,
+                JS::gcreason::Reason reason
                 MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : stats(stats)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        stats.beginSlice(zoneStats, reason);
+        stats.beginSlice(zoneStats, gckind, reason);
     }
     ~AutoGCSlice() { stats.endSlice(); }
 
@@ -296,6 +315,7 @@ struct AutoSCC
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
+const char *ExplainInvocationKind(JSGCInvocationKind gckind);
 const char *ExplainReason(JS::gcreason::Reason reason);
 
 } /* namespace gcstats */

@@ -675,7 +675,8 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent)
             MOZ_ASSERT(!mIMEComposing);
             mIMEComposing = true;
             break;
-        case NS_COMPOSITION_END:
+        case NS_COMPOSITION_COMMIT_AS_IS:
+        case NS_COMPOSITION_COMMIT:
             MOZ_ASSERT(mIMEComposing);
             mIMEComposing = false;
             mIMEComposingStart = -1;
@@ -692,7 +693,7 @@ nsWindow::DispatchEvent(WidgetGUIEvent* aEvent)
 }
 
 NS_IMETHODIMP
-nsWindow::MakeFullScreen(bool aFullScreen)
+nsWindow::MakeFullScreen(bool aFullScreen, nsIScreen*)
 {
     mozilla::widget::android::GeckoAppShell::SetFullScreen(aFullScreen);
     return NS_OK;
@@ -929,10 +930,6 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             }
             break;
 
-        case AndroidGeckoEvent::COMPOSITOR_CREATE:
-            win->CreateLayerManager(ae->Width(), ae->Height());
-            break;
-
         case AndroidGeckoEvent::COMPOSITOR_PAUSE:
             // The compositor gets paused when the app is about to go into the
             // background. While the compositor is paused, we need to ensure that
@@ -943,6 +940,10 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             }
             sCompositorPaused = true;
             break;
+
+        case AndroidGeckoEvent::COMPOSITOR_CREATE:
+            win->CreateLayerManager(ae->Width(), ae->Height());
+            // Fallthrough
 
         case AndroidGeckoEvent::COMPOSITOR_RESUME:
             // When we receive this, the compositor has already been told to
@@ -1088,6 +1089,19 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
         isDownEvent = (event.message == NS_TOUCH_START);
     }
 
+    if (isDownEvent && event.touches.Length() == 1) {
+        // Since touch events don't get retargeted by PositionedEventTargeting.cpp
+        // code on Fennec, we dispatch a dummy mouse event that *does* get
+        // retargeted. The Fennec browser.js code can use this to activate the
+        // highlight element in case the this touchstart is the start of a tap.
+        WidgetMouseEvent hittest(true, NS_MOUSE_MOZHITTEST, this, WidgetMouseEvent::eReal);
+        hittest.refPoint = LayoutDeviceIntPoint::FromUntyped(event.touches[0]->mRefPoint);
+        hittest.ignoreRootScrollFrame = true;
+        hittest.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
+        nsEventStatus status;
+        DispatchEvent(&hittest, status);
+    }
+
     // if the last event we got was a down event, then by now we know for sure whether
     // this block has been default-prevented or not. if we haven't already sent the
     // notification for this block, do so now.
@@ -1096,7 +1110,7 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
         // previous block should not be default-prevented
         bool defaultPrevented = isDownEvent ? false : preventDefaultActions;
         if (ae->Type() == AndroidGeckoEvent::APZ_INPUT_EVENT) {
-            mozilla::widget::android::APZCCallbackHandler::GetInstance()->NotifyDefaultPrevented(ae->ApzGuid(), defaultPrevented);
+            mozilla::widget::android::APZCCallbackHandler::GetInstance()->NotifyDefaultPrevented(ae->ApzInputBlockId(), defaultPrevented);
         } else {
             mozilla::widget::android::GeckoAppShell::NotifyDefaultPrevented(defaultPrevented);
         }
@@ -1109,7 +1123,7 @@ bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
     if (isDownEvent) {
         if (preventDefaultActions) {
             if (ae->Type() == AndroidGeckoEvent::APZ_INPUT_EVENT) {
-                mozilla::widget::android::APZCCallbackHandler::GetInstance()->NotifyDefaultPrevented(ae->ApzGuid(), true);
+                mozilla::widget::android::APZCCallbackHandler::GetInstance()->NotifyDefaultPrevented(ae->ApzInputBlockId(), true);
             } else {
                 mozilla::widget::android::GeckoAppShell::NotifyDefaultPrevented(true);
             }
@@ -1705,15 +1719,11 @@ nsWindow::RemoveIMEComposition()
     AutoIMEMask selMask(mIMEMaskSelectionUpdate);
     AutoIMEMask textMask(mIMEMaskTextUpdate);
 
-    WidgetCompositionEvent compositionChangeEvent(true, NS_COMPOSITION_CHANGE,
+    WidgetCompositionEvent compositionCommitEvent(true,
+                                                  NS_COMPOSITION_COMMIT_AS_IS,
                                                   this);
-    InitEvent(compositionChangeEvent, nullptr);
-    compositionChangeEvent.mData = mIMEComposingText;
-    DispatchEvent(&compositionChangeEvent);
-
-    WidgetCompositionEvent compEndEvent(true, NS_COMPOSITION_END, this);
-    InitEvent(compEndEvent, nullptr);
-    DispatchEvent(&compEndEvent);
+    InitEvent(compositionCommitEvent, nullptr);
+    DispatchEvent(&compositionCommitEvent);
 }
 
 void
@@ -1865,10 +1875,11 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
             // Don't end composition when composing text.
             if (ae->Action() != AndroidGeckoEvent::IME_COMPOSE_TEXT)
             {
-                WidgetCompositionEvent event(true, NS_COMPOSITION_END, this);
-                InitEvent(event, nullptr);
-                event.mData = ae->Characters();
-                DispatchEvent(&event);
+                WidgetCompositionEvent compositionCommitEvent(
+                                           true, NS_COMPOSITION_COMMIT, this);
+                InitEvent(compositionCommitEvent, nullptr);
+                compositionCommitEvent.mData = ae->Characters();
+                DispatchEvent(&compositionCommitEvent);
             }
 
             FlushIMEChanges();
@@ -2070,15 +2081,12 @@ nsWindow::NotifyIME(const IMENotification& aIMENotification)
             if (mIMEComposing) {
                 nsRefPtr<nsWindow> kungFuDeathGrip(this);
 
-                WidgetCompositionEvent compositionChangeEvent(
-                                         true, NS_COMPOSITION_CHANGE, this);
-                InitEvent(compositionChangeEvent, nullptr);
-                DispatchEvent(&compositionChangeEvent);
-
-                WidgetCompositionEvent compositionEndEvent(
-                                         true, NS_COMPOSITION_END, this);
-                InitEvent(compositionEndEvent, nullptr);
-                DispatchEvent(&compositionEndEvent);
+                WidgetCompositionEvent compositionCommitEvent(
+                                         true, NS_COMPOSITION_COMMIT, this);
+                InitEvent(compositionCommitEvent, nullptr);
+                // Dispatch it with empty mData value for canceling the
+                // composition
+                DispatchEvent(&compositionCommitEvent);
             }
 
             mozilla::widget::android::GeckoAppShell::NotifyIME(REQUEST_TO_CANCEL_COMPOSITION);
@@ -2356,7 +2364,9 @@ nsWindow::DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect)
         return;
     }
 
-    gl::GLContext* gl = static_cast<CompositorOGL*>(aManager->GetCompositor())->gl();
+    CompositorOGL *compositor = static_cast<CompositorOGL*>(aManager->GetCompositor());
+    compositor->ResetProgram();
+    gl::GLContext* gl = compositor->gl();
     bool scissorEnabled = gl->fIsEnabled(LOCAL_GL_SCISSOR_TEST);
     GLint scissorRect[4];
     gl->fGetIntegerv(LOCAL_GL_SCISSOR_BOX, scissorRect);
@@ -2385,7 +2395,9 @@ nsWindow::DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect)
 
     mozilla::widget::android::GeckoLayerClient* client = AndroidBridge::Bridge()->GetLayerClient();
 
-    gl::GLContext* gl = static_cast<CompositorOGL*>(aManager->GetCompositor())->gl();
+    CompositorOGL *compositor = static_cast<CompositorOGL*>(aManager->GetCompositor());
+    compositor->ResetProgram();
+    gl::GLContext* gl = compositor->gl();
     bool scissorEnabled = gl->fIsEnabled(LOCAL_GL_SCISSOR_TEST);
     GLint scissorRect[4];
     gl->fGetIntegerv(LOCAL_GL_SCISSOR_BOX, scissorRect);

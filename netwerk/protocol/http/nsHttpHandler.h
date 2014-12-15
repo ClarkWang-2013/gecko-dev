@@ -96,7 +96,6 @@ public:
     bool           AllowExperiments() { return mTelemetryEnabled && mAllowExperiments; }
 
     bool           IsSpdyEnabled() { return mEnableSpdy; }
-    bool           IsSpdyV3Enabled() { return mSpdyV3; }
     bool           IsSpdyV31Enabled() { return mSpdyV31; }
     bool           IsHttp2DraftEnabled() { return mHttp2DraftEnabled; }
     bool           IsHttp2Enabled() { return mHttp2DraftEnabled && mHttp2Enabled; }
@@ -149,6 +148,9 @@ public:
     int32_t GetTCPKeepaliveLongLivedIdleTime() {
       return mTCPKeepaliveLongLivedIdleTimeS;
     }
+
+    // returns the network.http.enforce-framing.http1 preference
+    bool GetEnforceH1Framing() { return mEnforceH1Framing; }
 
     nsHttpAuthCache     *AuthCache(bool aPrivate) {
         return aPrivate ? &mPrivateAuthCache : &mAuthCache;
@@ -465,7 +467,6 @@ private:
     uint32_t           mHandlerActive : 1;
 
     uint32_t           mEnableSpdy : 1;
-    uint32_t           mSpdyV3 : 1;
     uint32_t           mSpdyV31 : 1;
     uint32_t           mHttp2DraftEnabled : 1;
     uint32_t           mHttp2Enabled : 1;
@@ -521,6 +522,10 @@ private:
     bool mTCPKeepaliveLongLivedEnabled;
     // Time (secs) before first keepalive probe; between successful probes.
     int32_t mTCPKeepaliveLongLivedIdleTimeS;
+
+    // if true, generate NS_ERROR_PARTIAL_TRANSFER for h1 responses with
+    // incorrect content lengths or malformed chunked encodings
+    bool mEnforceH1Framing;
 
 private:
     // For Rate Pacing Certain Network Events. Only assign this pointer on

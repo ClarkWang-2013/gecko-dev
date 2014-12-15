@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsWSRunObject.h"
+
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
 #include "mozilla/mozalloc.h"
@@ -24,7 +26,6 @@
 #include "nsString.h"
 #include "nsTextEditUtils.h"
 #include "nsTextFragment.h"
-#include "nsWSRunObject.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -382,11 +383,8 @@ nsWSRunObject::InsertText(const nsAString& aStringToInsert,
   }
 
   // Ready, aim, fire!
-  nsCOMPtr<nsIDOMNode> parent(GetAsDOMNode(*aInOutParent));
-  nsCOMPtr<nsIDOMDocument> doc(do_QueryInterface(aDoc));
-  res = mHTMLEditor->InsertTextImpl(theString, address_of(parent),
-                                    aInOutOffset, doc);
-  *aInOutParent = do_QueryInterface(parent);
+  res = mHTMLEditor->InsertTextImpl(theString, aInOutParent, aInOutOffset,
+                                    aDoc);
   return NS_OK;
 }
 

@@ -62,9 +62,9 @@ function submit() {
   // Initiate the connection
   let transport;
   try {
-    transport = debuggerSocketConnect(host, port);
+    transport = DebuggerClient.socketConnect(host, port);
   } catch(e) {
-    // Bug 921850: catch rare exception from debuggerSocketConnect
+    // Bug 921850: catch rare exception from DebuggerClient.socketConnect
     showError("unexpected");
     return;
   }
@@ -154,7 +154,7 @@ let onConnectionReady = Task.async(function*(aType, aTraits) {
 function buildAddonLink(addon, parent) {
   let a = document.createElement("a");
   a.onclick = function() {
-    openToolbox({ addonActor: addon.actor, title: addon.name }, true, "jsdebugger");
+    openToolbox(addon, true, "jsdebugger");
   }
 
   a.textContent = addon.name;

@@ -74,6 +74,16 @@ const FMM_MESSAGES = [
   "SessionStore:reloadPendingTab",
 ];
 
+// The list of messages we accept from <xul:browser>s that have no tab
+// assigned. Those are for example the ones that preload about:newtab pages.
+const FMM_NOTAB_MESSAGES = new Set([
+  // For a description see above.
+  "SessionStore:setupSyncHandler",
+
+  // For a description see above.
+  "SessionStore:update",
+]);
+
 // Messages that will be received via the Parent Process Message Manager.
 const PPMM_MESSAGES = [
   // A tab is being revived from the crashed state. The sender of this
@@ -190,6 +200,16 @@ this.SessionStore = {
 
   setTabState: function ss_setTabState(aTab, aState) {
     SessionStoreInternal.setTabState(aTab, aState);
+  },
+
+  // This should not be used by external code, the intention is to remove it
+  // once a better fix is in place for process switching in e10s.
+  // See bug 1075658 for context.
+  _restoreTabAndLoad: function ss_restoreTabAndLoad(aTab, aState, aLoadArguments) {
+    SessionStoreInternal.setTabState(aTab, aState, {
+      restoreImmediately: true,
+      loadArguments: aLoadArguments
+    });
   },
 
   duplicateTab: function ss_duplicateTab(aWindow, aTab, aDelta = 0) {
@@ -523,6 +543,9 @@ let SessionStoreInternal = {
       throw new Error("SessionStore is not initialized.");
     }
 
+    // Prepare to close the session file and write the last state.
+    RunState.setClosing();
+
     // save all data for session resuming
     if (this._sessionInitialized) {
       SessionSaver.run();
@@ -591,10 +614,13 @@ let SessionStoreInternal = {
     // manager message, so the target will be a <xul:browser>.
     var browser = aMessage.target;
     var win = browser.ownerDocument.defaultView;
-    let tab = this._getTabForBrowser(browser);
-    if (!tab) {
-      // Ignore messages from <browser> elements that are not tabs.
-      return;
+    let tab = win.gBrowser.getTabForBrowser(browser);
+
+    // Ensure we receive only specific messages from <xul:browser>s that
+    // have no tab assigned, e.g. the ones that preload aobut:newtab pages.
+    if (!tab && !FMM_NOTAB_MESSAGES.has(aMessage.name)) {
+      throw new Error(`received unexpected message '${aMessage.name}' ` +
+                      `from a browser that has no tab`);
     }
 
     switch (aMessage.name) {
@@ -691,7 +717,7 @@ let SessionStoreInternal = {
         }
         break;
       default:
-        debug(`received unknown message '${aMessage.name}'`);
+        throw new Error(`received unknown message '${aMessage.name}'`);
         break;
     }
   },
@@ -1569,7 +1595,7 @@ let SessionStoreInternal = {
     return this._toJSONString(tabState);
   },
 
-  setTabState: function ssi_setTabState(aTab, aState) {
+  setTabState: function ssi_setTabState(aTab, aState, aOptions) {
     // Remove the tab state from the cache.
     // Note that we cannot simply replace the contents of the cache
     // as |aState| can be an incomplete state that will be completed
@@ -1594,7 +1620,7 @@ let SessionStoreInternal = {
       this._resetTabRestoringState(aTab);
     }
 
-    this.restoreTab(aTab, tabState);
+    this.restoreTab(aTab, tabState, aOptions);
   },
 
   duplicateTab: function ssi_duplicateTab(aWindow, aTab, aDelta = 0) {
@@ -1620,7 +1646,9 @@ let SessionStoreInternal = {
       aWindow.gBrowser.addTab(null, {relatedToCurrent: true, ownerTab: aTab}) :
       aWindow.gBrowser.addTab();
 
-    this.restoreTab(newTab, tabState, true /* Load this tab right away. */);
+    this.restoreTab(newTab, tabState, {
+      restoreImmediately: true /* Load this tab right away. */
+    });
     return newTab;
   },
 
@@ -2524,7 +2552,9 @@ let SessionStoreInternal = {
   },
 
   // Restores the given tab state for a given tab.
-  restoreTab(tab, tabData, restoreImmediately = false) {
+  restoreTab(tab, tabData, options = {}) {
+    let restoreImmediately = options.restoreImmediately;
+    let loadArguments = options.loadArguments;
     let browser = tab.linkedBrowser;
     let window = tab.ownerDocument.defaultView;
     let tabbrowser = window.gBrowser;
@@ -2592,6 +2622,9 @@ let SessionStoreInternal = {
     // attribute so that it runs in a content process.
     let activePageData = tabData.entries[activeIndex] || null;
     let uri = activePageData ? activePageData.url || null : null;
+    if (loadArguments) {
+      uri = loadArguments.uri;
+    }
     tabbrowser.updateBrowserRemotenessByURL(browser, uri);
 
     // Start a new epoch and include the epoch in the restoreHistory
@@ -2627,8 +2660,8 @@ let SessionStoreInternal = {
 
     // This could cause us to ignore MAX_CONCURRENT_TAB_RESTORES a bit, but
     // it ensures each window will have its selected tab loaded.
-    if (restoreImmediately || tabbrowser.selectedBrowser == browser) {
-      this.restoreTabContent(tab);
+    if (restoreImmediately || tabbrowser.selectedBrowser == browser || loadArguments) {
+      this.restoreTabContent(tab, loadArguments);
     } else {
       TabRestoreQueue.add(tab);
       this.restoreNextTab();
@@ -2655,7 +2688,7 @@ let SessionStoreInternal = {
    *
    * @returns true/false indicating whether or not a load actually happened
    */
-  restoreTabContent: function (aTab) {
+  restoreTabContent: function (aTab, aLoadArguments = null) {
     let window = aTab.ownerDocument.defaultView;
     let browser = aTab.linkedBrowser;
     let tabData = browser.__SS_data;
@@ -2684,7 +2717,8 @@ let SessionStoreInternal = {
 
     browser.__SS_restore_tab = aTab;
 
-    browser.messageManager.sendAsyncMessage("SessionStore:restoreTabContent");
+    browser.messageManager.sendAsyncMessage("SessionStore:restoreTabContent",
+      {loadArguments: aLoadArguments});
   },
 
   /**
@@ -2966,24 +3000,6 @@ let SessionStoreInternal = {
     this._statesToRestore[(window.__SS_restoreID = ID)] = aState;
 
     return window;
-  },
-
-  /**
-   * Gets the tab for the given browser. This should be marginally better
-   * than using tabbrowser's getTabForContentWindow. This assumes the browser
-   * is the linkedBrowser of a tab, not a dangling browser.
-   *
-   * @param aBrowser
-   *        The browser from which to get the tab.
-   */
-  _getTabForBrowser: function ssi_getTabForBrowser(aBrowser) {
-    let window = aBrowser.ownerDocument.defaultView;
-    for (let i = 0; i < window.gBrowser.tabs.length; i++) {
-      let tab = window.gBrowser.tabs[i];
-      if (tab.linkedBrowser == aBrowser)
-        return tab;
-    }
-    return undefined;
   },
 
   /**

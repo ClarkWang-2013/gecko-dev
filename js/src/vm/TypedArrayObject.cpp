@@ -125,13 +125,25 @@ TypedArrayObject::ensureHasBuffer(JSContext *cx, Handle<TypedArrayObject *> tarr
 }
 
 /* static */ void
-TypedArrayObject::ObjectMoved(JSObject *dstArg, const JSObject *srcArg)
+TypedArrayObject::trace(JSTracer *trc, JSObject *objArg)
 {
-    const TypedArrayObject &src = srcArg->as<TypedArrayObject>();
-    TypedArrayObject &dst = dstArg->as<TypedArrayObject>();
-    if (!src.hasBuffer()) {
-        MOZ_ASSERT(src.getPrivate() == src.fixedData(FIXED_DATA_START));
-        dst.setPrivate(dst.fixedData(FIXED_DATA_START));
+    // Handle all tracing required when the object has a buffer.
+    ArrayBufferViewObject::trace(trc, objArg);
+
+    // If the typed array doesn't have a buffer, it must have a lazy buffer and
+    // its data pointer must point to its inline data. Watch for cases where
+    // the GC moved this object and fix up its data pointer.
+    TypedArrayObject &obj = objArg->as<TypedArrayObject>();
+    if (!obj.hasBuffer() && obj.getPrivate() != obj.fixedData(FIXED_DATA_START)) {
+        void *oldData = obj.getPrivate();
+        void *newData = obj.fixedData(FIXED_DATA_START);
+
+        obj.setPrivateUnbarriered(newData);
+
+        // If this is a minor GC, set a forwarding pointer for the array data.
+        // This can always be done inline, as AllocKindForLazyBuffer ensures
+        // there is at least a pointer's worth of inline data.
+        trc->runtime()->gc.nursery.maybeSetForwardingPointer(trc, oldData, newData, true);
     }
 }
 
@@ -308,13 +320,18 @@ class TypedArrayObjectTemplate : public TypedArrayObject
     makeTypedInstance(JSContext *cx, uint32_t len, gc::AllocKind allocKind)
     {
         const Class *clasp = instanceClass();
-        bool largeAllocation = len * sizeof(NativeType) >= TypedArrayObject::SINGLETON_TYPE_BYTE_LENGTH;
+        if (len * sizeof(NativeType) >= TypedArrayObject::SINGLETON_TYPE_BYTE_LENGTH) {
+            JSObject *obj = NewBuiltinClassInstance(cx, clasp, allocKind, SingletonObject);
+            if (!obj)
+                return nullptr;
+            return &obj->as<TypedArrayObject>();
+        }
 
         jsbytecode *pc;
         RootedScript script(cx, cx->currentScript(&pc));
         NewObjectKind newKind = script
                                 ? UseNewTypeForInitializer(script, pc, clasp)
-                                : (largeAllocation ? SingletonObject : GenericObject);
+                                : GenericObject;
         RootedObject obj(cx, NewBuiltinClassInstance(cx, clasp, allocKind, newKind));
         if (!obj)
             return nullptr;
@@ -349,6 +366,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject
 
         if (buffer) {
             obj->initPrivate(buffer->dataPointer() + byteOffset);
+
+            // If the buffer is for an inline typed object, the data pointer
+            // may be in the nursery, so include a barrier to make sure this
+            // object is updated if that typed object moves.
+            if (!IsInsideNursery(obj) && cx->runtime()->gc.nursery.isInside(buffer->dataPointer()))
+                cx->runtime()->gc.storeBuffer.putWholeCellFromMainThread(obj);
         } else {
             void *data = obj->fixedData(FIXED_DATA_START);
             obj->initPrivate(data);
@@ -398,6 +421,10 @@ class TypedArrayObjectTemplate : public TypedArrayObject
     class_constructor(JSContext *cx, unsigned argc, Value *vp)
     {
         CallArgs args = CallArgsFromVp(argc, vp);
+
+        if (!WarnIfNotConstructing(cx, args, "typed array"))
+            return false;
+
         JSObject *obj = create(cx, args);
         if (!obj)
             return false;
@@ -572,9 +599,8 @@ class TypedArrayObjectTemplate : public TypedArrayObject
     static bool
     maybeCreateArrayBuffer(JSContext *cx, uint32_t nelements, MutableHandle<ArrayBufferObject *> buffer)
     {
-        // Make sure that array elements evenly divide into the inline buffer's
-        // size, for the test below.
-        JS_STATIC_ASSERT((INLINE_BUFFER_LIMIT / sizeof(NativeType)) * sizeof(NativeType) == INLINE_BUFFER_LIMIT);
+        static_assert(INLINE_BUFFER_LIMIT % sizeof(NativeType) == 0,
+                      "ArrayBuffer inline storage shouldn't waste any space");
 
         if (nelements <= INLINE_BUFFER_LIMIT / sizeof(NativeType)) {
             // The array's data can be inline, and the buffer created lazily.
@@ -587,8 +613,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject
             return false;
         }
 
-        buffer.set(ArrayBufferObject::create(cx, nelements * sizeof(NativeType)));
-        return !!buffer;
+        ArrayBufferObject *buf = ArrayBufferObject::create(cx, nelements * sizeof(NativeType));
+        if (!buf)
+            return false;
+
+        buffer.set(buf);
+        return true;
     }
 
     static JSObject *
@@ -751,7 +781,7 @@ TypedArrayObject::subarray(JSContext *cx, unsigned argc, Value *vp)
 
 /* static */ const JSFunctionSpec
 TypedArrayObject::protoFunctions[] = {
-    JS_SELF_HOSTED_FN("@@iterator", "ArrayValues", 0, 0),
+    JS_SELF_HOSTED_SYM_FN(iterator, "ArrayValues", 0, 0),                          \
     JS_FN("subarray", TypedArrayObject::subarray, 2, 0),
     JS_FN("set", TypedArrayObject::set, 2, 0),
     JS_FN("copyWithin", TypedArrayObject::copyWithin, 2, 0),
@@ -835,7 +865,9 @@ template<typename NativeType>
 Value
 TypedArrayObjectTemplate<NativeType>::getIndexValue(JSObject *tarray, uint32_t index)
 {
-    JS_STATIC_ASSERT(sizeof(NativeType) < 4);
+    static_assert(sizeof(NativeType) < 4,
+                  "this method must only handle NativeType values that are "
+                  "always exact int32_t values");
 
     return Int32Value(getIndex(tarray, index));
 }
@@ -952,6 +984,11 @@ DataViewObject::create(JSContext *cx, uint32_t byteOffset, uint32_t byteLength,
     dvobj.setFixedSlot(TypedArrayLayout::BUFFER_SLOT, ObjectValue(*arrayBuffer));
     dvobj.initPrivate(arrayBuffer->dataPointer() + byteOffset);
     MOZ_ASSERT(byteOffset + byteLength <= arrayBuffer->byteLength());
+
+    // Include a barrier if the data view's data pointer is in the nursery, as
+    // is done for typed arrays.
+    if (!IsInsideNursery(obj) && cx->runtime()->gc.nursery.isInside(arrayBuffer->dataPointer()))
+        cx->runtime()->gc.storeBuffer.putWholeCellFromMainThread(obj);
 
     // Verify that the private slot is at the expected place
     MOZ_ASSERT(dvobj.numFixedSlots() == TypedArrayLayout::DATA_SLOT);
@@ -1733,16 +1770,8 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     nullptr,                 /* call        */                                 \
     nullptr,                 /* hasInstance */                                 \
     nullptr,                 /* construct   */                                 \
-    ArrayBufferViewObject::trace, /* trace  */                                 \
-    TYPED_ARRAY_CLASS_SPEC(_typedArray),                                       \
-    {                                                                          \
-        nullptr,             /* outerObject */                                 \
-        nullptr,             /* innerObject */                                 \
-        nullptr,             /* iteratorObject */                              \
-        false,               /* isWrappedNative */                             \
-        nullptr,             /* weakmapKeyDelegateOp */                        \
-        TypedArrayObject::ObjectMoved                                          \
-    }                                                                          \
+    TypedArrayObject::trace, /* trace  */                                      \
+    TYPED_ARRAY_CLASS_SPEC(_typedArray)                                        \
 }
 
 const Class TypedArrayObject::classes[Scalar::TypeMax] = {

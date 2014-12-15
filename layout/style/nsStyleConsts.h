@@ -79,7 +79,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_BASIC_SHAPE_POLYGON       0
 #define NS_STYLE_BASIC_SHAPE_CIRCLE        1
 #define NS_STYLE_BASIC_SHAPE_ELLIPSE       2
-//#define NS_STYLE_BASIC_SHAPE_INSET       3
+#define NS_STYLE_BASIC_SHAPE_INSET         3
 
 // box-shadow
 #define NS_STYLE_BOX_SHADOW_INSET         0
@@ -399,7 +399,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 // See nsStyleVisibility
 #define NS_STYLE_DIRECTION_LTR                  0
 #define NS_STYLE_DIRECTION_RTL                  1
-#define NS_STYLE_DIRECTION_INHERIT              2
 
 // See nsStyleVisibility
 #define NS_STYLE_WRITING_MODE_HORIZONTAL_TB     0
@@ -444,6 +443,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DISPLAY_RUBY_BASE_CONTAINER    35
 #define NS_STYLE_DISPLAY_RUBY_TEXT              36
 #define NS_STYLE_DISPLAY_RUBY_TEXT_CONTAINER    37
+#define NS_STYLE_DISPLAY_CONTENTS               38
 
 // See nsStylePosition
 #define NS_STYLE_ALIGN_CONTENT_FLEX_START       0
@@ -621,12 +621,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_WIDTH_MIN_CONTENT              1
 #define NS_STYLE_WIDTH_FIT_CONTENT              2
 #define NS_STYLE_WIDTH_AVAILABLE                3
-// NOTE: The "main-size" keyword here is really for the "flex-basis" property,
-// not for width / min-width / max-width.  I'm listing it here with the "width"
-// keywords' enumerated values, because we need to make sure it doesn't collide
-// with any "width" enumerated values (because "flex-basis" accepts all valid
-// "width" keywords, in addition to accepting "main-size").
-#define NS_STYLE_FLEX_BASIS_MAIN_SIZE           4
 
 // See nsStyleDisplay.mPosition
 #define NS_STYLE_POSITION_STATIC                0
@@ -883,7 +877,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 
 #define NS_STYLE_TABLE_EMPTY_CELLS_HIDE            0
 #define NS_STYLE_TABLE_EMPTY_CELLS_SHOW            1
-#define NS_STYLE_TABLE_EMPTY_CELLS_SHOW_BACKGROUND 2
 
 #define NS_STYLE_CAPTION_SIDE_TOP               0
 #define NS_STYLE_CAPTION_SIDE_RIGHT             1
@@ -1071,8 +1064,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 
 // See nsStyleDisplay::mScrollBehavior
 #define NS_STYLE_SCROLL_BEHAVIOR_AUTO       0
-#define NS_STYLE_SCROLL_BEHAVIOR_INSTANT    1
-#define NS_STYLE_SCROLL_BEHAVIOR_SMOOTH     2
+#define NS_STYLE_SCROLL_BEHAVIOR_SMOOTH     1
 
 /*****************************************************************************
  * Constants for media features.                                             *

@@ -303,7 +303,9 @@ class LifoAlloc
 
     template <typename T>
     T *newArray(size_t count) {
-        JS_STATIC_ASSERT(mozilla::IsPod<T>::value);
+        static_assert(mozilla::IsPod<T>::value,
+                      "T must be POD so that constructors (and destructors, "
+                      "when the LifoAlloc is freed) need not be called");
         return newArrayUninitialized<T>(count);
     }
 
@@ -378,6 +380,14 @@ class LifoAlloc
         size_t n = 0;
         for (BumpChunk *chunk = first; chunk; chunk = chunk->next())
             n += chunk->sizeOfIncludingThis(mallocSizeOf);
+        return n;
+    }
+
+    // Get the total size of the arena chunks (including unused space).
+    size_t computedSizeOfExcludingThis() const {
+        size_t n = 0;
+        for (BumpChunk *chunk = first; chunk; chunk = chunk->next())
+            n += chunk->computedSizeOfIncludingThis();
         return n;
     }
 

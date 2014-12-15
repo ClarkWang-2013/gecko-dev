@@ -69,7 +69,7 @@ MResumePoint::writeRecoverData(CompactBufferWriter &writer) const
 #ifdef DEBUG
     // Ensure that all snapshot which are encoded can safely be used for
     // bailouts.
-    if (GetIonContext()->cx) {
+    if (GetJitContext()->cx) {
         uint32_t stackDepth;
         bool reachablePC;
         jsbytecode *bailPC = pc();
@@ -77,7 +77,7 @@ MResumePoint::writeRecoverData(CompactBufferWriter &writer) const
         if (mode() == MResumePoint::ResumeAfter)
             bailPC = GetNextPc(pc());
 
-        if (!ReconstructStackDepth(GetIonContext()->cx, script,
+        if (!ReconstructStackDepth(GetJitContext()->cx, script,
                                    bailPC, &stackDepth, &reachablePC))
         {
             return false;
@@ -845,6 +845,38 @@ RAtan2::recover(JSContext *cx, SnapshotIterator &iter) const
 }
 
 bool
+MHypot::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_Hypot));
+    return true;
+}
+
+RHypot::RHypot(CompactBufferReader &reader)
+{ }
+
+bool
+RHypot::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    JS::AutoValueVector vec(cx);
+
+    // currently, only 2 args can be saved in MIR
+    if (!vec.reserve(2))
+        return false;
+
+    vec.infallibleAppend(iter.read());
+    vec.infallibleAppend(iter.read());
+
+    RootedValue result(cx);
+
+    if(!js::math_hypot_handle(cx, vec, &result))
+        return false;
+
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
 MMathFunction::writeRecoverData(CompactBufferWriter &writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
@@ -852,6 +884,34 @@ MMathFunction::writeRecoverData(CompactBufferWriter &writer) const
       case Round:
         writer.writeUnsigned(uint32_t(RInstruction::Recover_Round));
         return true;
+      case Sin:
+        writer.writeUnsigned(uint32_t(RInstruction::Recover_MathFunction));
+        writer.writeByte(function_);
+        return true;
+      default:
+        MOZ_CRASH("Unknown math function.");
+    }
+}
+
+RMathFunction::RMathFunction(CompactBufferReader &reader)
+{
+    function_ = reader.readByte();
+}
+
+bool
+RMathFunction::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    switch (function_) {
+      case MMathFunction::Sin: {
+        RootedValue arg(cx, iter.read());
+        RootedValue result(cx);
+
+        if (!js::math_sin_handle(cx, arg, &result))
+            return false;
+
+        iter.storeInstructionResult(result);
+        return true;
+      }
       default:
         MOZ_CRASH("Unknown math function.");
     }
@@ -983,6 +1043,27 @@ RTypeOf::recover(JSContext *cx, SnapshotIterator &iter) const
 }
 
 bool
+MToDouble::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_ToDouble));
+    return true;
+}
+
+RToDouble::RToDouble(CompactBufferReader &reader)
+{ }
+
+bool
+RToDouble::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    Value v = iter.read();
+
+    MOZ_ASSERT(!v.isObject());
+    iter.storeInstructionResult(v);
+    return true;
+}
+
+bool
 MToFloat32::writeRecoverData(CompactBufferWriter &writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
@@ -1092,7 +1173,7 @@ RNewDerivedTypedObject::RNewDerivedTypedObject(CompactBufferReader &reader)
 bool
 RNewDerivedTypedObject::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    Rooted<SizedTypeDescr *> descr(cx, &iter.read().toObject().as<SizedTypeDescr>());
+    Rooted<TypeDescr *> descr(cx, &iter.read().toObject().as<TypeDescr>());
     Rooted<TypedObject *> owner(cx, &iter.read().toObject().as<TypedObject>());
     int32_t offset = iter.read().toInt32();
 
@@ -1202,6 +1283,31 @@ RArrayState::recover(JSContext *cx, SnapshotIterator &iter) const
     }
 
     result.setObject(*object);
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
+MStringReplace::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_StringReplace));
+    return true;
+}
+
+RStringReplace::RStringReplace(CompactBufferReader &reader)
+{ }
+
+bool RStringReplace::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedString string(cx, iter.read().toString());
+    RootedString pattern(cx, iter.read().toString());
+    RootedString replace(cx, iter.read().toString());
+    RootedValue result(cx);
+
+    if (!js::str_replace_string_raw(cx, string, pattern, replace, &result))
+        return false;
+
     iter.storeInstructionResult(result);
     return true;
 }

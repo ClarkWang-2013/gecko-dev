@@ -5,7 +5,6 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 Cu.import('resource://gre/modules/ContactService.jsm');
-Cu.import('resource://gre/modules/SettingsRequestManager.jsm');
 Cu.import('resource://gre/modules/DataStoreChangeNotifier.jsm');
 Cu.import('resource://gre/modules/AlarmService.jsm');
 Cu.import('resource://gre/modules/ActivitiesService.jsm');
@@ -322,7 +321,6 @@ var shell = {
     // if they did, they would use keycodes that conform to DOM 3 Events.
     // See discussion in https://bugzilla.mozilla.org/show_bug.cgi?id=762362
     chromeEventHandler.addEventListener('keydown', this, true);
-    chromeEventHandler.addEventListener('keypress', this, true);
     chromeEventHandler.addEventListener('keyup', this, true);
 
     window.addEventListener('MozApplicationManifest', this);
@@ -331,7 +329,7 @@ var shell = {
     window.addEventListener('sizemodechange', this);
     window.addEventListener('unload', this);
     this.contentBrowser.addEventListener('mozbrowserloadstart', this, true);
-    this.contentBrowser.addEventListener('mozbrowserselectionchange', this, true);
+    this.contentBrowser.addEventListener('mozbrowserselectionstatechanged', this, true);
     this.contentBrowser.addEventListener('mozbrowserscrollviewchange', this, true);
     this.contentBrowser.addEventListener('mozbrowsertouchcarettap', this, true);
 
@@ -354,13 +352,12 @@ var shell = {
   stop: function shell_stop() {
     window.removeEventListener('unload', this);
     window.removeEventListener('keydown', this, true);
-    window.removeEventListener('keypress', this, true);
     window.removeEventListener('keyup', this, true);
     window.removeEventListener('MozApplicationManifest', this);
     window.removeEventListener('mozfullscreenchange', this);
     window.removeEventListener('sizemodechange', this);
     this.contentBrowser.removeEventListener('mozbrowserloadstart', this, true);
-    this.contentBrowser.removeEventListener('mozbrowserselectionchange', this, true);
+    this.contentBrowser.removeEventListener('mozbrowserselectionstatechanged', this, true);
     this.contentBrowser.removeEventListener('mozbrowserscrollviewchange', this, true);
     this.contentBrowser.removeEventListener('mozbrowsertouchcarettap', this, true);
     ppmm.removeMessageListener("content-handler", this);
@@ -369,9 +366,10 @@ var shell = {
     IndexedDBPromptHelper.uninit();
   },
 
-  // If this key event actually represents a hardware button, filter it here
-  // and send a mozChromeEvent with detail.type set to xxx-button-press or
-  // xxx-button-release instead.
+  // If this key event actually represents a hardware button, send a
+  // mozChromeEvent with detail.type set to 'xxx-button-press' or
+  // 'xxx-button-release' instead. Note that no more mozChromeEvent for hardware
+  // buttons needed after Bug 1014418 is landed.
   filterHardwareKeys: function shell_filterHardwareKeys(evt) {
     var type;
     switch (evt.keyCode) {
@@ -382,10 +380,10 @@ var shell = {
       case evt.DOM_VK_END:          // On desktop we don't have a sleep button
         type = 'sleep-button';
         break;
-      case evt.DOM_VK_PAGE_UP:      // Volume up button
+      case evt.DOM_VK_VOLUME_UP:      // Volume up button
         type = 'volume-up-button';
         break;
-      case evt.DOM_VK_PAGE_DOWN:    // Volume down button
+      case evt.DOM_VK_VOLUME_DOWN:    // Volume down button
         type = 'volume-down-button';
         break;
       case evt.DOM_VK_ESCAPE:       // Back button (should be disabled)
@@ -416,17 +414,11 @@ var shell = {
       type = mediaKeys[evt.key];
     }
 
+    // The key doesn't represent a hardware button, so no mozChromeEvent.
     if (!type) {
       return;
     }
 
-    // If we didn't return, then the key event represents a hardware key
-    // and we need to prevent it from propagating to Gaia
-    evt.stopImmediatePropagation();
-    evt.preventDefault(); // Prevent keypress events (when #501496 is fixed).
-
-    // If it is a key down or key up event, we send a chrome event to Gaia.
-    // If it is a keypress event we just ignore it.
     switch (evt.type) {
       case 'keydown':
         type = type + '-press';
@@ -434,8 +426,6 @@ var shell = {
       case 'keyup':
         type = type + '-release';
         break;
-      case 'keypress':
-        return;
     }
 
     // Let applications receive the headset button key press/release event.
@@ -472,7 +462,6 @@ var shell = {
     switch (evt.type) {
       case 'keydown':
       case 'keyup':
-      case 'keypress':
         this.filterHardwareKeys(evt);
         break;
       case 'mozfullscreenchange':
@@ -516,8 +505,8 @@ var shell = {
           detail: evt.detail,
         });
         break;
-      case 'mozbrowserselectionchange':
-        // The mozbrowserselectionchange event, may have crossed the chrome-content boundary.
+      case 'mozbrowserselectionstatechanged':
+        // The mozbrowserselectionstatechanged event, may have crossed the chrome-content boundary.
         // This event always dispatch to shell.js. But the offset we got from this event is
         // based on tab's coordinate. So get the actual offsets between shell and evt.target.
         let elt = evt.target;
@@ -535,7 +524,7 @@ var shell = {
 
         DoCommandHelper.setEvent(evt);
         shell.sendChromeEvent({
-          type: 'selectionchange',
+          type: 'selectionstatechanged',
           detail: data,
         });
         break;

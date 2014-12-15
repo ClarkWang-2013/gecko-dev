@@ -154,15 +154,17 @@ GetValueType(const Value &val)
     return Type::PrimitiveType(val.extractNonDoubleType());
 }
 
+inline bool
+IsUntrackedValue(const Value &val)
+{
+    return val.isMagic() && (val.whyMagic() == JS_OPTIMIZED_OUT ||
+                             val.whyMagic() == JS_UNINITIALIZED_LEXICAL);
+}
+
 inline Type
 GetMaybeUntrackedValueType(const Value &val)
 {
-    if (val.isMagic() && (val.whyMagic() == JS_OPTIMIZED_OUT ||
-                          val.whyMagic() == JS_UNINITIALIZED_LEXICAL))
-    {
-        return Type::UnknownType();
-    }
-    return GetValueType(val);
+    return IsUntrackedValue(val) ? Type::UnknownType() : GetValueType(val);
 }
 
 inline TypeFlags
@@ -1068,7 +1070,7 @@ TypeSet::hasType(Type type) const
 inline void
 TypeSet::setBaseObjectCount(uint32_t count)
 {
-    MOZ_ASSERT(count <= TYPE_FLAG_OBJECT_COUNT_LIMIT);
+    MOZ_ASSERT(count <= TYPE_FLAG_DOMOBJECT_COUNT_LIMIT);
     flags = (flags & ~TYPE_FLAG_OBJECT_COUNT_MASK)
           | (count << TYPE_FLAG_OBJECT_COUNT_SHIFT);
 }

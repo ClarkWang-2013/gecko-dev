@@ -51,8 +51,6 @@ bool
 ImageLayerComposite::SetCompositableHost(CompositableHost* aHost)
 {
   switch (aHost->GetType()) {
-    case CompositableType::BUFFER_IMAGE_SINGLE:
-    case CompositableType::BUFFER_IMAGE_BUFFERED:
     case CompositableType::IMAGE:
     case CompositableType::IMAGE_OVERLAY:
       mImageHost = aHost;
@@ -121,9 +119,8 @@ ImageLayerComposite::ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransform
   // Snap image edges to pixel boundaries
   gfxRect sourceRect(0, 0, 0, 0);
   if (mImageHost &&
-      mImageHost->IsAttached() &&
-      mImageHost->GetAsTextureHost()) {
-    IntSize size = mImageHost->GetAsTextureHost()->GetSize();
+      mImageHost->IsAttached()) {
+    IntSize size = mImageHost->GetImageSize();
     sourceRect.SizeTo(size.width, size.height);
     if (mScaleMode != ScaleMode::SCALE_NONE &&
         sourceRect.width != 0.0 && sourceRect.height != 0.0) {

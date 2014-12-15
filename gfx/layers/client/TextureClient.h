@@ -37,6 +37,12 @@ class GLContext;
 class SharedSurface;
 }
 
+// When defined, we track which pool the tile came from and test for
+// any inconsistencies.  This can be defined in release build as well.
+#ifdef DEBUG
+#define GFX_DEBUG_TRACK_CLIENTS_IN_POOL 1
+#endif
+
 namespace layers {
 
 class AsyncTransactionTracker;
@@ -51,6 +57,9 @@ class PTextureChild;
 class TextureChild;
 class BufferTextureClient;
 class TextureClient;
+#ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+class TextureClientPool;
+#endif
 class KeepAlive;
 
 /**
@@ -301,17 +310,11 @@ public:
     return (mFlags & aFlags) == aFlags;
   }
 
-  void AddFlags(TextureFlags aFlags)
-  {
-    MOZ_ASSERT(!IsSharedWithCompositor());
-    mFlags |= aFlags;
-  }
+  void AddFlags(TextureFlags aFlags);
 
-  void RemoveFlags(TextureFlags aFlags)
-  {
-    MOZ_ASSERT(!IsSharedWithCompositor());
-    mFlags &= ~aFlags;
-  }
+  void RemoveFlags(TextureFlags aFlags);
+
+  void RecycleTexture(TextureFlags aFlags);
 
   /**
    * valid only for TextureFlags::RECYCLE TextureClient.
@@ -340,6 +343,17 @@ public:
    * to access the shared data.
    */
   bool IsValid() const { return mValid; }
+
+  /**
+   * Called when TextureClient is added to CompositableClient.
+   */
+  void SetAddedToCompositableClient();
+
+  /**
+   * If this method retuns false, TextureClient is already added to CompositableClient,
+   * since its creation or recycling.
+   */
+  bool IsAddedToCompositableClient() const { return mAddedToCompositableClient; }
 
   /**
    * kee the passed object alive until the IPDL actor is destroyed. This can
@@ -461,6 +475,7 @@ protected:
   gl::GfxTextureWasteTracker mWasteTracker;
   bool mShared;
   bool mValid;
+  bool mAddedToCompositableClient;
 
   RefPtr<TextureReadbackSink> mReadbackSink;
 
@@ -468,6 +483,12 @@ protected:
   friend class RemoveTextureFromCompositableTracker;
   friend void TestTextureClientSurface(TextureClient*, gfxImageSurface*);
   friend void TestTextureClientYCbCr(TextureClient*, PlanarYCbCrData&);
+
+#ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+public:
+  // Pointer to the pool this tile came from.
+  TextureClientPool* mPoolTracker;
+#endif
 };
 
 /**

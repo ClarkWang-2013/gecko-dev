@@ -7,8 +7,8 @@
 #ifndef jit_TypePolicy_h
 #define jit_TypePolicy_h
 
-#include "jit/IonAllocPolicy.h"
 #include "jit/IonTypes.h"
+#include "jit/JitAllocPolicy.h"
 
 namespace js {
 namespace jit {
@@ -382,6 +382,13 @@ class StoreTypedArrayElementStaticPolicy : public StoreTypedArrayPolicy
   public:
     EMPTY_DATA_;
     bool adjustInputs(TempAllocator &alloc, MInstruction *ins);
+};
+
+class StoreUnboxedObjectOrNullPolicy : public TypePolicy
+{
+  public:
+    EMPTY_DATA_;
+    bool adjustInputs(TempAllocator &alloc, MInstruction *def);
 };
 
 // Accepts integers and doubles. Everything else is boxed.

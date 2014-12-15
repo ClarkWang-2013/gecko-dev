@@ -54,36 +54,6 @@ using mozilla::PodEqual;
 using mozilla::Compression::LZ4;
 using mozilla::Swap;
 
-// At any time, the executable code of an asm.js module can be protected (as
-// part of RequestInterruptForAsmJSCode). When we touch the executable outside
-// of executing it (which the AsmJSFaultHandler will correctly handle), we need
-// to guard against this by unprotecting the code (if it has been protected) and
-// preventing it from being protected while we are touching it.
-class AutoUnprotectCode
-{
-    JSRuntime *rt_;
-    JSRuntime::AutoLockForInterrupt lock_;
-    const AsmJSModule &module_;
-    const bool protectedBefore_;
-
-  public:
-    AutoUnprotectCode(JSContext *cx, const AsmJSModule &module)
-      : rt_(cx->runtime()),
-        lock_(rt_),
-        module_(module),
-        protectedBefore_(module_.codeIsProtected(rt_))
-    {
-        if (protectedBefore_)
-            module_.unprotectCode(rt_);
-    }
-
-    ~AutoUnprotectCode()
-    {
-        if (protectedBefore_)
-            module_.protectCode(rt_);
-    }
-};
-
 static uint8_t *
 AllocateExecutableMemory(ExclusiveContext *cx, size_t bytes)
 {
@@ -113,8 +83,7 @@ AsmJSModule::AsmJSModule(ScriptSource *scriptSource, uint32_t srcStart, uint32_t
     dynamicallyLinked_(false),
     loadedFromCache_(false),
     profilingEnabled_(false),
-    interrupted_(false),
-    codeIsProtected_(false)
+    interrupted_(false)
 {
     mozilla::PodZero(&pod);
     pod.funcPtrTableAndExitBytes_ = SIZE_MAX;
@@ -136,11 +105,11 @@ AsmJSModule::~AsmJSModule()
     if (code_) {
         for (unsigned i = 0; i < numExits(); i++) {
             AsmJSModule::ExitDatum &exitDatum = exitIndexToGlobalDatum(i);
-            if (!exitDatum.ionScript)
+            if (!exitDatum.baselineScript)
                 continue;
 
             jit::DependentAsmJSModuleExit exit(this, i);
-            exitDatum.ionScript->removeDependentAsmJSModule(exit);
+            exitDatum.baselineScript->removeDependentAsmJSModule(exit);
         }
 
         DeallocateExecutableMemory(code_, pod.totalBytes_, AsmJSPageSize);
@@ -308,7 +277,10 @@ AsmJSModule::finish(ExclusiveContext *cx, TokenStream &tokenStream, MacroAssembl
     MOZ_ASSERT(isFinishedWithFunctionBodies() && !isFinished());
 
     uint32_t endBeforeCurly = tokenStream.currentToken().pos.end;
-    uint32_t endAfterCurly = tokenStream.peekTokenPos().end;
+    TokenPos pos;
+    if (!tokenStream.peekTokenPos(&pos))
+        return false;
+    uint32_t endAfterCurly = pos.end;
     MOZ_ASSERT(endBeforeCurly >= srcBodyStart_);
     MOZ_ASSERT(endAfterCurly >= srcBodyStart_);
     pod.srcLength_ = endBeforeCurly - srcStart_;
@@ -497,7 +469,7 @@ AsmJSHandleExecutionInterrupt()
 {
     AsmJSActivation *act = PerThreadData::innermostAsmJSActivation();
     act->module().setInterrupted(true);
-    bool ret = HandleExecutionInterrupt(act->cx());
+    bool ret = CheckForInterrupt(act->cx());
     act->module().setInterrupted(false);
     return ret;
 }
@@ -529,23 +501,31 @@ CoerceInPlace_ToNumber(MutableHandleValue val)
 }
 
 static bool
-TryEnablingIon(JSContext *cx, AsmJSModule &module, HandleFunction fun, uint32_t exitIndex,
+TryEnablingJit(JSContext *cx, AsmJSModule &module, HandleFunction fun, uint32_t exitIndex,
                int32_t argc, Value *argv)
 {
     if (!fun->hasScript())
         return true;
 
-    // Test if the function is Ion compiled
+    // Test if the function is JIT compiled.
     JSScript *script = fun->nonLazyScript();
-    if (!script->hasIonScript())
+    if (!script->hasBaselineScript()) {
+        MOZ_ASSERT(!script->hasIonScript());
         return true;
+    }
 
     // Currently we can't rectify arguments. Therefore disabling if argc is too low.
     if (fun->nargs() > size_t(argc))
         return true;
 
-    // Normally the types should correspond, since we just ran with those types,
-    // but there are reports this is asserting. Therefore doing it as a check, instead of DEBUG only.
+    // Ensure the argument types are included in the argument TypeSets stored in
+    // the TypeScript. This is necessary for Ion, because the FFI exit will
+    // use the skip-arg-checks entry point.
+    //
+    // Note that the TypeScript is never discarded while the script has a
+    // BaselineScript, so if those checks hold now they must hold at least until
+    // the BaselineScript is discarded and when that happens the FFI exit is
+    // patched back.
     if (!types::TypeScript::ThisTypes(script)->hasType(types::Type::UndefinedType()))
         return true;
     for (uint32_t i = 0; i < fun->nargs(); i++) {
@@ -557,14 +537,15 @@ TryEnablingIon(JSContext *cx, AsmJSModule &module, HandleFunction fun, uint32_t 
             return true;
     }
 
-    // Enable
-    IonScript *ionScript = script->ionScript();
-    if (!ionScript->addDependentAsmJSModule(cx, DependentAsmJSModuleExit(&module, exitIndex)))
+    // The exit may have become optimized while executing the FFI.
+    if (module.exitIsOptimized(exitIndex))
+        return true;
+
+    BaselineScript *baselineScript = script->baselineScript();
+    if (!baselineScript->addDependentAsmJSModule(cx, DependentAsmJSModuleExit(&module, exitIndex)))
         return false;
 
-    AsmJSModule::ExitDatum &exitDatum = module.exitIndexToGlobalDatum(exitIndex);
-    exitDatum.exit = module.ionExitTrampoline(module.exit(exitIndex));
-    exitDatum.ionScript = ionScript;
+    module.optimizeExit(exitIndex, baselineScript);
     return true;
 }
 
@@ -580,7 +561,7 @@ InvokeFromAsmJS(AsmJSActivation *activation, int32_t exitIndex, int32_t argc, Va
     if (!Invoke(cx, UndefinedValue(), fval, argc, argv, rval))
         return false;
 
-    return TryEnablingIon(cx, module, fun, exitIndex, argc, argv);
+    return TryEnablingJit(cx, module, fun, exitIndex, argc, argv);
 }
 
 // Use an int32_t return type instead of bool since bool does not have a
@@ -669,8 +650,8 @@ AddressOf(AsmJSImmKind kind, ExclusiveContext *cx)
     switch (kind) {
       case AsmJSImm_Runtime:
         return cx->runtimeAddressForJit();
-      case AsmJSImm_RuntimeInterrupt:
-        return cx->runtimeAddressOfInterrupt();
+      case AsmJSImm_RuntimeInterruptUint32:
+        return cx->runtimeAddressOfInterruptUint32();
       case AsmJSImm_StackLimit:
         return cx->stackLimitAddressForJitCode(StackForUntrustedScript);
       case AsmJSImm_ReportOverRecursed:
@@ -775,11 +756,34 @@ AsmJSModule::staticallyLink(ExclusiveContext *cx)
         AsmJSModule::ExitDatum &exitDatum = exitIndexToGlobalDatum(i);
         exitDatum.exit = interpExitTrampoline(exits_[i]);
         exitDatum.fun = nullptr;
-        exitDatum.ionScript = nullptr;
+        exitDatum.baselineScript = nullptr;
     }
 
     MOZ_ASSERT(isStaticallyLinked());
 }
+
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+static inline size_t
+ViewTypeByteSize(AsmJSHeapAccess::ViewType vt)
+{
+    switch (vt) {
+      case AsmJSHeapAccess::Int8:
+      case AsmJSHeapAccess::Uint8:
+      case AsmJSHeapAccess::Uint8Clamped:
+      case AsmJSHeapAccess::Int16:
+      case AsmJSHeapAccess::Uint16:
+      case AsmJSHeapAccess::Int32:
+      case AsmJSHeapAccess::Uint32:
+      case AsmJSHeapAccess::Float32:
+      case AsmJSHeapAccess::Float64:
+        return 1 << TypedArrayShift(Scalar::Type(vt));
+      case AsmJSHeapAccess::Float32x4:
+      case AsmJSHeapAccess::Int32x4:
+        return 16;
+    }
+    MOZ_CRASH("unexpected view type");
+}
+#endif // JS_CODEGEN_X86 || JS_CODEGEN_X64
 
 void
 AsmJSModule::initHeap(Handle<ArrayBufferObjectMaybeShared *> heap, JSContext *cx)
@@ -794,28 +798,38 @@ AsmJSModule::initHeap(Handle<ArrayBufferObjectMaybeShared *> heap, JSContext *cx
 
 #if defined(JS_CODEGEN_X86)
     uint8_t *heapOffset = heap->dataPointer();
-    void *heapLength = (void*)heap->byteLength();
     for (unsigned i = 0; i < heapAccesses_.length(); i++) {
         const jit::AsmJSHeapAccess &access = heapAccesses_[i];
-        if (access.hasLengthCheck())
-            X86Assembler::setPointer(access.patchLengthAt(code_), heapLength);
+        if (access.hasLengthCheck()) {
+            // An access is out-of-bounds iff
+            //      ptr + data-type-byte-size > heapLength
+            // i.e. ptr >= heapLength + 1 - data-type-byte-size
+            // (Note that we need >= as this is what codegen uses.)
+            AsmJSHeapAccess::ViewType vt = access.viewType();
+            X86Assembler::setPointer(access.patchLengthAt(code_),
+                                     (void*)(heap->byteLength() + 1 - ViewTypeByteSize(vt)));
+        }
         void *addr = access.patchOffsetAt(code_);
         uint32_t disp = reinterpret_cast<uint32_t>(X86Assembler::getPointer(addr));
         MOZ_ASSERT(disp <= INT32_MAX);
         X86Assembler::setPointer(addr, (void *)(heapOffset + disp));
     }
 #elif defined(JS_CODEGEN_X64)
-    if (usesSignalHandlersForOOB())
-        return;
-    // If we cannot use the signal handlers, we need to patch the heap length
+    // Even with signal handling being used for most bounds checks, there may be
+    // atomic operations that depend on explicit checks.
+    //
+    // If we have any explicit bounds checks, we need to patch the heap length
     // checks at the right places. All accesses that have been recorded are the
     // only ones that need bound checks (see also
-    // CodeGeneratorX64::visitAsmJS{Load,Store}Heap)
+    // CodeGeneratorX64::visitAsmJS{Load,Store,CompareExchange,AtomicBinop}Heap)
     int32_t heapLength = int32_t(intptr_t(heap->byteLength()));
     for (size_t i = 0; i < heapAccesses_.length(); i++) {
         const jit::AsmJSHeapAccess &access = heapAccesses_[i];
-        if (access.hasLengthCheck())
-            X86Assembler::setInt32(access.patchLengthAt(code_), heapLength);
+        if (access.hasLengthCheck()) {
+            // See comment above for x86 codegen.
+            X86Assembler::setInt32(access.patchLengthAt(code_),
+                                   heapLength + 1 - ViewTypeByteSize(access.viewType()));
+        }
     }
 #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_MIPS)
     uint32_t heapLength = heap->byteLength();
@@ -826,7 +840,6 @@ AsmJSModule::initHeap(Handle<ArrayBufferObjectMaybeShared *> heap, JSContext *cx
 #endif
 }
 
-// This method assumes the caller has a live AutoUnprotectCode.
 void
 AsmJSModule::restoreHeapToInitialState(ArrayBufferObjectMaybeShared *maybePrevBuffer)
 {
@@ -848,7 +861,6 @@ AsmJSModule::restoreHeapToInitialState(ArrayBufferObjectMaybeShared *maybePrevBu
     heapDatum() = nullptr;
 }
 
-// This method assumes the caller has a live AutoUnprotectCode.
 void
 AsmJSModule::restoreToInitialState(ArrayBufferObjectMaybeShared *maybePrevBuffer,
                                    uint8_t *prevCode,
@@ -900,10 +912,9 @@ AsmJSModule::detachHeap(JSContext *cx)
     // Even if this->active(), to reach here, the activation must have called
     // out via an FFI stub. FFI stubs check if heapDatum() is null on reentry
     // and throw an exception if so.
-    MOZ_ASSERT_IF(active(), activation()->exitReason() == AsmJSExit::Reason_IonFFI ||
+    MOZ_ASSERT_IF(active(), activation()->exitReason() == AsmJSExit::Reason_JitFFI ||
                             activation()->exitReason() == AsmJSExit::Reason_SlowFFI);
 
-    AutoUnprotectCode auc(cx, *this);
     restoreHeapToInitialState(maybeHeap_);
 
     MOZ_ASSERT(hasDetachedHeap());
@@ -1335,7 +1346,7 @@ AsmJSModule::CodeRange::CodeRange(Kind kind, uint32_t begin, uint32_t profilingR
 
     MOZ_ASSERT(begin_ < profilingReturn_);
     MOZ_ASSERT(profilingReturn_ < end_);
-    MOZ_ASSERT(u.kind_ == IonFFI || u.kind_ == SlowFFI || u.kind_ == Interrupt);
+    MOZ_ASSERT(u.kind_ == JitFFI || u.kind_ == SlowFFI || u.kind_ == Interrupt);
 }
 
 AsmJSModule::CodeRange::CodeRange(AsmJSExit::BuiltinKind builtin, uint32_t begin,
@@ -1564,8 +1575,6 @@ AsmJSModule::deserialize(ExclusiveContext *cx, const uint8_t *cursor)
 bool
 AsmJSModule::clone(JSContext *cx, ScopedJSDeletePtr<AsmJSModule> *moduleOut) const
 {
-    AutoUnprotectCode auc(cx, *this);
-
     *moduleOut = cx->new_<AsmJSModule>(scriptSource_, srcStart_, srcBodyStart_, pod.strict_,
                                        pod.usesSignalHandlers_);
     if (!*moduleOut)
@@ -1624,7 +1633,9 @@ AsmJSModule::changeHeap(Handle<ArrayBufferObject*> newHeap, JSContext *cx)
     if (interrupted_)
         return false;
 
-    AutoUnprotectCode auc(cx, *this);
+    AutoFlushICache afc("AsmJSModule::changeHeap");
+    setAutoFlushICacheRange();
+
     restoreHeapToInitialState(maybeHeap_);
     initHeap(newHeap, cx);
     return true;
@@ -1664,9 +1675,6 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
     // Conservatively flush the icache for the entire module.
     AutoFlushICache afc("AsmJSModule::setProfilingEnabled");
     setAutoFlushICacheRange();
-
-    // To enable profiling, we need to patch 3 kinds of things:
-    AutoUnprotectCode auc(cx, *this);
 
     // Patch all internal (asm.js->asm.js) callsites to call the profiling
     // prologues:
@@ -1814,59 +1822,6 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
     profilingEnabled_ = enabled;
 }
 
-void
-AsmJSModule::protectCode(JSRuntime *rt) const
-{
-    MOZ_ASSERT(isDynamicallyLinked());
-    MOZ_ASSERT(rt->currentThreadOwnsInterruptLock());
-
-    codeIsProtected_ = true;
-
-    if (!pod.functionBytes_)
-        return;
-
-    // Technically, we should be able to only take away the execute permissions,
-    // however this seems to break our emulators which don't always check
-    // execute permissions while executing code.
-#if defined(XP_WIN)
-    DWORD oldProtect;
-    if (!VirtualProtect(codeBase(), functionBytes(), PAGE_NOACCESS, &oldProtect))
-        MOZ_CRASH();
-#else  // assume Unix
-    if (mprotect(codeBase(), functionBytes(), PROT_NONE))
-        MOZ_CRASH();
-#endif
-}
-
-void
-AsmJSModule::unprotectCode(JSRuntime *rt) const
-{
-    MOZ_ASSERT(isDynamicallyLinked());
-    MOZ_ASSERT(rt->currentThreadOwnsInterruptLock());
-
-    codeIsProtected_ = false;
-
-    if (!pod.functionBytes_)
-        return;
-
-#if defined(XP_WIN)
-    DWORD oldProtect;
-    if (!VirtualProtect(codeBase(), functionBytes(), PAGE_EXECUTE_READWRITE, &oldProtect))
-        MOZ_CRASH();
-#else  // assume Unix
-    if (mprotect(codeBase(), functionBytes(), PROT_READ | PROT_WRITE | PROT_EXEC))
-        MOZ_CRASH();
-#endif
-}
-
-bool
-AsmJSModule::codeIsProtected(JSRuntime *rt) const
-{
-    MOZ_ASSERT(isDynamicallyLinked());
-    MOZ_ASSERT(rt->currentThreadOwnsInterruptLock());
-    return codeIsProtected_;
-}
-
 static bool
 GetCPUID(uint32_t *cpuId)
 {
@@ -1975,7 +1930,9 @@ class ModuleChars
     }
 
     static uint32_t endOffset(AsmJSParser &parser) {
-      return parser.tokenStream.peekTokenPos().end;
+      TokenPos pos;
+      MOZ_ALWAYS_TRUE(parser.tokenStream.peekTokenPos(&pos));
+      return pos.end;
     }
 };
 
@@ -1997,7 +1954,7 @@ class ModuleCharsForStore : ModuleChars
         if (!compressedBuffer_.resize(maxCompressedSize))
             return false;
 
-        const char16_t *chars = parser.tokenStream.rawBase() + beginOffset(parser);
+        const char16_t *chars = parser.tokenStream.rawCharPtrAt(beginOffset(parser));
         const char *source = reinterpret_cast<const char*>(chars);
         size_t compressedSize = LZ4::compress(source, uncompressedSize_, compressedBuffer_.begin());
         if (!compressedSize || compressedSize > UINT32_MAX)
@@ -2079,7 +2036,7 @@ class ModuleCharsForLookup : ModuleChars
     }
 
     bool match(AsmJSParser &parser) const {
-        const char16_t *parseBegin = parser.tokenStream.rawBase() + beginOffset(parser);
+        const char16_t *parseBegin = parser.tokenStream.rawCharPtrAt(beginOffset(parser));
         const char16_t *parseLimit = parser.tokenStream.rawLimit();
         MOZ_ASSERT(parseLimit >= parseBegin);
         if (uint32_t(parseLimit - parseBegin) < chars_.length())
@@ -2128,7 +2085,7 @@ struct ScopedCacheEntryOpenedForWrite
     }
 };
 
-bool
+JS::AsmJSCacheResult
 js::StoreAsmJSModuleInCache(AsmJSParser &parser,
                             const AsmJSModule &module,
                             ExclusiveContext *cx)
@@ -2138,15 +2095,15 @@ js::StoreAsmJSModuleInCache(AsmJSParser &parser,
     // that can't be serialized. (This is separate from normal profiling and
     // requires an addon to activate).
     if (module.numFunctionCounts())
-        return false;
+        return JS::AsmJSCache_Disabled_JitInspector;
 
     MachineId machineId;
     if (!machineId.extractCurrentState(cx))
-        return false;
+        return JS::AsmJSCache_InternalError;
 
     ModuleCharsForStore moduleChars;
     if (!moduleChars.init(parser))
-        return false;
+        return JS::AsmJSCache_InternalError;
 
     size_t serializedSize = machineId.serializedSize() +
                             moduleChars.serializedSize() +
@@ -2154,17 +2111,17 @@ js::StoreAsmJSModuleInCache(AsmJSParser &parser,
 
     JS::OpenAsmJSCacheEntryForWriteOp open = cx->asmJSCacheOps().openEntryForWrite;
     if (!open)
-        return false;
+        return JS::AsmJSCache_Disabled_Internal;
 
-    const char16_t *begin = parser.tokenStream.rawBase() + ModuleChars::beginOffset(parser);
-    const char16_t *end = parser.tokenStream.rawBase() + ModuleChars::endOffset(parser);
+    const char16_t *begin = parser.tokenStream.rawCharPtrAt(ModuleChars::beginOffset(parser));
+    const char16_t *end = parser.tokenStream.rawCharPtrAt(ModuleChars::endOffset(parser));
     bool installed = parser.options().installedFile;
 
     ScopedCacheEntryOpenedForWrite entry(cx, serializedSize);
-    if (!open(cx->global(), installed, begin, end, entry.serializedSize,
-              &entry.memory, &entry.handle)) {
-        return false;
-    }
+    JS::AsmJSCacheResult openResult =
+        open(cx->global(), installed, begin, end, serializedSize, &entry.memory, &entry.handle);
+    if (openResult != JS::AsmJSCache_Success)
+        return openResult;
 
     uint8_t *cursor = entry.memory;
     cursor = machineId.serialize(cursor);
@@ -2172,7 +2129,7 @@ js::StoreAsmJSModuleInCache(AsmJSParser &parser,
     cursor = module.serialize(cursor);
 
     MOZ_ASSERT(cursor == entry.memory + serializedSize);
-    return true;
+    return JS::AsmJSCache_Success;
 }
 
 struct ScopedCacheEntryOpenedForRead
@@ -2208,7 +2165,7 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
     if (!open)
         return true;
 
-    const char16_t *begin = parser.tokenStream.rawBase() + ModuleChars::beginOffset(parser);
+    const char16_t *begin = parser.tokenStream.rawCharPtrAt(ModuleChars::beginOffset(parser));
     const char16_t *limit = parser.tokenStream.rawLimit();
 
     ScopedCacheEntryOpenedForRead entry(cx);
@@ -2232,20 +2189,15 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
     uint32_t srcStart = parser.pc->maybeFunction->pn_body->pn_pos.begin;
     uint32_t srcBodyStart = parser.tokenStream.currentToken().pos.end;
     bool strict = parser.pc->sc->strict && !parser.pc->sc->hasExplicitUseStrict();
+
     // usesSignalHandlers will be clobbered when deserializing
     ScopedJSDeletePtr<AsmJSModule> module(
         cx->new_<AsmJSModule>(parser.ss, srcStart, srcBodyStart, strict,
                               /* usesSignalHandlers = */ false));
     if (!module)
         return false;
+
     cursor = module->deserialize(cx, cursor);
-
-    // No need to flush the instruction cache now, it will be flushed when dynamically linking.
-    AutoFlushICache afc("LookupAsmJSModuleInCache", /* inhibit= */ true);
-    // We already know the exact extent of areas that need to be patched, just make sure we
-    // flush all of them at once.
-    module->setAutoFlushICacheRange();
-
     if (!cursor)
         return false;
 
@@ -2254,9 +2206,17 @@ js::LookupAsmJSModuleInCache(ExclusiveContext *cx,
     if (!atEnd)
         return true;
 
-    module->staticallyLink(cx);
-
     parser.tokenStream.advance(module->srcEndBeforeCurly());
+
+    {
+        // No need to flush the instruction cache now, it will be flushed when
+        // dynamically linking. We already know the exact extent of areas that need
+        // to be patched, just make sure we flush all of them at once.
+        AutoFlushICache afc("LookupAsmJSModuleInCache", /* inhibit= */ true);
+        module->setAutoFlushICacheRange();
+
+        module->staticallyLink(cx);
+    }
 
     int64_t usecAfter = PRMJ_Now();
     int ms = (usecAfter - usecBefore) / PRMJ_USEC_PER_MSEC;

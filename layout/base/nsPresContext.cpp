@@ -138,7 +138,8 @@ nsPresContext::IsDOMPaintEventPending()
   if (mFireAfterPaintEvents) {
     return true;
   }
-  if (GetDisplayRootPresContext()->GetRootPresContext()->mRefreshDriver->ViewManagerFlushIsPending()) {
+  nsRootPresContext* drpc = GetDisplayRootPresContext();
+  if (drpc && drpc->mRefreshDriver->ViewManagerFlushIsPending()) {
     // Since we're promising that there will be a MozAfterPaint event
     // fired, we record an empty invalidation in case display list
     // invalidation doesn't invalidate anything further.
@@ -248,28 +249,16 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
   if (log && log->level >= PR_LOG_WARNING) {
     mTextPerf = new gfxTextPerfMetrics();
   }
-
-  PR_INIT_CLIST(&mDOMMediaQueryLists);
 }
 
-nsPresContext::~nsPresContext()
+void
+nsPresContext::Destroy()
 {
-  NS_PRECONDITION(!mShell, "Presshell forgot to clear our mShell pointer");
-  SetShell(nullptr);
-
-  NS_ABORT_IF_FALSE(PR_CLIST_IS_EMPTY(&mDOMMediaQueryLists),
-                    "must not have media query lists left");
-
-  // Disconnect the refresh driver *after* the transition manager, which
-  // needs it.
-  if (mRefreshDriver && mRefreshDriver->PresContext() == this) {
-    mRefreshDriver->Disconnect();
-  }
-
   if (mEventManager) {
     // unclear if these are needed, but can't hurt
     mEventManager->NotifyDestroyPresContext(this);
     mEventManager->SetPresContext(nullptr);
+    mEventManager = nullptr;
   }
 
   if (mPrefChangedTimer)
@@ -321,6 +310,21 @@ nsPresContext::~nsPresContext()
   Preferences::UnregisterCallback(nsPresContext::PrefChangedCallback,
                                   "nglayout.debug.paint_flashing_chrome",
                                   this);
+
+  // Disconnect the refresh driver *after* the transition manager, which
+  // needs it.
+  if (mRefreshDriver && mRefreshDriver->PresContext() == this) {
+    mRefreshDriver->Disconnect();
+    mRefreshDriver = nullptr;
+  }
+}
+
+nsPresContext::~nsPresContext()
+{
+  NS_PRECONDITION(!mShell, "Presshell forgot to clear our mShell pointer");
+  SetShell(nullptr);
+
+  Destroy();
 }
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPresContext)
@@ -347,18 +351,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsPresContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventManager);
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mLanguage); // an atom
 
-  // We own only the items in mDOMMediaQueryLists that have listeners;
-  // this reference is managed by their AddListener and RemoveListener
-  // methods.
-  for (PRCList *l = PR_LIST_HEAD(&tmp->mDOMMediaQueryLists);
-       l != &tmp->mDOMMediaQueryLists; l = PR_NEXT_LINK(l)) {
-    MediaQueryList *mql = static_cast<MediaQueryList*>(l);
-    if (mql->HasListeners()) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mDOMMediaQueryLists item");
-      cb.NoteXPCOMChild(mql);
-    }
-  }
-
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTheme); // a service
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLangService); // a service
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrintSettings);
@@ -368,34 +360,12 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDeviceContext); // worth bothering?
-  if (tmp->mEventManager) {
-    // unclear if these are needed, but can't hurt
-    tmp->mEventManager->NotifyDestroyPresContext(tmp);
-    tmp->mEventManager->SetPresContext(nullptr);
-    tmp->mEventManager = nullptr;
-  }
-
-  // We own only the items in mDOMMediaQueryLists that have listeners;
-  // this reference is managed by their AddListener and RemoveListener
-  // methods.
-  for (PRCList *l = PR_LIST_HEAD(&tmp->mDOMMediaQueryLists);
-       l != &tmp->mDOMMediaQueryLists; ) {
-    PRCList *next = PR_NEXT_LINK(l);
-    MediaQueryList *mql = static_cast<MediaQueryList*>(l);
-    mql->RemoveAllListeners();
-    l = next;
-  }
-
   // NS_RELEASE(tmp->mLanguage); // an atom
-
   // NS_IMPL_CYCLE_COLLECTION_UNLINK(mTheme); // a service
   // NS_IMPL_CYCLE_COLLECTION_UNLINK(mLangService); // a service
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrintSettings);
-  if (tmp->mPrefChangedTimer)
-  {
-    tmp->mPrefChangedTimer->Cancel();
-    tmp->mPrefChangedTimer = nullptr;
-  }
+
+  tmp->Destroy();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 
@@ -960,7 +930,7 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
 
   mDeviceContext = aDeviceContext;
 
-  if (mDeviceContext->SetPixelScale(mFullZoom))
+  if (mDeviceContext->SetFullZoom(mFullZoom))
     mDeviceContext->FlushFontCache();
   mCurAppUnitsPerDevPixel = AppUnitsPerDevPixel();
 
@@ -1478,7 +1448,7 @@ nsPresContext::SetFullZoom(float aZoom)
   mShell->GetViewManager()->GetWindowDimensions(&oldWidthAppUnits, &oldHeightAppUnits);
   float oldWidthDevPixels = oldWidthAppUnits / float(mCurAppUnitsPerDevPixel);
   float oldHeightDevPixels = oldHeightAppUnits / float(mCurAppUnitsPerDevPixel);
-  mDeviceContext->SetPixelScale(aZoom);
+  mDeviceContext->SetFullZoom(aZoom);
 
   NS_ASSERTION(!mSupressResizeReflow, "two zooms happening at the same time? impossible!");
   mSupressResizeReflow = true;
@@ -1561,7 +1531,7 @@ nsPresContext::Detach()
 }
 
 bool
-nsPresContext::StyleUpdateForAllAnimationsIsUpToDate()
+nsPresContext::StyleUpdateForAllAnimationsIsUpToDate() const
 {
   return mLastStyleUpdateForAllAnimations == mRefreshDriver->MostRecentRefresh();
 }
@@ -1570,6 +1540,12 @@ void
 nsPresContext::TickLastStyleUpdateForAllAnimations()
 {
   mLastStyleUpdateForAllAnimations = mRefreshDriver->MostRecentRefresh();
+}
+
+void
+nsPresContext::ClearLastStyleUpdateForAllAnimations()
+{
+  mLastStyleUpdateForAllAnimations = TimeStamp();
 }
 
 bool
@@ -1776,6 +1752,12 @@ nsPresContext::UIResolutionChangedSubdocumentCallback(nsIDocument* aDocument,
   return true;
 }
 
+static void
+NotifyUIResolutionChanged(TabParent* aTabParent, void* aArg)
+{
+  aTabParent->UIResolutionChanged();
+}
+
 void
 nsPresContext::UIResolutionChangedInternal()
 {
@@ -1786,50 +1768,13 @@ nsPresContext::UIResolutionChangedInternal()
     AppUnitsPerDevPixelChanged();
   }
 
-  nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(mDocument->GetWindow()));
-  nsCOMPtr<nsIMessageBroadcaster> windowMM;
-  if (chromeWindow) {
-    chromeWindow->GetMessageManager(getter_AddRefs(windowMM));
-  }
-  if (windowMM) {
-    NotifyUIResolutionChanged(windowMM);
-  }
+  // Recursively notify all remote leaf descendants that the
+  // resolution of the user interface has changed.
+  nsContentUtils::CallOnAllRemoteChildren(mDocument->GetWindow(),
+                                          NotifyUIResolutionChanged, nullptr);
 
   mDocument->EnumerateSubDocuments(UIResolutionChangedSubdocumentCallback,
                                    nullptr);
-}
-
-void
-nsPresContext::NotifyUIResolutionChanged(nsIMessageBroadcaster* aManager)
-{
-  uint32_t tabChildCount = 0;
-  aManager->GetChildCount(&tabChildCount);
-  for (uint32_t j = 0; j < tabChildCount; ++j) {
-    nsCOMPtr<nsIMessageListenerManager> childMM;
-    aManager->GetChildAt(j, getter_AddRefs(childMM));
-    if (!childMM) {
-      continue;
-    }
-
-    nsCOMPtr<nsIMessageBroadcaster> nonLeafMM = do_QueryInterface(childMM);
-    if (nonLeafMM) {
-      NotifyUIResolutionChanged(nonLeafMM);
-      continue;
-    }
-
-    nsCOMPtr<nsIMessageSender> tabMM = do_QueryInterface(childMM);
-
-    mozilla::dom::ipc::MessageManagerCallback* cb =
-     static_cast<nsFrameMessageManager*>(tabMM.get())->GetCallback();
-    if (cb) {
-      nsFrameLoader* fl = static_cast<nsFrameLoader*>(cb);
-      PBrowserParent* remoteBrowser = fl->GetRemoteBrowser();
-      TabParent* remote = static_cast<TabParent*>(remoteBrowser);
-      if (remote) {
-        remote->UIResolutionChanged();
-      }
-    }
-  }
 }
 
 void
@@ -1907,7 +1852,7 @@ nsPresContext::MediaFeatureValuesChanged(nsRestyleHint aRestyleHint,
   mPendingViewportChange = false;
 
   if (mDocument->IsBeingUsedAsImage()) {
-    MOZ_ASSERT(PR_CLIST_IS_EMPTY(&mDOMMediaQueryLists));
+    MOZ_ASSERT(PR_CLIST_IS_EMPTY(mDocument->MediaQueryLists()));
     return;
   }
 
@@ -1920,7 +1865,7 @@ nsPresContext::MediaFeatureValuesChanged(nsRestyleHint aRestyleHint,
   // Note that we do this after the new style from media queries in
   // style sheets has been computed.
 
-  if (!PR_CLIST_IS_EMPTY(&mDOMMediaQueryLists)) {
+  if (!PR_CLIST_IS_EMPTY(mDocument->MediaQueryLists())) {
     // We build a list of all the notifications we're going to send
     // before we send any of them.  (The spec says the notifications
     // should be a queued task, so any removals that happen during the
@@ -1934,8 +1879,8 @@ nsPresContext::MediaFeatureValuesChanged(nsRestyleHint aRestyleHint,
     // list in the order they were created and, for each list, to the
     // listeners in the order added.
     MediaQueryList::NotifyList notifyList;
-    for (PRCList *l = PR_LIST_HEAD(&mDOMMediaQueryLists);
-         l != &mDOMMediaQueryLists; l = PR_NEXT_LINK(l)) {
+    for (PRCList *l = PR_LIST_HEAD(mDocument->MediaQueryLists());
+         l != mDocument->MediaQueryLists(); l = PR_NEXT_LINK(l)) {
       MediaQueryList *mql = static_cast<MediaQueryList*>(l);
       mql->MediumFeaturesChanged(notifyList);
     }
@@ -1977,17 +1922,6 @@ nsPresContext::HandleMediaFeatureValuesChangedEvent()
   if (mPendingMediaFeatureValuesChanged && mShell) {
     MediaFeatureValuesChanged(nsRestyleHint(0));
   }
-}
-
-already_AddRefed<MediaQueryList>
-nsPresContext::MatchMedia(const nsAString& aMediaQueryList)
-{
-  nsRefPtr<MediaQueryList> result = new MediaQueryList(this, aMediaQueryList);
-
-  // Insert the new item at the end of the linked list.
-  PR_INSERT_BEFORE(result, &mDOMMediaQueryLists);
-
-  return result.forget();
 }
 
 nsCompatibility

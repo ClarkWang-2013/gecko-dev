@@ -348,7 +348,7 @@ let FormAssistant = {
   // Implements nsIEditorObserver get notification when the text content of
   // current input field has changed.
   EditAction: function fa_editAction() {
-    if (this._editing) {
+    if (this._editing || !this.isHandlingFocus) {
       return;
     }
     this.sendInputState(this.focusedElement);
@@ -1277,14 +1277,7 @@ let CompositionManager =  {
     if (!this._isStarted) {
       return;
     }
-    // Update the composing text.
-    let compositionString = domWindowUtils.createCompositionStringSynthesizer();
-    compositionString.setString(text);
-    // Set the cursor position to |text.length| so that the text will be
-    // committed before the cursor position.
-    compositionString.setCaret(text.length, 0);
-    compositionString.dispatchEvent();
-    domWindowUtils.sendCompositionEvent('compositionend', text, '');
+    domWindowUtils.sendCompositionEvent('compositioncommit', text, '');
     this._isStarted = false;
   },
 

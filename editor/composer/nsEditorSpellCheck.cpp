@@ -10,6 +10,7 @@
 #include "mozilla/Preferences.h"        // for Preferences
 #include "mozilla/Services.h"           // for GetXULChromeRegistryService
 #include "mozilla/dom/Element.h"        // for Element
+#include "mozilla/dom/Selection.h"
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "nsAString.h"                  // for nsAString_internal::IsEmpty, etc
 #include "nsComponentManagerUtils.h"    // for do_CreateInstance
@@ -23,7 +24,6 @@
 #include "nsIContentPrefService2.h"     // for nsIContentPrefService2, etc
 #include "nsIDOMDocument.h"             // for nsIDOMDocument
 #include "nsIDOMElement.h"              // for nsIDOMElement
-#include "nsIDOMRange.h"                // for nsIDOMRange
 #include "nsIDocument.h"                // for nsIDocument
 #include "nsIEditor.h"                  // for nsIEditor
 #include "nsIHTMLEditor.h"              // for nsIHTMLEditor
@@ -38,6 +38,7 @@
 #include "nsIVariant.h"                 // for nsIWritableVariant, etc
 #include "nsLiteralString.h"            // for NS_LITERAL_STRING, etc
 #include "nsMemory.h"                   // for nsMemory
+#include "nsRange.h"
 #include "nsReadableUtils.h"            // for ToNewUnicode, EmptyString, etc
 #include "nsServiceManagerUtils.h"      // for do_GetService
 #include "nsString.h"                   // for nsAutoString, nsString, etc
@@ -46,6 +47,7 @@
 #include "nsXULAppAPI.h"                // for XRE_GetProcessType
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 class UpdateDictionaryHolder {
   private:
@@ -101,6 +103,23 @@ GetLoadContext(nsIEditor* aEditor)
 
   nsCOMPtr<nsILoadContext> loadContext = doc->GetLoadContext();
   return loadContext.forget();
+}
+
+/**
+ * Helper function for converting underscore to dash in dictionary name,
+ * ie. en_CA to en-CA. This is required for some Linux distributions which
+ * use underscore as separator in system-wide installed dictionaries.
+ * We use it for nsStyleUtil::DashMatchCompare.
+ */
+static nsString
+GetDictNameWithDash(const nsAString& aDictName)
+{
+  nsString dictNameWithDash(aDictName);
+  int32_t underScore = dictNameWithDash.FindChar('_');
+  if (underScore != -1) {
+    dictNameWithDash.Replace(underScore, 1, '-');
+  }
+  return dictNameWithDash;
 }
 
 /**
@@ -343,10 +362,9 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, bool aEnableSelectionCh
     // Find out if the section is collapsed or not.
     // If it isn't, we want to spellcheck just the selection.
 
-    nsCOMPtr<nsISelection> selection;
-
-    rv = aEditor->GetSelection(getter_AddRefs(selection));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsISelection> domSelection;
+    aEditor->GetSelection(getter_AddRefs(domSelection));
+    nsRefPtr<Selection> selection = static_cast<Selection*>(domSelection.get());
     NS_ENSURE_TRUE(selection, NS_ERROR_FAILURE);
 
     int32_t count = 0;
@@ -355,10 +373,8 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, bool aEnableSelectionCh
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (count > 0) {
-      nsCOMPtr<nsIDOMRange> range;
-
-      rv = selection->GetRangeAt(0, getter_AddRefs(range));
-      NS_ENSURE_SUCCESS(rv, rv);
+      nsRefPtr<nsRange> range = selection->GetRangeAt(0);
+      NS_ENSURE_STATE(range);
 
       bool collapsed = false;
       rv = range->GetCollapsed(&collapsed);
@@ -368,10 +384,7 @@ nsEditorSpellCheck::InitSpellChecker(nsIEditor* aEditor, bool aEnableSelectionCh
         // We don't want to touch the range in the selection,
         // so create a new copy of it.
 
-        nsCOMPtr<nsIDOMRange> rangeBounds;
-        rv =  range->CloneRange(getter_AddRefs(rangeBounds));
-        NS_ENSURE_SUCCESS(rv, rv);
-        NS_ENSURE_TRUE(rangeBounds, NS_ERROR_FAILURE);
+        nsRefPtr<nsRange> rangeBounds = range->CloneRange();
 
         // Make sure the new range spans complete words.
 
@@ -607,8 +620,8 @@ nsEditorSpellCheck::SetCurrentDictionary(const nsAString& aDictionary)
     } else {
       langCode.Assign(aDictionary);
     }
-
-    if (mPreferredLang.IsEmpty() || !nsStyleUtil::DashMatchCompare(mPreferredLang, langCode, comparator)) {
+    if (mPreferredLang.IsEmpty() ||
+        !nsStyleUtil::DashMatchCompare(GetDictNameWithDash(mPreferredLang), langCode, comparator)) {
       // When user sets dictionary manually, we store this value associated
       // with editor url.
       StoreCurrentDictionary(mEditor, aDictionary);
@@ -754,12 +767,6 @@ nsEditorSpellCheck::DictionaryFetched(DictionaryFetcher* aFetcher)
 
   // otherwise, get language from preferences
   nsAutoString preferedDict(Preferences::GetLocalizedString("spellchecker.dictionary"));
-  // Replace '_' with '-' in case the user has an underscore stored in their
-  // pref, see bug 992118 for how this could have happened.
-  int32_t underScore = preferedDict.FindChar('_');
-  if (underScore != -1) {
-    preferedDict.Replace(underScore, 1, '-');
-  }
   if (dictName.IsEmpty()) {
     dictName.Assign(preferedDict);
   }
@@ -798,8 +805,8 @@ nsEditorSpellCheck::DictionaryFetched(DictionaryFetcher* aFetcher)
 
       // try dictionary.spellchecker preference if it starts with langCode (and
       // if we haven't tried it already)
-      if (!preferedDict.IsEmpty() && !dictName.Equals(preferedDict) && 
-          nsStyleUtil::DashMatchCompare(preferedDict, langCode, comparator)) {
+      if (!preferedDict.IsEmpty() && !dictName.Equals(preferedDict) &&
+          nsStyleUtil::DashMatchCompare(GetDictNameWithDash(preferedDict), langCode, comparator)) {
         rv = SetCurrentDictionary(preferedDict);
       }
 
@@ -827,8 +834,7 @@ nsEditorSpellCheck::DictionaryFetched(DictionaryFetcher* aFetcher)
             // We have already tried it
             continue;
           }
-
-          if (nsStyleUtil::DashMatchCompare(dictStr, langCode, comparator) &&
+          if (nsStyleUtil::DashMatchCompare(GetDictNameWithDash(dictStr), langCode, comparator) &&
               NS_SUCCEEDED(SetCurrentDictionary(dictStr))) {
               break;
           }

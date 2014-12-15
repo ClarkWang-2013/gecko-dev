@@ -17,6 +17,7 @@
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/HttpChannelChild.h"
 
+#include "nsChannelClassifier.h"
 #include "nsStringStream.h"
 #include "nsHttpHandler.h"
 #include "nsNetUtil.h"
@@ -31,6 +32,7 @@
 #include "nsInputStreamPump.h"
 #include "InterceptedChannel.h"
 #include "nsPerformance.h"
+#include "mozIThirdPartyUtil.h"
 
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
@@ -643,6 +645,10 @@ HttpChannelChild::DoOnStopRequest(nsIRequest* aRequest, nsISupports* aContext)
 {
   MOZ_ASSERT(!mIsPending);
 
+  if (mStatus == NS_ERROR_TRACKING_URI) {
+    nsChannelClassifier::SetBlockedTrackingContent(this);
+  }
+
   mListener->OnStopRequest(aRequest, aContext, mStatus);
 
   mListener = 0;
@@ -981,6 +987,13 @@ HttpChannelChild::RecvFlushedForDiversion()
   return true;
 }
 
+bool
+HttpChannelChild::RecvNotifyTrackingProtectionDisabled()
+{
+  nsChannelClassifier::NotifyTrackingProtectionDisabled(this);
+  return true;
+}
+
 void
 HttpChannelChild::FlushedForDiversion()
 {
@@ -1050,13 +1063,8 @@ HttpChannelChild::ConnectParent(uint32_t id)
   AddIPDLReference();
 
   HttpChannelConnectArgs connectArgs(id);
-  PBrowserOrId browser;
-  if (!tabChild ||
-      static_cast<ContentChild*>(gNeckoChild->Manager()) == tabChild->Manager()) {
-    browser = tabChild;
-  } else {
-    browser = TabChild::GetTabChildId(tabChild);
-  }
+  PBrowserOrId browser = static_cast<ContentChild*>(gNeckoChild->Manager())
+                         ->GetBrowserOrId(tabChild);
   if (!gNeckoChild->
         SendPHttpChannelConstructor(this, browser,
                                     IPC::SerializedLoadContext(this),
@@ -1236,12 +1244,18 @@ void
 propagateLoadInfo(nsILoadInfo *aLoadInfo,
                   HttpChannelOpenArgs& openArgs)
 {
-  mozilla::ipc::PrincipalInfo principalInfo;
+  mozilla::ipc::PrincipalInfo requestingPrincipalInfo;
+  mozilla::ipc::PrincipalInfo triggeringPrincipalInfo;
 
   if (aLoadInfo) {
     mozilla::ipc::PrincipalToPrincipalInfo(aLoadInfo->LoadingPrincipal(),
-                                           &principalInfo);
-    openArgs.requestingPrincipalInfo() = principalInfo;
+                                           &requestingPrincipalInfo);
+    openArgs.requestingPrincipalInfo() = requestingPrincipalInfo;
+
+    mozilla::ipc::PrincipalToPrincipalInfo(aLoadInfo->TriggeringPrincipal(),
+                                           &triggeringPrincipalInfo);
+    openArgs.triggeringPrincipalInfo() = triggeringPrincipalInfo;
+
     openArgs.securityFlags() = aLoadInfo->GetSecurityFlags();
     openArgs.contentPolicyType() = aLoadInfo->GetContentPolicyType();
     return;
@@ -1249,8 +1263,9 @@ propagateLoadInfo(nsILoadInfo *aLoadInfo,
 
   // use default values if no loadInfo is provided
   mozilla::ipc::PrincipalToPrincipalInfo(nsContentUtils::GetSystemPrincipal(),
-                                         &principalInfo);
-  openArgs.requestingPrincipalInfo() = principalInfo;
+                                         &requestingPrincipalInfo);
+  openArgs.requestingPrincipalInfo() = requestingPrincipalInfo;
+  openArgs.triggeringPrincipalInfo() = requestingPrincipalInfo;
   openArgs.securityFlags() = nsILoadInfo::SEC_NORMAL;
   openArgs.contentPolicyType() = nsIContentPolicy::TYPE_OTHER;
 }
@@ -1459,6 +1474,7 @@ HttpChannelChild::ContinueAsyncOpen()
   SerializeURI(mOriginalURI, openArgs.original());
   SerializeURI(mDocumentURI, openArgs.doc());
   SerializeURI(mReferrer, openArgs.referrer());
+  openArgs.referrerPolicy() = mReferrerPolicy;
   SerializeURI(mAPIRedirectToURI, openArgs.apiRedirectTo());
   openArgs.loadFlags() = mLoadFlags;
   openArgs.requestHeaders() = mClientSetRequestHeaders;
@@ -1484,6 +1500,25 @@ HttpChannelChild::ContinueAsyncOpen()
     optionalFDs = mozilla::void_t();
   }
 
+  nsCOMPtr<mozIThirdPartyUtil> util(do_GetService(THIRDPARTYUTIL_CONTRACTID));
+  if (util) {
+    bool thirdParty;
+    nsresult rv = util->IsThirdPartyChannel(this, nullptr, &thirdParty);
+    if (NS_FAILED(rv)) {
+      // If we couldn't compute whether this is a third-party load, assume that
+      // it is.
+      thirdParty = true;
+    }
+
+    mThirdPartyFlags |= thirdParty ?
+      nsIHttpChannelInternal::THIRD_PARTY_PARENT_IS_THIRD_PARTY :
+      nsIHttpChannelInternal::THIRD_PARTY_PARENT_IS_SAME_PARTY;
+    nsCOMPtr<nsIURI> uri;
+    GetTopWindowURI(getter_AddRefs(uri));
+  }
+
+  SerializeURI(mTopWindowURI, openArgs.topWindowURI());
+
   openArgs.fds() = optionalFDs;
 
   openArgs.uploadStreamHasHeaders() = mUploadStreamHasHeaders;
@@ -1491,7 +1526,7 @@ HttpChannelChild::ContinueAsyncOpen()
   openArgs.redirectionLimit() = mRedirectionLimit;
   openArgs.allowPipelining() = mAllowPipelining;
   openArgs.allowSTS() = mAllowSTS;
-  openArgs.forceAllowThirdPartyCookie() = mForceAllowThirdPartyCookie;
+  openArgs.thirdPartyFlags() = mThirdPartyFlags;
   openArgs.resumeAt() = mSendResumeAt;
   openArgs.startPos() = mStartPos;
   openArgs.entityID() = mEntityID;
@@ -1505,13 +1540,8 @@ HttpChannelChild::ContinueAsyncOpen()
   // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
   AddIPDLReference();
 
-  PBrowserOrId browser;
-  if (!tabChild ||
-      static_cast<ContentChild*>(gNeckoChild->Manager()) == tabChild->Manager()) {
-    browser = tabChild;
-  } else {
-    browser = TabChild::GetTabChildId(tabChild);
-  }
+  PBrowserOrId browser = static_cast<ContentChild*>(gNeckoChild->Manager())
+                         ->GetBrowserOrId(tabChild);
   gNeckoChild->SendPHttpChannelConstructor(this, browser,
                                            IPC::SerializedLoadContext(this),
                                            openArgs);

@@ -19,6 +19,7 @@
 #include "nsIProgressEventSink.h"
 #include "nsHttpChannel.h"
 #include "nsIAuthPromptProvider.h"
+#include "mozilla/dom/ipc/IdType.h"
 
 class nsICacheEntry;
 class nsIAssociatedContentSecurity;
@@ -27,12 +28,12 @@ namespace mozilla {
 
 namespace dom{
 class TabParent;
+class PBrowserOrId;
 }
 
 namespace net {
 
 class HttpChannelParentListener;
-class PBrowserOrId;
 
 class HttpChannelParent : public PHttpChannelParent
                         , public nsIParentRedirectingChannel
@@ -54,7 +55,7 @@ public:
   NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSIAUTHPROMPTPROVIDER
 
-  HttpChannelParent(const PBrowserOrId& iframeEmbedding,
+  HttpChannelParent(const dom::PBrowserOrId& iframeEmbedding,
                     nsILoadContext* aLoadContext,
                     PBOverrideStatus aStatus);
 
@@ -89,7 +90,9 @@ protected:
                    const OptionalURIParams&   originalUri,
                    const OptionalURIParams&   docUri,
                    const OptionalURIParams&   referrerUri,
+                   const uint32_t&            referrerPolicy,
                    const OptionalURIParams&   internalRedirectUri,
+                   const OptionalURIParams&   topWindowUri,
                    const uint32_t&            loadFlags,
                    const RequestHeaderTuples& requestHeaders,
                    const nsCString&           requestMethod,
@@ -99,7 +102,7 @@ protected:
                    const uint8_t&             redirectionLimit,
                    const bool&                allowPipelining,
                    const bool&                allowSTS,
-                   const bool&                forceAllowThirdPartyCookie,
+                   const uint32_t&            thirdPartyFlags,
                    const bool&                doResumeAt,
                    const uint64_t&            startPos,
                    const nsCString&           entityID,
@@ -108,6 +111,7 @@ protected:
                    const bool&                allowSpdy,
                    const OptionalFileDescriptorSet& aFds,
                    const ipc::PrincipalInfo&  aRequestingPrincipalInfo,
+                   const ipc::PrincipalInfo&  aTriggeringPrincipalInfo,
                    const uint32_t&            aSecurityFlags,
                    const uint32_t&            aContentPolicyType);
 
@@ -171,8 +175,8 @@ private:
   nsRefPtr<nsHttpHandler>  mHttpHandler;
 
   nsRefPtr<HttpChannelParentListener> mParentListener;
-  // The first listener in the decode chain if channel decoding is applied.
-  nsCOMPtr<nsIStreamListener> mConverterListener;
+  // This is listener we are diverting to.
+  nsCOMPtr<nsIStreamListener> mDivertListener;
   // Set to the canceled status value if the main channel was canceled.
   nsresult mStatus;
   // Once set, no OnStart/OnData/OnStop calls should be accepted; conversely, it
@@ -185,7 +189,7 @@ private:
 
   bool mSuspendedForDiversion;
 
-  uint64_t mNestedFrameId;
+  dom::TabId mNestedFrameId;
 };
 
 } // namespace net

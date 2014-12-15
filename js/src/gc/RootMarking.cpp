@@ -21,7 +21,7 @@
 #include "gc/ForkJoinNursery.h"
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
-#include "jit/IonMacroAssembler.h"
+#include "jit/MacroAssembler.h"
 #include "js/HashTable.h"
 #include "vm/Debugger.h"
 #include "vm/JSONParser.h"
@@ -454,7 +454,7 @@ js::gc::GCRuntime::markRuntime(JSTracer *trc,
             if (!c->zone()->isCollecting())
                 c->markCrossCompartmentWrappers(trc);
         }
-        Debugger::markCrossCompartmentDebuggerObjectReferents(trc);
+        Debugger::markAllCrossCompartmentEdges(trc);
     }
 
     AutoGCRooter::traceAll(trc);
@@ -536,6 +536,9 @@ js::gc::GCRuntime::markRuntime(JSTracer *trc,
         /* Mark debug scopes, if present */
         if (c->debugScopes)
             c->debugScopes->mark(trc);
+
+        if (c->lazyArrayBuffers)
+            c->lazyArrayBuffers->trace(trc);
     }
 
     MarkInterpreterActivations(&rt->mainThread, trc);

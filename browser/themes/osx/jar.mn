@@ -27,6 +27,8 @@ browser.jar:
 * skin/classic/browser/browser-lightweightTheme.css
   skin/classic/browser/click-to-play-warning-stripes.png
 * skin/classic/browser/content-contextmenu.svg
+  skin/classic/browser/dots.png                             (../shared/dots.png)
+  skin/classic/browser/dots@2x.png                          (../shared/dots@2x.png)
 * skin/classic/browser/engineManager.css                    (engineManager.css)
   skin/classic/browser/fullscreen-darknoise.png
   skin/classic/browser/Geolocation-16.png
@@ -56,6 +58,8 @@ browser.jar:
   skin/classic/browser/notification-16@2x.png
   skin/classic/browser/notification-64.png
   skin/classic/browser/notification-64@2x.png
+  skin/classic/browser/magnifier.png                        (../shared/magnifier.png)
+  skin/classic/browser/magnifier@2x.png                     (../shared/magnifier@2x.png)
   skin/classic/browser/mask.png                             (../shared/mask.png)
   skin/classic/browser/mask@2x.png                          (../shared/mask@2x.png)
   skin/classic/browser/menuPanel.png
@@ -100,6 +104,15 @@ browser.jar:
   skin/classic/browser/searchbar.css
   skin/classic/browser/Search.png
   skin/classic/browser/Search@2x.png
+  skin/classic/browser/search-pref.png                         (../shared/search/search-pref.png)
+  skin/classic/browser/search-indicator.png                    (../shared/search/search-indicator.png)
+  skin/classic/browser/search-indicator@2x.png                 (../shared/search/search-indicator@2x.png)
+  skin/classic/browser/search-indicator-add-engine.png         (../shared/search/search-indicator-add-engine.png)
+  skin/classic/browser/search-indicator-add-engine@2x.png      (../shared/search/search-indicator-add-engine@2x.png)
+  skin/classic/browser/search-engine-placeholder.png           (../shared/search/search-engine-placeholder.png)
+  skin/classic/browser/search-engine-placeholder@2x.png        (../shared/search/search-engine-placeholder@2x.png)
+  skin/classic/browser/badge-add-engine.png                    (../shared/search/badge-add-engine.png)
+  skin/classic/browser/badge-add-engine@2x.png                 (../shared/search/badge-add-engine@2x.png)
   skin/classic/browser/Secure-Glyph.png
   skin/classic/browser/Secure-Glyph@2x.png
   skin/classic/browser/slowStartup-16.png
@@ -182,8 +195,7 @@ browser.jar:
   skin/classic/browser/downloads/allDownloadsViewOverlay.css (downloads/allDownloadsViewOverlay.css)
   skin/classic/browser/downloads/buttons.png                (downloads/buttons.png)
   skin/classic/browser/downloads/buttons@2x.png             (downloads/buttons@2x.png)
-  skin/classic/browser/downloads/download-glow.png          (downloads/download-glow.png)
-  skin/classic/browser/downloads/download-glow@2x.png       (downloads/download-glow@2x.png)
+* skin/classic/browser/downloads/contentAreaDownloadsView.css (downloads/contentAreaDownloadsView.css)
   skin/classic/browser/downloads/download-glow-menuPanel.png (downloads/download-glow-menuPanel.png)
   skin/classic/browser/downloads/download-glow-menuPanel@2x.png (downloads/download-glow-menuPanel@2x.png)
   skin/classic/browser/downloads/download-notification-finish.png  (downloads/download-notification-finish.png)
@@ -242,15 +254,9 @@ browser.jar:
   skin/classic/browser/places/unstarred48.png               (places/unstarred48.png)
   skin/classic/browser/places/unfiledBookmarks.png          (places/unfiledBookmarks.png)
   skin/classic/browser/places/unfiledBookmarks@2x.png       (places/unfiledBookmarks@2x.png)
-  skin/classic/browser/places/twisty-open.gif               (places/twisty-open.gif)
-  skin/classic/browser/places/twisty-closed.gif             (places/twisty-closed.gif)
   skin/classic/browser/places/tag.png                       (places/tag.png)
   skin/classic/browser/places/tag@2x.png                    (places/tag@2x.png)
   skin/classic/browser/places/downloads.png                 (places/downloads.png)
-  skin/classic/browser/places/expander-closed-active.png    (places/expander-closed-active.png)
-  skin/classic/browser/places/expander-closed.png           (places/expander-closed.png)
-  skin/classic/browser/places/expander-open-active.png      (places/expander-open-active.png)
-  skin/classic/browser/places/expander-open.png             (places/expander-open.png)
   skin/classic/browser/places/livemark-item.png             (places/livemark-item.png)
   skin/classic/browser/preferences/alwaysAsk.png            (preferences/alwaysAsk.png)
   skin/classic/browser/preferences/application.png          (preferences/application.png)
@@ -261,6 +267,7 @@ browser.jar:
   skin/classic/browser/preferences/saveFile.png             (preferences/saveFile.png)
 * skin/classic/browser/preferences/preferences.css          (preferences/preferences.css)
 * skin/classic/browser/preferences/in-content/preferences.css (preferences/in-content/preferences.css)
+* skin/classic/browser/preferences/in-content/dialog.css      (preferences/in-content/dialog.css)
   skin/classic/browser/preferences/in-content/favicon.ico     (../shared/incontentprefs/favicon.ico)
   skin/classic/browser/preferences/in-content/icons.png       (../shared/incontentprefs/icons.png)
   skin/classic/browser/preferences/in-content/icons@2x.png    (../shared/incontentprefs/icons@2x.png)
@@ -302,6 +309,8 @@ browser.jar:
   skin/classic/browser/tabbrowser/tab-background-start@2x.png            (tabbrowser/tab-background-start@2x.png)
   skin/classic/browser/tabbrowser/tab-overflow-indicator.png             (../shared/tabbrowser/tab-overflow-indicator.png)
 
+  skin/classic/browser/tabbrowser/pendingpaint.png                       (../shared/tabbrowser/pendingpaint.png)
+
 # NOTE: The following two files (tab-selected-end.svg, tab-selected-start.svg) get pre-processed in
 #       Makefile.in with a non-default marker of "%" and the result of that gets packaged.
   skin/classic/browser/tabbrowser/tab-selected-end.svg                   (tab-selected-end.svg)
@@ -325,12 +334,15 @@ browser.jar:
   skin/classic/browser/translating-16@2x.png                (../shared/translation/translating-16@2x.png)
   skin/classic/browser/translation-16.png                   (../shared/translation/translation-16.png)
   skin/classic/browser/translation-16@2x.png                (../shared/translation/translation-16@2x.png)
+  skin/classic/browser/devedition/search.svg                (../shared/devedition/search.svg)
+  skin/classic/browser/devedition/urlbar-history-dropmarker.svg            (../shared/devedition/urlbar-history-dropmarker.svg)
 * skin/classic/browser/devtools/common.css                  (../shared/devtools/common.css)
 * skin/classic/browser/devtools/dark-theme.css              (../shared/devtools/dark-theme.css)
 * skin/classic/browser/devtools/light-theme.css             (../shared/devtools/light-theme.css)
   skin/classic/browser/devtools/filters.svg                 (../shared/devtools/filters.svg)
   skin/classic/browser/devtools/controls.png                (../shared/devtools/images/controls.png)
   skin/classic/browser/devtools/controls@2x.png             (../shared/devtools/images/controls@2x.png)
+  skin/classic/browser/devtools/performance-icons.svg       (../shared/devtools/images/performance-icons.svg)
   skin/classic/browser/devtools/newtab.png                  (../shared/devtools/images/newtab.png)
   skin/classic/browser/devtools/newtab@2x.png               (../shared/devtools/images/newtab@2x.png)
   skin/classic/browser/devtools/newtab-inverted.png         (../shared/devtools/images/newtab-inverted.png)
@@ -419,6 +431,8 @@ browser.jar:
   skin/classic/browser/devtools/debugger-step-over@2x.png   (../shared/devtools/images/debugger-step-over@2x.png)
   skin/classic/browser/devtools/debugger-blackbox.png       (../shared/devtools/images/debugger-blackbox.png)
   skin/classic/browser/devtools/debugger-blackbox@2x.png    (../shared/devtools/images/debugger-blackbox@2x.png)
+  skin/classic/browser/devtools/debugger-prettyprint.png    (../shared/devtools/images/debugger-prettyprint.png)
+  skin/classic/browser/devtools/debugger-prettyprint@2x.png (../shared/devtools/images/debugger-prettyprint@2x.png)
   skin/classic/browser/devtools/debugger-toggleBreakpoints.png (../shared/devtools/images/debugger-toggleBreakpoints.png)
   skin/classic/browser/devtools/debugger-toggleBreakpoints@2x.png (../shared/devtools/images/debugger-toggleBreakpoints@2x.png)
   skin/classic/browser/devtools/tracer-icon.png             (../shared/devtools/images/tracer-icon.png)

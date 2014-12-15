@@ -27,11 +27,18 @@
 #define MEMORY_ALLOCATION_ALIGNMENT 16
 #endif
 
+/**This is also missing from the MinGW headers. It  also appears to be undocumented by Microsoft.*/
+#ifndef WAVE_FORMAT_48S16
+#define WAVE_FORMAT_48S16      0x00008000       /* 48     kHz, Stereo, 16-bit */
+#endif
+
+/**Taken from winbase.h, also not in MinGW.*/
+#ifndef STACK_SIZE_PARAM_IS_A_RESERVATION
+#define STACK_SIZE_PARAM_IS_A_RESERVATION   0x00010000    // Threads only
+#endif
+
 #define CUBEB_STREAM_MAX 32
 #define NBUFS 4
-/* When cubeb_stream.soft_volume is set to this value, the device supports
- * setting the volume. Otherwise, a gain will be applied manually. */
-#define SETTING_VOLUME_SUPPORTED -1.0
 
 const GUID KSDATAFORMAT_SUBTYPE_PCM =
 { 0x00000001, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
@@ -160,9 +167,9 @@ winmm_refill_stream(cubeb_stream * stm)
   hdr->dwBufferLength = got * bytes_per_frame(stm->params);
   assert(hdr->dwBufferLength <= stm->buffer_size);
 
-  if (stm->soft_volume != SETTING_VOLUME_SUPPORTED) {
+  if (stm->soft_volume != -1.0) {
     if (stm->params.format == CUBEB_SAMPLE_FLOAT32NE) {
-      short * b = (short *) hdr->lpData;
+      float * b = (float *) hdr->lpData;
       uint32_t i;
       for (i = 0; i < got * stm->params.channels; i++) {
         b[i] *= stm->soft_volume;
@@ -193,11 +200,11 @@ winmm_buffer_thread(void * user_ptr)
   assert(ctx);
 
   for (;;) {
-    DWORD rv;
+    DWORD r;
     PSLIST_ENTRY item;
 
-    rv = WaitForSingleObject(ctx->event, INFINITE);
-    assert(rv == WAIT_OBJECT_0);
+    r = WaitForSingleObject(ctx->event, INFINITE);
+    assert(r == WAIT_OBJECT_0);
 
     /* Process work items in batches so that a single stream can't
        starve the others by continuously adding new work to the top of
@@ -316,7 +323,7 @@ winmm_get_backend_id(cubeb * ctx)
 static void
 winmm_destroy(cubeb * ctx)
 {
-  DWORD rv;
+  DWORD r;
 
   assert(ctx->active_streams == 0);
   assert(!InterlockedPopEntrySList(ctx->work));
@@ -326,8 +333,8 @@ winmm_destroy(cubeb * ctx)
   if (ctx->thread) {
     ctx->shutdown = 1;
     SetEvent(ctx->event);
-    rv = WaitForSingleObject(ctx->thread, INFINITE);
-    assert(rv == WAIT_OBJECT_0);
+    r = WaitForSingleObject(ctx->thread, INFINITE);
+    assert(r == WAIT_OBJECT_0);
     CloseHandle(ctx->thread);
   }
 
@@ -351,7 +358,6 @@ winmm_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_n
 {
   MMRESULT r;
   WAVEFORMATEXTENSIBLE wfx;
-  WAVEOUTCAPS waveoutcaps;
   cubeb_stream * stm;
   int i;
   size_t bufsz;
@@ -438,19 +444,7 @@ winmm_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_n
     return CUBEB_ERROR;
   }
 
-  r = waveOutGetDevCaps(WAVE_MAPPER, &waveoutcaps, sizeof(WAVEOUTCAPS)); 
-  if(r != MMSYSERR_NOERROR) {
-    winmm_stream_destroy(stm);
-    return CUBEB_ERROR;
-  }
-
-  stm->soft_volume = SETTING_VOLUME_SUPPORTED;
-
-  /* if this device does not support setting the volume, do it manually. */
-  if(!(waveoutcaps.dwSupport & WAVECAPS_VOLUME)) {
-    stm->soft_volume = 1.0;
-  }
-
+  stm->soft_volume = -1.0;
 
   /* winmm_buffer_callback will be called during waveOutOpen, so all
      other initialization must be complete before calling it. */
@@ -494,7 +488,7 @@ winmm_stream_init(cubeb * context, cubeb_stream ** stream, char const * stream_n
 static void
 winmm_stream_destroy(cubeb_stream * stm)
 {
-  DWORD rv;
+  DWORD r;
   int i;
   int enqueued;
 
@@ -509,8 +503,8 @@ winmm_stream_destroy(cubeb_stream * stm)
 
     /* Wait for all blocks to complete. */
     while (enqueued > 0) {
-      rv = WaitForSingleObject(stm->event, INFINITE);
-      assert(rv == WAIT_OBJECT_0);
+      r = WaitForSingleObject(stm->event, INFINITE);
+      assert(r == WAIT_OBJECT_0);
 
       EnterCriticalSection(&stm->lock);
       enqueued = NBUFS - stm->free_buffers;
@@ -668,35 +662,9 @@ winmm_stream_get_latency(cubeb_stream * stm, uint32_t * latency)
 static int
 winmm_stream_set_volume(cubeb_stream * stm, float volume)
 {
-  MMRESULT r;
-  DWORD vol;
-
-  if (stm->soft_volume != SETTING_VOLUME_SUPPORTED) {
-    stm->soft_volume = volume;
-    return CUBEB_OK;
-  }
-
-  // lower order word is the left channel, higher order
-  // word is the right channel. Full volume on a channel is 0xffff.
-  vol = volume * 0xffff;
-  vol |= vol << 16;
-
   EnterCriticalSection(&stm->lock);
-  r = waveOutSetVolume(stm->waveout, vol);
-  if (r != MMSYSERR_NOERROR) {
-    stm->soft_volume = volume;
-    LeaveCriticalSection(&stm->lock);
-    return CUBEB_ERROR;
-  }
+  stm->soft_volume = volume;
   LeaveCriticalSection(&stm->lock);
-
-  return CUBEB_OK;
-}
-
-static int
-winmm_stream_set_panning(cubeb_stream * stream, float panning)
-{
-  assert(0 && "not implemented");
   return CUBEB_OK;
 }
 
@@ -714,7 +682,7 @@ static struct cubeb_ops const winmm_ops = {
   /*.stream_get_position =*/ winmm_stream_get_position,
   /*.stream_get_latency = */ winmm_stream_get_latency,
   /*.stream_set_volume =*/ winmm_stream_set_volume,
-  /*.stream_set_panning =*/ winmm_stream_set_panning,
+  /*.stream_set_panning =*/ NULL,
   /*.stream_get_current_device =*/ NULL,
   /*.stream_device_destroy =*/ NULL,
   /*.stream_register_device_changed_callback=*/ NULL

@@ -233,7 +233,7 @@ nsInlineFrame::ComputeSize(nsRenderingContext *aRenderingContext,
                            const LogicalSize& aMargin,
                            const LogicalSize& aBorder,
                            const LogicalSize& aPadding,
-                           uint32_t aFlags)
+                           ComputeSizeFlags aFlags)
 {
   // Inlines and text don't compute size before reflow.
   return LogicalSize(aWM, NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
@@ -778,11 +778,7 @@ nsInlineFrame::ReflowInlineFrame(nsPresContext* aPresContext,
 
   // Create a next-in-flow if needed.
   if (!NS_FRAME_IS_FULLY_COMPLETE(aStatus)) {
-    nsIFrame* newFrame;
-    nsresult rv = CreateNextInFlow(aFrame, newFrame);
-    if (NS_FAILED(rv)) {
-      return;
-    }
+    CreateNextInFlow(aFrame);
   }
 
   if (NS_INLINE_IS_BREAK_AFTER(aStatus)) {

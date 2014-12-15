@@ -179,7 +179,6 @@ nsHttpHandler::nsHttpHandler()
     , mAllowExperiments(true)
     , mHandlerActive(false)
     , mEnableSpdy(false)
-    , mSpdyV3(true)
     , mSpdyV31(true)
     , mHttp2DraftEnabled(true)
     , mHttp2Enabled(true)
@@ -205,6 +204,7 @@ nsHttpHandler::nsHttpHandler()
     , mTCPKeepaliveShortLivedIdleTimeS(10)
     , mTCPKeepaliveLongLivedEnabled(false)
     , mTCPKeepaliveLongLivedIdleTimeS(600)
+    , mEnforceH1Framing(false)
 {
 #if defined(PR_LOGGING)
     gHttpLog = PR_NewLogModule("nsHttp");
@@ -1176,12 +1176,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mEnableSpdy = cVar;
     }
 
-    if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v3"))) {
-        rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v3"), &cVar);
-        if (NS_SUCCEEDED(rv))
-            mSpdyV3 = cVar;
-    }
-
     if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v3-1"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v3-1"), &cVar);
         if (NS_SUCCEEDED(rv))
@@ -1498,6 +1492,13 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                                                       1, kMaxTCPKeepIdle);
     }
 
+    if (PREF_CHANGED(HTTP_PREF("enforce-framing.http1"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("enforce-framing.http1"), &cVar);
+        if (NS_SUCCEEDED(rv)) {
+            mEnforceH1Framing = cVar;
+        }
+    }
+
     // Enable HTTP response timeout if TCP Keepalives are disabled.
     mResponseTimeoutEnabled = !mTCPKeepaliveShortLivedEnabled &&
                               !mTCPKeepaliveLongLivedEnabled;
@@ -1516,6 +1517,25 @@ nsHttpHandler::TimerCallback(nsITimer * aTimer, void * aClosure)
     nsRefPtr<nsHttpHandler> thisObject = static_cast<nsHttpHandler*>(aClosure);
     if (!thisObject->mPipeliningEnabled)
         thisObject->mCapabilities &= ~NS_HTTP_ALLOW_PIPELINING;
+}
+
+static void
+NormalizeLanguageTag(char *code)
+{
+    bool is_region = false;
+    while (*code != '\0')
+    {
+        if (*code == '-') {
+            is_region = true;
+        } else {
+            if (is_region) {
+                *code = nsCRT::ToUpper(*code);
+            } else {
+                *code = nsCRT::ToLower(*code);
+            }
+        }
+        code++;
+    }
 }
 
 /**
@@ -1573,6 +1593,8 @@ PrepareAcceptLanguages(const char *i_AcceptLanguages, nsACString &o_AcceptLangua
             *trim = '\0';
 
         if (*token != '\0') {
+            NormalizeLanguageTag(token);
+
             comma = count_n++ != 0 ? "," : ""; // delimiter if not first item
             uint32_t u = QVAL_TO_UINT(q);
 
@@ -1680,7 +1702,9 @@ nsHttpHandler::NewURI(const nsACString &aSpec,
 }
 
 NS_IMETHODIMP
-nsHttpHandler::NewChannel(nsIURI *uri, nsIChannel **result)
+nsHttpHandler::NewChannel2(nsIURI* uri,
+                           nsILoadInfo* aLoadInfo,
+                           nsIChannel** result)
 {
     LOG(("nsHttpHandler::NewChannel\n"));
 
@@ -1705,6 +1729,12 @@ nsHttpHandler::NewChannel(nsIURI *uri, nsIChannel **result)
 }
 
 NS_IMETHODIMP
+nsHttpHandler::NewChannel(nsIURI *uri, nsIChannel **result)
+{
+    return NewChannel2(uri, nullptr, result);
+}
+
+NS_IMETHODIMP
 nsHttpHandler::AllowPort(int32_t port, const char *scheme, bool *_retval)
 {
     // don't override anything.
@@ -1717,11 +1747,12 @@ nsHttpHandler::AllowPort(int32_t port, const char *scheme, bool *_retval)
 //-----------------------------------------------------------------------------
 
 NS_IMETHODIMP
-nsHttpHandler::NewProxiedChannel(nsIURI *uri,
-                                 nsIProxyInfo* givenProxyInfo,
-                                 uint32_t proxyResolveFlags,
-                                 nsIURI *proxyURI,
-                                 nsIChannel **result)
+nsHttpHandler::NewProxiedChannel2(nsIURI *uri,
+                                  nsIProxyInfo* givenProxyInfo,
+                                  uint32_t proxyResolveFlags,
+                                  nsIURI *proxyURI,
+                                  nsILoadInfo* aLoadInfo,
+                                  nsIChannel** result)
 {
     nsRefPtr<HttpBaseChannel> httpChannel;
 
@@ -1764,6 +1795,18 @@ nsHttpHandler::NewProxiedChannel(nsIURI *uri,
 
     httpChannel.forget(result);
     return NS_OK;
+}
+
+NS_IMETHODIMP
+nsHttpHandler::NewProxiedChannel(nsIURI *uri,
+                                 nsIProxyInfo* givenProxyInfo,
+                                 uint32_t proxyResolveFlags,
+                                 nsIURI *proxyURI,
+                                 nsIChannel **result)
+{
+    return NewProxiedChannel2(uri, givenProxyInfo,
+                              proxyResolveFlags, proxyURI,
+                              nullptr, result);
 }
 
 //-----------------------------------------------------------------------------
@@ -2057,12 +2100,20 @@ nsHttpsHandler::NewURI(const nsACString &aSpec,
 }
 
 NS_IMETHODIMP
-nsHttpsHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
+nsHttpsHandler::NewChannel2(nsIURI* aURI,
+                            nsILoadInfo* aLoadInfo,
+                            nsIChannel** _retval)
 {
     MOZ_ASSERT(gHttpHandler);
     if (!gHttpHandler)
       return NS_ERROR_UNEXPECTED;
     return gHttpHandler->NewChannel(aURI, _retval);
+}
+
+NS_IMETHODIMP
+nsHttpsHandler::NewChannel(nsIURI *aURI, nsIChannel **_retval)
+{
+    return NewChannel2(aURI, nullptr, _retval);
 }
 
 NS_IMETHODIMP

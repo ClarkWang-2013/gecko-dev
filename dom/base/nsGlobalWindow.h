@@ -104,13 +104,14 @@ class Console;
 class External;
 class Function;
 class Gamepad;
+class VRDevice;
 class MediaQueryList;
 class MozSelfSupport;
 class Navigator;
 class OwningExternalOrWindowProxy;
 class Promise;
 struct RequestInit;
-class RequestOrScalarValueString;
+class RequestOrUSVString;
 class Selection;
 class SpeechSynthesis;
 class WakeLock;
@@ -118,6 +119,9 @@ namespace indexedDB {
 class IDBFactory;
 } // namespace indexedDB
 } // namespace dom
+namespace gfx {
+class VRHMDInfo;
+} // namespace gfx
 } // namespace mozilla
 
 extern nsresult
@@ -464,7 +468,8 @@ public:
   virtual void RefreshCompartmentPrincipal();
 
   // Outer windows only.
-  virtual nsresult SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust);
+  virtual nsresult SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust,
+                                         mozilla::gfx::VRHMDInfo *aHMD = nullptr);
   bool FullScreen() const;
 
   // Inner windows only.
@@ -483,9 +488,9 @@ public:
   static bool IsShowModalDialogEnabled(JSContext* /* unused */ = nullptr,
                                        JSObject* /* unused */ = nullptr);
 
-  bool DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
-                    JS::Handle<jsid> aId,
-                    JS::MutableHandle<JSPropertyDescriptor> aDesc);
+  bool DoResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
+                 JS::Handle<jsid> aId,
+                 JS::MutableHandle<JSPropertyDescriptor> aDesc);
 
   void GetOwnPropertyNames(JSContext* aCx, nsTArray<nsString>& aNames,
                            mozilla::ErrorResult& aRv);
@@ -734,6 +739,8 @@ public:
   void EnableGamepadUpdates();
   void DisableGamepadUpdates();
 
+  // Get the VR devices for this window, initializing if necessary
+  bool GetVRDevices(nsTArray<nsRefPtr<mozilla::dom::VRDevice>>& aDevices);
 
 #define EVENT(name_, id_, type_, struct_)                                     \
   mozilla::dom::EventHandlerNonNull* GetOn##name_()                           \
@@ -857,7 +864,7 @@ public:
   void Alert(mozilla::ErrorResult& aError);
   void Alert(const nsAString& aMessage, mozilla::ErrorResult& aError);
   bool Confirm(const nsAString& aMessage, mozilla::ErrorResult& aError);
-  already_AddRefed<mozilla::dom::Promise> Fetch(const mozilla::dom::RequestOrScalarValueString& aInput,
+  already_AddRefed<mozilla::dom::Promise> Fetch(const mozilla::dom::RequestOrUSVString& aInput,
                                                 const mozilla::dom::RequestInit& aInit,
                                                 mozilla::ErrorResult& aRv);
   void Prompt(const nsAString& aMessage, const nsAString& aInitial,
@@ -1092,7 +1099,6 @@ protected:
   }
 
   void FreeInnerObjects();
-  JSObject *CallerGlobal();
   nsGlobalWindow *CallerInnerWindow();
 
   // Only to be called on an inner window.
@@ -1627,6 +1633,16 @@ protected:
   // mSpeechSynthesis is only used on inner windows.
   nsRefPtr<mozilla::dom::SpeechSynthesis> mSpeechSynthesis;
 #endif
+
+  // This is the CC generation the last time we called CanSkip.
+  uint32_t mCanSkipCCGeneration;
+
+  // Did VR get initialized for this window?
+  bool                                       mVRDevicesInitialized;
+  // The VRDevies for this window
+  nsTArray<nsRefPtr<mozilla::dom::VRDevice>> mVRDevices;
+  // Any attached HMD when fullscreen
+  nsRefPtr<mozilla::gfx::VRHMDInfo>          mVRHMDInfo;
 
   friend class nsDOMScriptableHelper;
   friend class nsDOMWindowUtils;

@@ -56,6 +56,22 @@ class ArrayBufferViewObject;
 // As ArrayBufferObject and SharedArrayBufferObject are separated, so are the
 // TypedArray hierarchies below the two.  However, the TypedArrays have the
 // same layout (see TypedArrayObject.h), so there is little code duplication.
+//
+// The possible data ownership and reference relationships with array buffers
+// and related classes are enumerated below. These are the possible locations
+// for typed data:
+//
+// (1) malloc'ed or mmap'ed data owned by an ArrayBufferObject.
+// (2) Data allocated inline with an ArrayBufferObject.
+// (3) Data allocated inline with a TypedArrayObject.
+// (4) Data allocated inline with an InlineTypedObject.
+//
+// An ArrayBufferObject may point to any of these sources of data, except (3).
+// All array buffer views may point to any of these sources of data, except
+// that (3) may only be pointed to by the typed array the data is inline with.
+//
+// During a minor GC, (3) and (4) may move. During a compacting GC, (2), (3),
+// and (4) may move.
 
 class ArrayBufferObjectMaybeShared;
 
@@ -81,8 +97,8 @@ class ArrayBufferObjectMaybeShared : public NativeObject
  * This class holds the underlying raw buffer that the various
  * ArrayBufferViewObject subclasses (DataViewObject and the TypedArrays)
  * access. It can be created explicitly and passed to an ArrayBufferViewObject
- * subclass, or can be created implicitly by constructing a TypedArrayObject
- * with a size.
+ * subclass, or can be created lazily when it is first accessed for a
+ * TypedArrayObject or TypedObject that doesn't have an explicit buffer.
  *
  * ArrayBufferObject (or really the underlying memory) /is not racy/: the
  * memory is private to a single worker.
@@ -103,6 +119,11 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     static const size_t ARRAY_BUFFER_ALIGNMENT = 8;
 
   public:
+
+    enum OwnsState {
+        DoesntOwnData = 0,
+        OwnsData = 1,
+    };
 
     enum BufferKind {
         PLAIN               = 0, // malloced or inline data
@@ -125,7 +146,21 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
         // when no longer in use. Releasing the pointer may be done by either
         // freeing or unmapping it, and how to do this is determined by the
         // buffer's other flags.
+        //
+        // Array buffers which do not own their data include buffers that
+        // allocate their data inline, and buffers that are created lazily for
+        // typed objects with inline storage, in which case the buffer points
+        // directly to the typed object's storage.
         OWNS_DATA           = 0x8,
+
+        // This array buffer was created lazily for a typed object with inline
+        // data. This implies both that the typed object owns the buffer's data
+        // and that the list of views sharing this buffer's data might be
+        // incomplete. Any missing views will be typed objects.
+        FOR_INLINE_TYPED_OBJECT = 0x10,
+
+        // Views of this buffer might include typed objects.
+        TYPED_OBJECT_VIEWS  = 0x20
     };
 
   public:
@@ -151,7 +186,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
             return BufferContents(static_cast<uint8_t*>(data), Kind);
         }
 
-        static BufferContents createUnowned(void *data)
+        static BufferContents createPlain(void *data)
         {
             return BufferContents(static_cast<uint8_t*>(data), PLAIN);
         }
@@ -181,6 +216,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
     static ArrayBufferObject *create(JSContext *cx, uint32_t nbytes,
                                      BufferContents contents,
+                                     OwnsState ownsState = OwnsData,
                                      NewObjectKind newKind = GenericObject);
     static ArrayBufferObject *create(JSContext *cx, uint32_t nbytes,
                                      NewObjectKind newKind = GenericObject);
@@ -197,6 +233,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     template<typename T>
     static bool createTypedArrayFromBuffer(JSContext *cx, unsigned argc, Value *vp);
 
+    static void trace(JSTracer *trc, JSObject *obj);
     static void objectMoved(JSObject *obj, const JSObject *old);
 
     static BufferContents stealContents(JSContext *cx,
@@ -227,9 +264,9 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
     // ArrayBufferObjects (strongly) store the first view added to them, while
     // later views are (weakly) stored in the compartment's InnerViewTable
-    // below. Buffers typically have at least one view, so this slot optimizes
-    // for the common case. Avoid entries in the InnerViewTable saves memory
-    // and non-incrementalized sweep time.
+    // below. Buffers usually only have one view, so this slot optimizes for
+    // the common case. Avoiding entries in the InnerViewTable saves memory and
+    // non-incrementalized sweep time.
     ArrayBufferViewObject *firstView();
 
     bool addView(JSContext *cx, JSObject *view);
@@ -301,12 +338,16 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
     static uint32_t neuteredFlag() { return NEUTERED; }
 
-  protected:
-    enum OwnsState {
-        DoesntOwnData = 0,
-        OwnsData = 1,
-    };
+    void setForInlineTypedObject() {
+        setFlags(flags() | FOR_INLINE_TYPED_OBJECT);
+    }
+    void setHasTypedObjectViews() {
+        setFlags(flags() | TYPED_OBJECT_VIEWS);
+    }
 
+    bool forInlineTypedObject() const { return flags() & FOR_INLINE_TYPED_OBJECT; }
+
+  protected:
     void setDataPointer(BufferContents contents, OwnsState ownsState);
     void setByteLength(size_t length);
 
@@ -317,6 +358,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     void setOwnsData(OwnsState owns) {
         setFlags(owns ? (flags() | OWNS_DATA) : (flags() & ~OWNS_DATA));
     }
+
+    bool hasTypedObjectViews() const { return flags() & TYPED_OBJECT_VIEWS; }
 
     void setIsAsmJSMalloced() { setFlags((flags() & ~KIND_MASK) | ASMJS_MALLOCED); }
     void setIsNeutered() { setFlags(flags() | NEUTERED); }

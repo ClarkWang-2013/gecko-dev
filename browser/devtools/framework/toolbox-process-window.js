@@ -8,7 +8,7 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 let { gDevTools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
 let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
-let { debuggerSocketConnect, DebuggerClient } =
+let { DebuggerClient } =
   Cu.import("resource://gre/modules/devtools/dbg-client.jsm", {});
 let { ViewHelpers } =
   Cu.import("resource:///modules/devtools/ViewHelpers.jsm", {});
@@ -26,7 +26,7 @@ let gToolbox, gClient;
 function connect() {
   window.removeEventListener("load", connect);
   // Initiate the connection
-  let transport = debuggerSocketConnect(
+  let transport = DebuggerClient.socketConnect(
     Prefs.chromeDebuggingHost,
     Prefs.chromeDebuggingPort
   );
@@ -37,11 +37,7 @@ function connect() {
     if (addonID) {
       gClient.listAddons(({addons}) => {
         let addonActor = addons.filter(addon => addon.id === addonID).pop();
-        openToolbox({
-          addonActor: addonActor.actor,
-          consoleActor: addonActor.consoleActor,
-          title: addonActor.name
-        });
+        openToolbox(addonActor);
       });
     } else {
       gClient.listTabs(openToolbox);
@@ -53,6 +49,7 @@ function connect() {
 function setPrefDefaults() {
   Services.prefs.setBoolPref("devtools.inspector.showUserAgentStyles", true);
   Services.prefs.setBoolPref("devtools.profiler.ui.show-platform-data", true);
+  Services.prefs.setBoolPref("browser.devedition.theme.showCustomizeButton", false);
 }
 
 window.addEventListener("load", function() {
@@ -74,9 +71,21 @@ function openToolbox(form) {
   };
   devtools.TargetFactory.forRemoteTab(options).then(target => {
     let frame = document.getElementById("toolbox-iframe");
+    let selectedTool = "jsdebugger";
+
+    try {
+      // Remember the last panel that was used inside of this profile.
+      selectedTool = Services.prefs.getCharPref("devtools.toolbox.selectedTool");
+    } catch(e) {}
+
+    try {
+      // But if we are testing, then it should always open the debugger panel.
+      selectedTool = Services.prefs.getCharPref("devtools.browsertoolbox.panel");
+    } catch(e) {}
+
     let options = { customIframe: frame };
     gDevTools.showToolbox(target,
-                          "jsdebugger",
+                          selectedTool,
                           devtools.Toolbox.HostType.CUSTOM,
                           options)
              .then(onNewToolbox);
@@ -92,6 +101,37 @@ function onNewToolbox(toolbox) {
 function bindToolboxHandlers() {
   gToolbox.once("destroyed", quitApp);
   window.addEventListener("unload", onUnload);
+
+#ifdef XP_MACOSX
+  // Badge the dock icon to differentiate this process from the main application process.
+  updateBadgeText(false);
+
+  // Check if the debugger panel is already loaded otherwise listen for it to be.
+  if (gToolbox.getPanel("jsdebugger")) {
+    setupThreadListeners(gToolbox.getPanel("jsdebugger"));
+  } else {
+    gToolbox.once("jsdebugger-ready", (e, panel) => setupThreadListeners(panel));
+  }
+#endif
+}
+
+function setupThreadListeners(panel) {
+  updateBadgeText(panel._controller.activeThread.state == "paused");
+
+  let onPaused = updateBadgeText.bind(null, true);
+  let onResumed = updateBadgeText.bind(null, false);
+  panel.target.on("thread-paused", onPaused);
+  panel.target.on("thread-resumed", onResumed);
+
+  panel.once("destroyed", () => {
+    panel.off("thread-paused", onPaused);
+    panel.off("thread-resumed", onResumed);
+  });
+}
+
+function updateBadgeText(paused) {
+  let dockSupport = Cc["@mozilla.org/widget/macdocksupport;1"].getService(Ci.nsIMacDockSupport);
+  dockSupport.badgeText = paused ? "▐▐ " : " ▶";
 }
 
 function onUnload() {

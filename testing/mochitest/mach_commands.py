@@ -92,7 +92,7 @@ class MochitestRunner(MozbuildObject):
         appname = 'webapprt-stub' + mozinfo.info.get('bin_suffix', '')
         if sys.platform.startswith('darwin'):
             appname = os.path.join(self.distdir, self.substs['MOZ_MACBUNDLE_NAME'],
-            'Contents', 'MacOS', appname)
+            'Contents', 'Resources', appname)
         else:
             appname = os.path.join(self.distdir, 'bin', appname)
         return appname
@@ -194,7 +194,7 @@ class MochitestRunner(MozbuildObject):
         e10s=False, content_sandbox='off', dmd=False, dump_output_directory=None,
         dump_about_memory_after_test=False, dump_dmd_after_test=False,
         install_extension=None, quiet=False, environment=[], app_override=None, bisectChunk=None, runByDir=False,
-        useTestMediaDevices=False, **kwargs):
+        useTestMediaDevices=False, timeout=None, **kwargs):
         """Runs a mochitest.
 
         test_paths are path to tests. They can be a relative path from the
@@ -325,6 +325,8 @@ class MochitestRunner(MozbuildObject):
         options.bisectChunk = bisectChunk
         options.runByDir = runByDir
         options.useTestMediaDevices = useTestMediaDevices
+        if timeout:
+          options.timeout = int(timeout)
 
         options.failureFile = failure_file_path
         if install_extension != None:
@@ -568,6 +570,10 @@ def MochitestCommand(func):
             "If you have run ./mach package beforehand, you can specify 'dist' to " \
             "run tests against the distribution bundle's binary.");
     func = app_override(func)
+
+    timeout = CommandArgument('--timeout', default=None,
+        help='The per-test timeout time in seconds (default: 60 seconds)');
+    func = timeout(func)
 
     return func
 

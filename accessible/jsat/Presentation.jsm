@@ -11,8 +11,7 @@
 const {utils: Cu, interfaces: Ci} = Components;
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
-XPCOMUtils.defineLazyModuleGetter(this, 'Utils', // jshint ignore:line
-  'resource://gre/modules/accessibility/Utils.jsm');
+Cu.import('resource://gre/modules/accessibility/Utils.jsm');
 XPCOMUtils.defineLazyModuleGetter(this, 'Logger', // jshint ignore:line
   'resource://gre/modules/accessibility/Utils.jsm');
 XPCOMUtils.defineLazyModuleGetter(this, 'PivotContext', // jshint ignore:line
@@ -60,8 +59,8 @@ Presenter.prototype = {
   /**
    * Text has changed, either by the user or by the system. TODO.
    */
-  textChanged: function textChanged(aIsInserted, aStartOffset, aLength, aText, // jshint ignore:line
-                                    aModifiedText) {}, // jshint ignore:line
+  textChanged: function textChanged(aAccessible, aIsInserted, aStartOffset, // jshint ignore:line
+                                    aLength, aText, aModifiedText) {}, // jshint ignore:line
 
   /**
    * Text selection has changed. TODO.
@@ -344,7 +343,7 @@ AndroidPresenter.prototype.tabStateChanged =
   };
 
 AndroidPresenter.prototype.textChanged = function AndroidPresenter_textChanged(
-  aIsInserted, aStart, aLength, aText, aModifiedText) {
+  aAccessible, aIsInserted, aStart, aLength, aText, aModifiedText) {
     let eventDetails = {
       eventType: this.ANDROID_VIEW_TEXT_CHANGED,
       text: [aText],
@@ -452,6 +451,18 @@ AndroidPresenter.prototype.liveRegion =
       UtteranceGenerator.genForLiveRegion(aContext, aIsHide, aModifiedText));
   };
 
+AndroidPresenter.prototype.noMove =
+  function AndroidPresenter_noMove(aMoveMethod) {
+    return {
+      type: this.type,
+      details: [
+      { eventType: this.ANDROID_VIEW_ACCESSIBILITY_FOCUSED,
+        exitView: aMoveMethod,
+        text: ['']
+      }]
+    };
+  };
+
 /**
  * A B2G presenter for Gaia.
  */
@@ -460,6 +471,13 @@ function B2GPresenter() {}
 B2GPresenter.prototype = Object.create(Presenter.prototype);
 
 B2GPresenter.prototype.type = 'B2G';
+
+B2GPresenter.prototype.keyboardEchoSetting =
+  new PrefCache('accessibility.accessfu.keyboard_echo');
+B2GPresenter.prototype.NO_ECHO = 0;
+B2GPresenter.prototype.CHARACTER_ECHO = 1;
+B2GPresenter.prototype.WORD_ECHO = 2;
+B2GPresenter.prototype.CHARACTER_AND_WORD_ECHO = 3;
 
 /**
  * A pattern used for haptic feedback.
@@ -489,7 +507,8 @@ B2GPresenter.prototype.pivotChanged =
           pattern: this.PIVOT_CHANGE_HAPTIC_PATTERN,
           isKey: Utils.isActivatableOnFingerUp(aContext.accessible),
           reason: this.pivotChangedReasons[aReason],
-          isUserInput: aIsUserInput
+          isUserInput: aIsUserInput,
+          hints: aContext.interactionHints
         }
       }
     };
@@ -497,6 +516,12 @@ B2GPresenter.prototype.pivotChanged =
 
 B2GPresenter.prototype.valueChanged =
   function B2GPresenter_valueChanged(aAccessible) {
+
+    // the editable value changes are handled in the text changed presenter
+    if (Utils.getState(aAccessible).contains(States.EDITABLE)) {
+      return null;
+    }
+
     return {
       type: this.type,
       details: {
@@ -504,6 +529,42 @@ B2GPresenter.prototype.valueChanged =
         data: aAccessible.value
       }
     };
+  };
+
+B2GPresenter.prototype.textChanged = function B2GPresenter_textChanged(
+  aAccessible, aIsInserted, aStart, aLength, aText, aModifiedText) {
+    let echoSetting = this.keyboardEchoSetting.value;
+    let text = '';
+
+    if (echoSetting == this.CHARACTER_ECHO ||
+        echoSetting == this.CHARACTER_AND_WORD_ECHO) {
+      text = aModifiedText;
+    }
+
+    // add word if word boundary is added
+    if ((echoSetting == this.WORD_ECHO ||
+        echoSetting == this.CHARACTER_AND_WORD_ECHO) &&
+        aIsInserted && aLength === 1) {
+      let accText = aAccessible.QueryInterface(Ci.nsIAccessibleText);
+      let startBefore = {}, endBefore = {};
+      let startAfter = {}, endAfter = {};
+      accText.getTextBeforeOffset(aStart,
+        Ci.nsIAccessibleText.BOUNDARY_WORD_END, startBefore, endBefore);
+      let maybeWord = accText.getTextBeforeOffset(aStart + 1,
+        Ci.nsIAccessibleText.BOUNDARY_WORD_END, startAfter, endAfter);
+      if (endBefore.value !== endAfter.value) {
+        text += maybeWord;
+      }
+    }
+
+    return {
+      type: this.type,
+      details: {
+        eventType: 'text-change',
+        data: text
+      }
+    };
+
   };
 
 B2GPresenter.prototype.actionInvoked =
@@ -614,11 +675,11 @@ this.Presentation = { // jshint ignore:line
       for each (p in this.presenters)]; // jshint ignore:line
   },
 
-  textChanged: function Presentation_textChanged(aIsInserted, aStartOffset,
-                                    aLength, aText,
+  textChanged: function Presentation_textChanged(aAccessible, aIsInserted,
+                                    aStartOffset, aLength, aText,
                                     aModifiedText) {
-    return [p.textChanged(aIsInserted, aStartOffset, aLength, aText, // jshint ignore:line
-      aModifiedText) for each (p in this.presenters)]; // jshint ignore:line
+    return [p.textChanged(aAccessible, aIsInserted, aStartOffset, aLength, // jshint ignore:line
+      aText, aModifiedText) for each (p in this.presenters)]; // jshint ignore:line
   },
 
   textSelectionChanged: function textSelectionChanged(aText, aStart, aEnd,

@@ -46,11 +46,15 @@ namespace jit {
     _(Abs)                                      \
     _(Sqrt)                                     \
     _(Atan2)                                    \
+    _(Hypot)                                    \
+    _(MathFunction)                             \
     _(StringSplit)                              \
     _(RegExpExec)                               \
     _(RegExpTest)                               \
     _(RegExpReplace)                            \
+    _(StringReplace)                            \
     _(TypeOf)                                   \
+    _(ToDouble)                                 \
     _(ToFloat32)                                \
     _(NewObject)                                \
     _(NewArray)                                 \
@@ -456,6 +460,33 @@ class RAtan2 MOZ_FINAL : public RInstruction
     bool recover(JSContext *cx, SnapshotIterator &iter) const;
 };
 
+class RHypot MOZ_FINAL : public RInstruction
+{
+   public:
+     RINSTRUCTION_HEADER_(Hypot)
+
+     virtual uint32_t numOperands() const {
+         return 2;
+     }
+
+     bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
+class RMathFunction MOZ_FINAL : public RInstruction
+{
+  private:
+    uint8_t function_;
+
+  public:
+    RINSTRUCTION_HEADER_(MathFunction)
+
+    virtual uint32_t numOperands() const {
+        return 1;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
 class RStringSplit MOZ_FINAL : public RInstruction
 {
   public:
@@ -504,10 +535,34 @@ class RRegExpReplace MOZ_FINAL : public RInstruction
     bool recover(JSContext *cx, SnapshotIterator &iter) const;
 };
 
+class RStringReplace MOZ_FINAL : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_(StringReplace)
+
+    virtual uint32_t numOperands() const {
+        return 3;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
 class RTypeOf MOZ_FINAL : public RInstruction
 {
   public:
     RINSTRUCTION_HEADER_(TypeOf)
+
+    virtual uint32_t numOperands() const {
+        return 1;
+    }
+
+    bool recover(JSContext *cx, SnapshotIterator &iter) const;
+};
+
+class RToDouble MOZ_FINAL : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_(ToDouble)
 
     virtual uint32_t numOperands() const {
         return 1;

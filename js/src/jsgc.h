@@ -24,6 +24,8 @@
 
 namespace js {
 
+class AutoLockGC;
+
 namespace gc {
 class ForkJoinNursery;
 }
@@ -35,6 +37,12 @@ enum HeapState {
     Tracing,          // tracing the GC heap without collecting, e.g. IterateCompartments()
     MajorCollecting,  // doing a GC of the major heap
     MinorCollecting   // doing a GC of the minor heap (nursery)
+};
+
+enum ThreadType
+{
+    MainThread,
+    BackgroundThread
 };
 
 namespace jit {
@@ -50,9 +58,7 @@ enum State {
     MARK_ROOTS,
     MARK,
     SWEEP,
-#ifdef JSGC_COMPACTING
     COMPACT
-#endif
 };
 
 /* Return a printable string for the given kind, for diagnostic purposes. */
@@ -497,7 +503,8 @@ class ArenaList {
     }
 
 #ifdef JSGC_COMPACTING
-    ArenaHeader *pickArenasToRelocate();
+    ArenaHeader *removeRemainingArenas(ArenaHeader **arenap, const AutoLockGC &lock);
+    ArenaHeader *pickArenasToRelocate(JSRuntime *runtime);
     ArenaHeader *relocateArenas(ArenaHeader *toRelocate, ArenaHeader *relocated);
 #endif
 };
@@ -591,6 +598,8 @@ class SortedArenaList
 
 class ArenaLists
 {
+    JSRuntime *runtime_;
+
     /*
      * For each arena kind its free list is represented as the first span with
      * free things. Initially all the spans are initialized as empty. After we
@@ -635,7 +644,7 @@ class ArenaLists
     ArenaHeader *savedEmptyObjectArenas;
 
   public:
-    ArenaLists() {
+    ArenaLists(JSRuntime *rt) : runtime_(rt) {
         for (size_t i = 0; i != FINALIZE_LIMIT; ++i)
             freeLists[i].initAsEmpty();
         for (size_t i = 0; i != FINALIZE_LIMIT; ++i)
@@ -650,21 +659,7 @@ class ArenaLists
         savedEmptyObjectArenas = nullptr;
     }
 
-    ~ArenaLists() {
-        for (size_t i = 0; i != FINALIZE_LIMIT; ++i) {
-            /*
-             * We can only call this during the shutdown after the last GC when
-             * the background finalization is disabled.
-             */
-            MOZ_ASSERT(backgroundFinalizeState[i] == BFS_DONE);
-            ReleaseArenaList(arenaLists[i].head());
-        }
-        ReleaseArenaList(incrementalSweptArenas.head());
-
-        for (size_t i = 0; i < FINALIZE_OBJECT_LIMIT; i++)
-            ReleaseArenaList(savedObjectArenas[i].head());
-        ReleaseArenaList(savedEmptyObjectArenas);
-    }
+    ~ArenaLists();
 
     static uintptr_t getFreeListOffset(AllocKind thingKind) {
         uintptr_t offset = offsetof(ArenaLists, freeLists);
@@ -853,7 +848,7 @@ class ArenaLists
 
     bool foregroundFinalize(FreeOp *fop, AllocKind thingKind, SliceBudget &sliceBudget,
                             SortedArenaList &sweepList);
-    static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead);
+    static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead, ArenaHeader **empty);
 
     void wipeDuringParallelExecution(JSRuntime *rt);
 
@@ -889,13 +884,6 @@ class ArenaLists
 
     friend class GCRuntime;
 };
-
-/*
- * Initial allocation size for data structures holding chunks is set to hold
- * chunks with total capacity of 16MB to avoid buffer resizes during browser
- * startup.
- */
-const size_t INITIAL_CHUNK_CAPACITY = 16 * 1024 * 1024 / ChunkSize;
 
 /* The number of GC cycles an empty chunk can survive before been released. */
 const size_t MAX_EMPTY_CHUNK_AGE = 4;
@@ -1003,9 +991,7 @@ class GCHelperState
 {
     enum State {
         IDLE,
-        SWEEPING,
-        ALLOCATING,
-        CANCEL_ALLOCATION
+        SWEEPING
     };
 
     // Associated runtime.
@@ -1031,8 +1017,6 @@ class GCHelperState
     bool              sweepFlag;
     bool              shrinkFlag;
 
-    bool              backgroundAllocation;
-
     friend class js::gc::ArenaLists;
 
     static void freeElementsAndArray(void **array, void **end) {
@@ -1042,8 +1026,7 @@ class GCHelperState
         js_free(array);
     }
 
-    /* Must be called with the GC lock taken. */
-    void doSweep();
+    void doSweep(AutoLockGC &lock);
 
   public:
     explicit GCHelperState(JSRuntime *rt)
@@ -1052,8 +1035,7 @@ class GCHelperState
         state_(IDLE),
         thread(nullptr),
         sweepFlag(false),
-        shrinkFlag(false),
-        backgroundAllocation(true)
+        shrinkFlag(false)
     { }
 
     bool init();
@@ -1061,28 +1043,11 @@ class GCHelperState
 
     void work();
 
-    /* Must be called with the GC lock taken. */
-    void startBackgroundSweep(bool shouldShrink);
-
-    /* Must be called with the GC lock taken. */
-    void startBackgroundShrink();
+    void maybeStartBackgroundSweep(const AutoLockGC &lock);
+    void startBackgroundShrink(const AutoLockGC &lock);
 
     /* Must be called without the GC lock taken. */
     void waitBackgroundSweepEnd();
-
-    /* Must be called without the GC lock taken. */
-    void waitBackgroundSweepOrAllocEnd();
-
-    /* Must be called with the GC lock taken. */
-    void startBackgroundAllocationIfIdle();
-
-    bool canBackgroundAllocate() const {
-        return backgroundAllocation;
-    }
-
-    void disableBackgroundAllocation() {
-        backgroundAllocation = false;
-    }
 
     bool onBackgroundThread();
 
@@ -1116,11 +1081,15 @@ class GCParallelTask
     uint64_t duration_;
 
   protected:
+    // A flag to signal a request for early completion of the off-thread task.
+    mozilla::Atomic<bool> cancel_;
+
     virtual void run() = 0;
 
   public:
     GCParallelTask() : state(NotStarted), duration_(0) {}
 
+    // Time spent in the most recent invocation of this task.
     int64_t duration() const { return duration_; }
 
     // The simple interface to a parallel task works exactly like pthreads.
@@ -1134,6 +1103,17 @@ class GCParallelTask
 
     // Instead of dispatching to a helper, run the task on the main thread.
     void runFromMainThread(JSRuntime *rt);
+
+    // Dispatch a cancelation request.
+    enum CancelMode { CancelNoWait, CancelAndWait};
+    void cancel(CancelMode mode = CancelNoWait) {
+        cancel_ = true;
+        if (mode == CancelAndWait)
+            join();
+    }
+
+    // Check if a task is actively running.
+    bool isRunning() const;
 
     // This should be friended to HelperThread, but cannot be because it
     // would introduce several circular dependencies.
@@ -1476,6 +1456,34 @@ class AutoEnterOOMUnsafeRegion {};
 // is appropriate.
 bool
 IsInsideGGCNursery(const gc::Cell *cell);
+
+// A singly linked list of zones.
+class ZoneList
+{
+    static Zone * const End;
+
+    Zone *head;
+    Zone *tail;
+
+  public:
+    ZoneList();
+    explicit ZoneList(Zone *singleZone);
+
+    bool isEmpty() const;
+    Zone *front() const;
+
+    void append(Zone *zone);
+    void append(ZoneList& list);
+    Zone *removeFront();
+
+    void transferFrom(ZoneList &other);
+
+  private:
+    void check() const;
+
+    ZoneList(const ZoneList &other) MOZ_DELETE;
+    ZoneList &operator=(const ZoneList &other) MOZ_DELETE;
+};
 
 } /* namespace gc */
 

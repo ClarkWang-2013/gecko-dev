@@ -835,13 +835,18 @@ RTCPeerConnection.prototype = {
       throw new this._win.DOMError("",
           "Invalid candidate passed to addIceCandidate!");
     }
+
+    this._queueOrRun({
+      func: this._addIceCandidate,
+      args: [cand, onSuccess, onError],
+      wait: false
+    });
+  },
+
+  _addIceCandidate: function(cand, onSuccess, onError) {
     this._onAddIceCandidateSuccess = onSuccess || null;
     this._onAddIceCandidateError = onError || null;
 
-    this._queueOrRun({ func: this._addIceCandidate, args: [cand], wait: false });
-  },
-
-  _addIceCandidate: function(cand) {
     this._impl.addIceCandidate(cand.candidate, cand.sdpMid || "",
                                (cand.sdpMLineIndex === null) ? 0 :
                                  cand.sdpMLineIndex + 1);
@@ -979,6 +984,7 @@ RTCPeerConnection.prototype = {
 
   get peerIdentity() { return this._peerIdentity; },
   get id() { return this._impl.id; },
+  set id(s) { this._impl.id = s; },
   get iceGatheringState()  { return this._iceGatheringState; },
   get iceConnectionState() { return this._iceConnectionState; },
 
@@ -1297,8 +1303,7 @@ PeerConnectionObserver.prototype = {
   onStateChange: function(state) {
     switch (state) {
       case "SignalingState":
-        this._dompc.callCB(this._dompc.onsignalingstatechange,
-                           this._dompc.signalingState);
+        this.dispatchEvent(new this._win.Event("signalingstatechange"));
         break;
 
       case "IceConnectionState":

@@ -404,7 +404,7 @@ pref("font.size.inflation.minTwips", 120);
 // When true, zooming will be enabled on all sites, even ones that declare user-scalable=no.
 pref("browser.ui.zoom.force-user-scalable", false);
 
-pref("ui.touch.radius.enabled", true);
+pref("ui.touch.radius.enabled", false);
 pref("ui.touch.radius.leftmm", 3);
 pref("ui.touch.radius.topmm", 5);
 pref("ui.touch.radius.rightmm", 3);
@@ -417,6 +417,7 @@ pref("ui.mouse.radius.topmm", 5);
 pref("ui.mouse.radius.rightmm", 3);
 pref("ui.mouse.radius.bottommm", 2);
 pref("ui.mouse.radius.visitedWeight", 120);
+pref("ui.mouse.radius.reposition", true);
 
 // The percentage of the screen that needs to be scrolled before margins are exposed.
 pref("browser.ui.show-margins-threshold", 10);
@@ -551,6 +552,11 @@ pref("dom.indexedDB.warningQuota", 5);
 // prevent video elements from preloading too much data
 pref("media.preload.default", 1); // default to preload none
 pref("media.preload.auto", 2);    // preload metadata if preload=auto
+pref("media.cache_size", 32768);    // 32MB media cache
+// Try to save battery by not resuming reading from a connection until we fall
+// below 10s of buffered data.
+pref("media.cache_resume_threshold", 10);
+pref("media.cache_readahead_limit", 30);
 
 // Number of video frames we buffer while decoding video.
 // On Android this is decided by a similar value which varies for
@@ -568,7 +574,6 @@ pref("media.fragmented-mp4.android-media-codec.preferred", true);
 
 // optimize images memory usage
 pref("image.mem.decodeondraw", true);
-pref("image.mem.min_discard_timeout_ms", 10000);
 
 #ifdef NIGHTLY_BUILD
 // Shumway component (SWF player) is disabled by default. Also see bug 904346.
@@ -610,6 +615,11 @@ pref("urlclassifier.gethash.timeout_ms", 5000);
 // a gethash request will be forced to check that the result is still in
 // the database.
 pref("urlclassifier.max-complete-age", 2700);
+#endif
+
+// URL for posting tiles metrics.
+#ifdef RELEASE_BUILD
+pref("browser.tiles.reportURL", "https://tiles.services.mozilla.com/v2/links/click");
 #endif
 
 // True if this is the first time we are showing about:firstrun
@@ -845,3 +855,6 @@ pref("home.sync.checkIntervalSecs", 3600);
 
 // Enable device storage API
 pref("device.storage.enabled", true);
+
+// Enable meta-viewport support for font inflation code
+pref("dom.meta-viewport.enabled", true);

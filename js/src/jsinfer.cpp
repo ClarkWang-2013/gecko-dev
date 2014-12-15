@@ -528,8 +528,25 @@ TypeSet::addType(Type type, LifoAlloc *alloc)
 
         setBaseObjectCount(objectCount);
 
-        if (objectCount == TYPE_FLAG_OBJECT_COUNT_LIMIT)
-            goto unknownObject;
+        // Limit the number of objects we track. There is a different limit
+        // depending on whether the set only contains DOM objects, which can
+        // have many different classes and prototypes but are still optimizable
+        // by IonMonkey.
+        if (objectCount >= TYPE_FLAG_OBJECT_COUNT_LIMIT) {
+            JS_STATIC_ASSERT(TYPE_FLAG_DOMOBJECT_COUNT_LIMIT >= TYPE_FLAG_OBJECT_COUNT_LIMIT);
+            // Examining the entire type set is only required when we first hit
+            // the normal object limit.
+            if (objectCount == TYPE_FLAG_OBJECT_COUNT_LIMIT && !isDOMClass())
+                goto unknownObject;
+
+            // Make sure the newly added object is also a DOM object.
+            if (!object->clasp()->isDOMClass())
+                goto unknownObject;
+
+            // Limit the number of DOM objects.
+            if (objectCount == TYPE_FLAG_DOMOBJECT_COUNT_LIMIT)
+                goto unknownObject;
+        }
     }
 
     if (type.isTypeObject()) {
@@ -810,7 +827,7 @@ TypeSet::intersectSets(TemporaryTypeSet *a, TemporaryTypeSet *b, LifoAlloc *allo
 // discarded.
 
 // Superclass of all constraints generated during Ion compilation. These may
-// be allocated off the main thread, using the current Ion context's allocator.
+// be allocated off the main thread, using the current JIT context's allocator.
 class CompilerConstraint
 {
   public:
@@ -852,10 +869,10 @@ class types::CompilerConstraintList
     LifoAlloc *alloc_;
 
     // Constraints generated on heap properties.
-    Vector<CompilerConstraint *, 0, jit::IonAllocPolicy> constraints;
+    Vector<CompilerConstraint *, 0, jit::JitAllocPolicy> constraints;
 
     // Scripts whose stack type sets were frozen for the compilation.
-    Vector<FrozenScript, 1, jit::IonAllocPolicy> frozenScripts;
+    Vector<FrozenScript, 1, jit::JitAllocPolicy> frozenScripts;
 
   public:
     explicit CompilerConstraintList(jit::TempAllocator &alloc)
@@ -1227,6 +1244,14 @@ types::FinishCompilation(JSContext *cx, HandleScript script, ExecutionMode execu
             break;
         }
 
+        // It could happen that one of the compiled scripts was made a
+        // debuggee mid-compilation (e.g., via setting a breakpoint). If so,
+        // throw away the compilation.
+        if (entry.script->isDebuggee()) {
+            succeeded = false;
+            break;
+        }
+
         if (!CheckFrozenTypeSet(cx, entry.thisTypes, types::TypeScript::ThisTypes(entry.script)))
             succeeded = false;
         unsigned nargs = entry.script->functionNonDelazifying()
@@ -1446,11 +1471,14 @@ HeapTypeSetKey::knownMIRType(CompilerConstraintList *constraints)
 }
 
 bool
-HeapTypeSetKey::isOwnProperty(CompilerConstraintList *constraints)
+HeapTypeSetKey::isOwnProperty(CompilerConstraintList *constraints,
+                              bool allowEmptyTypesForGlobal/* = false*/)
 {
     if (maybeTypes() && (!maybeTypes()->empty() || maybeTypes()->nonDataProperty()))
         return true;
-    if (JSObject *obj = object()->singleton()) {
+    JSObject *obj = object()->singleton();
+    MOZ_ASSERT_IF(obj, CanHaveEmptyPropertyTypesForOwnProperty(obj) == obj->is<GlobalObject>());
+    if (obj && !allowEmptyTypesForGlobal) {
         if (CanHaveEmptyPropertyTypesForOwnProperty(obj))
             return true;
     }
@@ -2052,7 +2080,7 @@ TemporaryTypeSet::getSharedTypedArrayType()
 }
 
 bool
-TemporaryTypeSet::isDOMClass()
+TypeSet::isDOMClass()
 {
     if (unknownObject())
         return false;
@@ -2935,12 +2963,12 @@ UpdatePropertyType(ExclusiveContext *cx, HeapTypeSet *types, NativeObject *obj, 
          * that are not collated into the JSID_VOID property (see propertySet
          * comment).
          *
-         * Also don't add initial uninitialized lexical magic values as
-         * appearing in CallObjects.
+         * Also don't add untracked values (initial uninitialized lexical
+         * magic values and optimized out values) as appearing in CallObjects.
          */
-        MOZ_ASSERT_IF(value.isMagic(JS_UNINITIALIZED_LEXICAL), obj->is<CallObject>());
+        MOZ_ASSERT_IF(IsUntrackedValue(value), obj->is<CallObject>());
         if ((indexed || !value.isUndefined() || !CanHaveEmptyPropertyTypesForOwnProperty(obj)) &&
-            !value.isMagic(JS_UNINITIALIZED_LEXICAL))
+            !IsUntrackedValue(value))
         {
             Type type = GetValueType(value);
             types->TypeSet::addType(type, &cx->typeLifoAlloc());
@@ -4648,7 +4676,7 @@ EnsureHasAutoClearTypeInferenceStateOnOOM(AutoClearTypeInferenceStateOnOOM *&oom
 void
 TypeObject::maybeSweep(AutoClearTypeInferenceStateOnOOM *oom)
 {
-    if (generation() == zone()->types.generation) {
+    if (generation() == zoneFromAnyThread()->types.generation) {
         // No sweeping required.
         return;
     }
@@ -5136,7 +5164,7 @@ TypeZone::endSweep(JSRuntime *rt)
 
     sweepReleaseTypes = false;
 
-    rt->freeLifoAlloc.transferFrom(&sweepTypeLifoAlloc);
+    rt->gc.freeAllLifoBlocksAfterSweeping(&sweepTypeLifoAlloc);
 }
 
 void

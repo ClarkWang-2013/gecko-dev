@@ -72,9 +72,15 @@ protected:
 
     virtual bool ShouldContinueFromReplyTimeout() MOZ_OVERRIDE;
 
+    virtual bool RecvSettingChanged(const PluginSettings& aSettings) MOZ_OVERRIDE;
+
     // Implement the PPluginModuleChild interface
     virtual bool AnswerNP_GetEntryPoints(NPError* rv) MOZ_OVERRIDE;
-    virtual bool AnswerNP_Initialize(NPError* rv) MOZ_OVERRIDE;
+    virtual bool AnswerNP_Initialize(const PluginSettings& aSettings, NPError* rv) MOZ_OVERRIDE;
+
+    virtual PPluginModuleChild*
+    AllocPPluginModuleChild(mozilla::ipc::Transport* aTransport,
+                            base::ProcessId aOtherProcess) MOZ_OVERRIDE;
 
     virtual PPluginInstanceChild*
     AllocPPluginInstanceChild(const nsCString& aMimeType,
@@ -136,18 +142,34 @@ protected:
     virtual bool
     RecvProcessNativeEventsInInterruptCall() MOZ_OVERRIDE;
 
-    virtual bool
-    AnswerGeckoGetProfile(nsCString* aProfile) MOZ_OVERRIDE;
+    virtual bool RecvStartProfiler(const uint32_t& aEntries,
+                                   const double& aInterval,
+                                   const nsTArray<nsCString>& aFeatures,
+                                   const nsTArray<nsCString>& aThreadNameFilters) MOZ_OVERRIDE;
+    virtual bool RecvStopProfiler() MOZ_OVERRIDE;
+    virtual bool AnswerGetProfile(nsCString* aProfile) MOZ_OVERRIDE;
 
 public:
-    PluginModuleChild();
+    PluginModuleChild(bool aIsChrome);
     virtual ~PluginModuleChild();
 
+    bool CommonInit(base::ProcessHandle aParentProcessHandle,
+                    MessageLoop* aIOLoop,
+                    IPC::Channel* aChannel);
+
     // aPluginFilename is UTF8, not native-charset!
-    bool Init(const std::string& aPluginFilename,
-              base::ProcessHandle aParentProcessHandle,
-              MessageLoop* aIOLoop,
-              IPC::Channel* aChannel);
+    bool InitForChrome(const std::string& aPluginFilename,
+                       base::ProcessHandle aParentProcessHandle,
+                       MessageLoop* aIOLoop,
+                       IPC::Channel* aChannel);
+
+    bool InitForContent(base::ProcessHandle aParentProcessHandle,
+                        MessageLoop* aIOLoop,
+                        IPC::Channel* aChannel);
+
+    static PluginModuleChild*
+    CreateForContentProcess(mozilla::ipc::Transport* aTransport,
+                            base::ProcessId aOtherProcess);
 
     void CleanUp();
 
@@ -155,18 +177,7 @@ public:
 
     static const NPNetscapeFuncs sBrowserFuncs;
 
-    static PluginModuleChild* current();
-
-    bool RegisterActorForNPObject(NPObject* aObject,
-                                  PluginScriptableObjectChild* aActor);
-
-    void UnregisterActorForNPObject(NPObject* aObject);
-
-    PluginScriptableObjectChild* GetActorForNPObject(NPObject* aObject);
-
-#ifdef DEBUG
-    bool NPObjectIsRegistered(NPObject* aObject);
-#endif
+    static PluginModuleChild* GetChrome();
 
     /**
      * The child implementation of NPN_CreateObject.
@@ -221,9 +232,7 @@ public:
     }
 
     bool GetNativeCursorsSupported() {
-        bool supported = false;
-        SendGetNativeCursorsSupported(&supported);
-        return supported;
+        return Settings().nativeCursorsSupported();
     }
 #endif
 
@@ -273,6 +282,8 @@ public:
 
     int GetQuirks() { return mQuirks; }
 
+    const PluginSettings& Settings() const { return mCachedSettings; }
+
 private:
     void AddQuirk(PluginQuirks quirk) {
       if (mQuirks == QUIRKS_NOT_INITIALIZED)
@@ -299,6 +310,9 @@ private:
     nsCString mUserAgent;
     int mQuirks;
 
+    bool mIsChrome;
+    Transport* mTransport;
+
     // we get this from the plugin
     NP_PLUGINSHUTDOWN mShutdownFunc;
 #if defined(OS_LINUX) || defined(OS_BSD)
@@ -309,7 +323,8 @@ private:
 #endif
 
     NPPluginFuncs mFunctions;
-    NPSavedData mSavedData;
+
+    PluginSettings mCachedSettings;
 
 #if defined(MOZ_WIDGET_GTK)
     // If a plugin spins a nested glib event loop in response to a
@@ -353,26 +368,6 @@ private:
     NestedLoopTimer *mNestedLoopTimerObject;
 #endif
 
-    struct NPObjectData : public nsPtrHashKey<NPObject>
-    {
-        explicit NPObjectData(const NPObject* key)
-            : nsPtrHashKey<NPObject>(key)
-            , instance(nullptr)
-            , actor(nullptr)
-        { }
-
-        // never nullptr
-        PluginInstanceChild* instance;
-
-        // sometimes nullptr (no actor associated with an NPObject)
-        PluginScriptableObjectChild* actor;
-    };
-    /**
-     * mObjectMap contains all the currently active NPObjects (from NPN_CreateObject until the
-     * final release/dealloc, whether or not an actor is currently associated with the object.
-     */
-    nsTHashtable<NPObjectData> mObjectMap;
-
 public: // called by PluginInstanceChild
     /**
      * Dealloc an NPObject after last-release or when the associated instance
@@ -384,15 +379,7 @@ public: // called by PluginInstanceChild
         return mFunctions.destroy(instance->GetNPP(), 0);
     }
 
-    /**
-     * Fill PluginInstanceChild.mDeletingHash with all the remaining NPObjects
-     * associated with that instance.
-     */
-    void FindNPObjectsForInstance(PluginInstanceChild* instance);
-
 private:
-    static PLDHashOperator CollectForInstance(NPObjectData* d, void* userArg);
-
 #if defined(OS_WIN)
     virtual void EnteredCall() MOZ_OVERRIDE;
     virtual void ExitedCall() MOZ_OVERRIDE;

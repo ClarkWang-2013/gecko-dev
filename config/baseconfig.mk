@@ -123,11 +123,18 @@ _DEPRECATED_VARIABLES := \
   SHORT_LIBNAME \
   TESTING_JS_MODULES \
   TESTING_JS_MODULE_DIR \
-  TIERS \
   $(NULL)
 
 # Freeze the values specified by moz.build to catch them if they fail.
 
 $(foreach var,$(_MOZBUILD_EXTERNAL_VARIABLES) $(_DEPRECATED_VARIABLES),$(eval $(var)_FROZEN := '$($(var))'))
 
+TIERS := export $(if $(COMPILE_ENVIRONMENT),compile )misc libs tools
+endif
+
+# These defines are used to support the twin-topsrcdir model for comm-central.
+ifdef MOZILLA_SRCDIR
+  MOZILLA_DIR = $(MOZILLA_SRCDIR)
+else
+  MOZILLA_DIR = $(topsrcdir)
 endif

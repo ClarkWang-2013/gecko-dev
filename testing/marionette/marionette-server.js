@@ -5,6 +5,7 @@
 "use strict";
 
 const FRAME_SCRIPT = "chrome://marionette/content/marionette-listener.js";
+const BROWSER_STARTUP_FINISHED = "browser-delayed-startup-finished";
 
 // import logger
 Cu.import("resource://gre/modules/Log.jsm");
@@ -22,6 +23,7 @@ let utils = {};
 loader.loadSubScript("chrome://marionette/content/EventUtils.js", utils);
 loader.loadSubScript("chrome://marionette/content/ChromeUtils.js", utils);
 loader.loadSubScript("chrome://marionette/content/atoms.js", utils);
+loader.loadSubScript("chrome://marionette/content/marionette-sendkeys.js", utils);
 
 // SpecialPowers requires insecure automation-only features that we put behind a pref.
 Services.prefs.setBoolPref('security.turn_off_all_security_so_that_viruses_can_take_over_this_computer',
@@ -46,6 +48,10 @@ loader.loadSubScript("resource://gre/modules/devtools/transport/transport.js");
 let bypassOffline = false;
 let qemu = "0";
 let device = null;
+
+XPCOMUtils.defineLazyServiceGetter(this, "cookieManager",
+                                   "@mozilla.org/cookiemanager;1",
+                                   "nsICookieManager");
 
 try {
   XPCOMUtils.defineLazyGetter(this, "libcutils", function () {
@@ -77,6 +83,13 @@ let systemMessageListenerReady = false;
 Services.obs.addObserver(function() {
   systemMessageListenerReady = true;
 }, "system-message-listener-ready", false);
+
+// This is used on desktop to prevent newSession from returning before a page
+// load initiated by the Firefox command line has completed.
+let delayedBrowserStarted = false;
+Services.obs.addObserver(function () {
+  delayedBrowserStarted = true;
+}, BROWSER_STARTUP_FINISHED, false);
 
 /*
  * Custom exceptions
@@ -118,6 +131,7 @@ function MarionetteServerConnection(aPrefix, aTransport, aServer)
   // passing back "actor ids" with responses. unlike the debugger server,
   // we don't have multiple actors, so just use a dummy value of "0" here
   this.actorID = "0";
+  this.sessionId = null;
 
   this.globalMessageManager = Cc["@mozilla.org/globalmessagemanager;1"]
                              .getService(Ci.nsIMessageBroadcaster);
@@ -181,6 +195,7 @@ MarionetteServerConnection.prototype = {
     // Dispatch the request
     if (this.requestTypes && this.requestTypes[aPacket.name]) {
       try {
+        this.logRequest(aPacket.name, aPacket);
         this.requestTypes[aPacket.name].bind(this)(aPacket);
       } catch(e) {
         this.conn.send({ error: ("error occurred while processing '" +
@@ -320,7 +335,9 @@ MarionetteServerConnection.prototype = {
   sendResponse: function MDA_sendResponse(value, command_id) {
     if (typeof(value) == 'undefined')
         value = null;
-    this.sendToClient({from:this.actorID, value: value}, command_id);
+    this.sendToClient({from:this.actorID,
+                       sessionId: this.sessionId,
+                       value: value}, command_id);
   },
 
   sayHello: function MDA_sayHello() {
@@ -464,16 +481,32 @@ MarionetteServerConnection.prototype = {
    *        True if this is the first time we're talking to this browser
    */
   whenBrowserStarted: function MDA_whenBrowserStarted(win, newSession) {
+    utils.window = win;
+
     try {
+      let mm = win.window.messageManager;
+      if (!newSession) {
+        // Loading the frame script corresponds to a situation we need to
+        // return to the server. If the messageManager is a message broadcaster
+        // with no children, we don't have a hope of coming back from this call,
+        // so send the ack here. Otherwise, make a note of how many child scripts
+        // will be loaded so we known when it's safe to return.
+        if (mm.childCount === 0) {
+          this.sendOk(this.command_id);
+        } else {
+          this.curBrowser.frameRegsPending = mm.childCount;
+        }
+      }
+
       if (!Services.prefs.getBoolPref("marionette.contentListener") || !newSession) {
-        this.curBrowser.loadFrameScript(FRAME_SCRIPT, win);
+        mm.loadFrameScript(FRAME_SCRIPT, true, true);
+        Services.prefs.setBoolPref("marionette.contentListener", true);
       }
     }
     catch (e) {
       //there may not always be a content process
       logger.info("could not load listener into content for page: " + win.location.href);
     }
-    utils.window = win;
   },
 
   /**
@@ -543,6 +576,8 @@ MarionetteServerConnection.prototype = {
 
     this.scriptTimeout = 10000;
     if (aRequest && aRequest.parameters) {
+      this.sessionId = aRequest.parameters.session_id ? aRequest.parameters.session_id : null;
+      logger.info("Session Id is set to: " + this.sessionId);
       this.setSessionCapabilities(aRequest.parameters.capabilities);
     }
 
@@ -572,21 +607,33 @@ MarionetteServerConnection.prototype = {
       }
     }
 
-    if (!Services.prefs.getBoolPref("marionette.contentListener")) {
-      waitForWindow.call(this);
+    function runSessionStart() {
+      if (!Services.prefs.getBoolPref("marionette.contentListener")) {
+        waitForWindow.call(this);
+      }
+      else if ((appName != "Firefox") && (this.curBrowser === null)) {
+        // If there is a content listener, then we just wake it up
+        this.addBrowser(this.getCurrentWindow());
+        this.curBrowser.startSession(false, this.getCurrentWindow(),
+                                     this.whenBrowserStarted);
+        this.messageManager.broadcastAsyncMessage("Marionette:restart", {});
+      }
+      else {
+        this.sendError("Session already running", 500, null,
+                       this.command_id);
+      }
+      this.switchToGlobalMessageManager();
     }
-    else if ((appName != "Firefox") && (this.curBrowser == null)) {
-      // If there is a content listener, then we just wake it up
-      this.addBrowser(this.getCurrentWindow());
-      this.curBrowser.startSession(false, this.getCurrentWindow(),
-                                   this.whenBrowserStarted);
-      this.messageManager.broadcastAsyncMessage("Marionette:restart", {});
+
+    if (!delayedBrowserStarted && (appName != "B2G")) {
+      let self = this;
+      Services.obs.addObserver(function onStart () {
+        Services.obs.removeObserver(onStart, BROWSER_STARTUP_FINISHED);
+        runSessionStart.call(self);
+      }, BROWSER_STARTUP_FINISHED, false);
+    } else {
+      runSessionStart.call(this);
     }
-    else {
-      this.sendError("Session already running", 500, null,
-                     this.command_id);
-    }
-    this.switchToGlobalMessageManager();
   },
 
   /**
@@ -602,6 +649,10 @@ MarionetteServerConnection.prototype = {
    */
   getSessionCapabilities: function MDA_getSessionCapabilities() {
     this.command_id = this.getCommandId();
+
+    if (!this.sessionId) {
+      this.sessionId = this.uuidGen.generateUUID().toString();
+    }
 
     // eideticker (bug 965297) and mochitest (bug 965304)
     // compatibility.  They only check for the presence of this
@@ -666,7 +717,6 @@ MarionetteServerConnection.prototype = {
    */
   setContext: function MDA_setContext(aRequest) {
     this.command_id = this.getCommandId();
-    this.logRequest("setContext", aRequest);
     let context = aRequest.parameters.value;
     if (context != "content" && context != "chrome") {
       this.sendError("invalid context", 500, null, this.command_id);
@@ -675,6 +725,14 @@ MarionetteServerConnection.prototype = {
       this.context = context;
       this.sendOk(this.command_id);
     }
+  },
+
+  /**
+   * Gets the context of the server, either 'chrome' or 'content'.
+   */
+  getContext: function MDA_getContext() {
+    this.command_id = this.getCommandId();
+    this.sendResponse(this.context, this.command_id);
   },
 
   /**
@@ -790,7 +848,6 @@ MarionetteServerConnection.prototype = {
     let timeout = aRequest.parameters.scriptTimeout ? aRequest.parameters.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     let script;
-    this.logRequest("execute", aRequest);
     if (aRequest.parameters.newSandbox == undefined) {
       //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
@@ -957,7 +1014,6 @@ MarionetteServerConnection.prototype = {
     let timeout = aRequest.parameters.scriptTimeout ? aRequest.parameters.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     let script;
-    this.logRequest("executeWithCallback", aRequest);
     if (aRequest.parameters.newSandbox == undefined) {
       //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
@@ -1124,6 +1180,16 @@ MarionetteServerConnection.prototype = {
       aRequest.command_id = command_id;
       aRequest.parameters.pageTimeout = this.pageTimeout;
       this.sendAsync("get", aRequest.parameters, command_id);
+      return;
+    }
+
+    // At least on desktop, navigating in chrome scope does not
+    // correspond to something a user can do, and leaves marionette
+    // and the browser in an unusable state. Return a generic error insted.
+    // TODO: Error codes need to be refined as a part of bug 1100545 and
+    // bug 945729.
+    if (appName == "Firefox") {
+      this.sendError("Cannot navigate in chrome context", 13, null, command_id);
       return;
     }
 
@@ -1355,8 +1421,8 @@ MarionetteServerConnection.prototype = {
         else {
           utils.window = foundWin;
           this.curBrowser = this.browsers[winId];
+          this.sendOk(command_id);
         }
-        this.sendOk(command_id);
         return;
       }
     }
@@ -1392,7 +1458,6 @@ MarionetteServerConnection.prototype = {
    */
   switchToFrame: function MDA_switchToFrame(aRequest) {
     let command_id = this.command_id = this.getCommandId();
-    this.logRequest("switchToFrame", aRequest);
     let checkTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     let curWindow = this.getCurrentWindow();
     let checkLoad = function() {
@@ -2047,16 +2112,12 @@ MarionetteServerConnection.prototype = {
   sendKeysToElement: function MDA_sendKeysToElement(aRequest) {
     let command_id = this.command_id = this.getCommandId();
     if (this.context == "chrome") {
-      try {
-        let el = this.curBrowser.elementManager.getKnownElement(
-            aRequest.parameters.id, this.getCurrentWindow());
-        el.focus();
-        utils.sendString(aRequest.parameters.value.join(""), utils.window);
-        this.sendOk(command_id);
-      }
-      catch (e) {
-        this.sendError(e.message, e.code, e.stack, command_id);
-      }
+      let currentWindow = this.getCurrentWindow();
+      let el = this.curBrowser.elementManager.getKnownElement(
+        aRequest.parameters.id, currentWindow);
+      utils.sendKeysToElement(currentWindow, el, aRequest.parameters.value,
+                              this.sendOk.bind(this), this.sendError.bind(this),
+                              command_id, this.context);
     }
     else {
       this.sendAsync("sendKeysToElement",
@@ -2075,7 +2136,6 @@ MarionetteServerConnection.prototype = {
    */
   setTestName: function MDA_setTestName(aRequest) {
     this.command_id = this.getCommandId();
-    this.logRequest("setTestName", aRequest);
     this.testName = aRequest.parameters.value;
     this.sendAsync("setTestName",
                    { value: aRequest.parameters.value },
@@ -2256,6 +2316,7 @@ MarionetteServerConnection.prototype = {
     if (this.mainFrame) {
       this.mainFrame.focus();
     }
+    this.sessionId = null;
     this.deleteFile('marionetteChromeScripts');
     this.deleteFile('marionetteContentScripts');
   },
@@ -2647,6 +2708,45 @@ MarionetteServerConnection.prototype = {
           this.currentFrameElement = message.json.frameValue;
         }
         break;
+      case "Marionette:getVisibleCookies":
+        let [currentPath, host] = message.json.value;
+        let isForCurrentPath = function(aPath) {
+          return currentPath.indexOf(aPath) != -1;
+        }
+        let results = [];
+        let enumerator = cookieManager.enumerator;
+        while (enumerator.hasMoreElements()) {
+          let cookie = enumerator.getNext().QueryInterface(Ci['nsICookie']);
+          // Take the hostname and progressively shorten
+          let hostname = host;
+          do {
+            if ((cookie.host == '.' + hostname || cookie.host == hostname)
+                && isForCurrentPath(cookie.path)) {
+              results.push({
+                'name': cookie.name,
+                'value': cookie.value,
+                'path': cookie.path,
+                'host': cookie.host,
+                'secure': cookie.isSecure,
+                'expiry': cookie.expires
+              });
+              break;
+            }
+            hostname = hostname.replace(/^.*?\./, '');
+          } while (hostname.indexOf('.') != -1);
+        }
+        return results;
+      case "Marionette:addCookie":
+        let cookieToAdd = message.json.value;
+        Services.cookies.add(cookieToAdd.domain, cookieToAdd.path, cookieToAdd.name,
+                             cookieToAdd.value, cookieToAdd.secure, false, false,
+                             cookieToAdd.expiry);
+        return true;
+      case "Marionette:deleteCookie":
+        let cookieToDelete = message.json.value;
+        cookieManager.remove(cookieToDelete.host, cookieToDelete.name,
+                             cookieToDelete.path, false);
+        return true;
       case "Marionette:register":
         // This code processes the content listener's registration information
         // and either accepts the listener, or ignores it
@@ -2703,6 +2803,16 @@ MarionetteServerConnection.prototype = {
             this.newSessionCommandId = null;
           }
         }
+        if (this.curBrowser.frameRegsPending) {
+          if (this.curBrowser.frameRegsPending > 0) {
+            this.curBrowser.frameRegsPending -= 1;
+          }
+          if (this.curBrowser.frameRegsPending === 0) {
+            // In case of a freshly registered window, we're responsible here
+            // for sending the ack.
+            this.sendOk(this.command_id);
+          }
+        }
         return [reg, mainContent];
       case "Marionette:emitTouchEvent":
         let globalMessageManager = Cc["@mozilla.org/globalmessagemanager;1"]
@@ -2722,6 +2832,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "log": MarionetteServerConnection.prototype.log,
   "getLogs": MarionetteServerConnection.prototype.getLogs,
   "setContext": MarionetteServerConnection.prototype.setContext,
+  "getContext": MarionetteServerConnection.prototype.getContext,
   "executeScript": MarionetteServerConnection.prototype.execute,
   "setScriptTimeout": MarionetteServerConnection.prototype.setScriptTimeout,
   "timeouts": MarionetteServerConnection.prototype.timeouts,
@@ -2814,7 +2925,7 @@ function BrowserObj(win, server) {
   this.startPage = "about:blank";
   this.mainContentId = null; // used in B2G to identify the homescreen content page
   this.newSession = true; //used to set curFrameId upon new session
-  this.elementManager = new ElementManager([SELECTOR, NAME, LINK_TEXT, PARTIAL_LINK_TEXT]);
+  this.elementManager = new ElementManager([NAME, LINK_TEXT, PARTIAL_LINK_TEXT]);
   this.setBrowser(win);
   this.frameManager = new FrameManager(server); //We should have one FM per BO so that we can handle modals in each Browser
 
@@ -2878,19 +2989,6 @@ BrowserObj.prototype = {
    */
   addTab: function BO_addTab(uri) {
     return this.browser.addTab(uri, true);
-  },
-
-  /**
-   * Loads content listeners if we don't already have them
-   *
-   * @param string script
-   *        path of script to load
-   * @param nsIDOMWindow frame
-   *        frame to load the script in
-   */
-  loadFrameScript: function BO_loadFrameScript(script, frame) {
-    frame.window.messageManager.loadFrameScript(script, true, true);
-    Services.prefs.setBoolPref("marionette.contentListener", true);
   },
 
   /**

@@ -16,6 +16,7 @@
 
 #include "gc/FindSCCs.h"
 #include "gc/GCRuntime.h"
+#include "js/TracingAPI.h"
 
 namespace js {
 
@@ -191,10 +192,17 @@ struct Zone : public JS::shadow::Zone,
             return needsIncrementalBarrier();
     }
 
+    bool isCollectingFromAnyThread() const {
+        if (runtimeFromAnyThread()->isHeapCollecting())
+            return gcState_ != NoGC;
+        else
+            return needsIncrementalBarrier();
+    }
+
     // If this returns true, all object tracing must be done with a GC marking
     // tracer.
     bool requireGCTracer() const {
-        JSRuntime *rt = runtimeFromMainThread();
+        JSRuntime *rt = runtimeFromAnyThread();
         return rt->isHeapMajorCollecting() && !rt->isHeapCompacting() && gcState_ != NoGC;
     }
 
@@ -242,6 +250,10 @@ struct Zone : public JS::shadow::Zone,
 
     js::jit::JitZone *createJitZone(JSContext *cx);
 
+    bool isQueuedForBackgroundSweep() {
+        return isOnList();
+    }
+
   public:
     js::Allocator allocator;
 
@@ -259,7 +271,6 @@ struct Zone : public JS::shadow::Zone,
     //
     // This is used during GC while calculating zone groups to record edges that
     // can't be determined by examining this zone by itself.
-    typedef js::HashSet<Zone *, js::DefaultHasher<Zone *>, js::SystemAllocPolicy> ZoneSet;
     ZoneSet gcZoneGroupEdges;
 
     // Malloc counter to measure memory pressure for GC scheduling. It runs from
@@ -306,6 +317,12 @@ struct Zone : public JS::shadow::Zone,
     bool gcScheduled_;
     bool gcPreserveCode_;
     bool jitUsingBarriers_;
+
+    // Allow zones to be linked into a list
+    friend class js::gc::ZoneList;
+    static Zone * const NotOnList;
+    Zone *listNext_;
+    bool isOnList();
 
     friend bool js::CurrentThreadCanAccessZone(Zone *zone);
     friend class js::gc::GCRuntime;

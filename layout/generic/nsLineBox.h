@@ -473,8 +473,10 @@ public:
     mContainerWidth = aContainerWidth;
     mBounds.BStart(mWritingMode) += aDBCoord;
     if (mData) {
+      nsPoint physicalDelta = mozilla::LogicalPoint(mWritingMode, 0, aDBCoord).
+                                         GetPhysicalPoint(mWritingMode, 0);
       NS_FOR_FRAME_OVERFLOW_TYPES(otype) {
-        mData->mOverflowAreas.Overflow(otype).y += aDBCoord;
+        mData->mOverflowAreas.Overflow(otype) += physicalDelta;
       }
     }
   }
@@ -585,9 +587,13 @@ public:
   nsIFrame* mFirstChild;
 
   mozilla::WritingMode mWritingMode;
+
+  // Physical width. Use only for physical <-> logical coordinate conversion.
   nscoord mContainerWidth;
+
  private:
   mozilla::LogicalRect mBounds;
+
  public:
   const mozilla::LogicalRect& GetBounds() { return mBounds; }
   nsRect GetPhysicalBounds() const
@@ -1699,10 +1705,10 @@ public:
                      uint32_t* aLineFlags) MOZ_OVERRIDE;
   virtual int32_t FindLineContaining(nsIFrame* aFrame, int32_t aStartLine = 0) MOZ_OVERRIDE;
   NS_IMETHOD FindFrameAt(int32_t aLineNumber,
-                         nscoord aX,
+                         nsPoint aPos,
                          nsIFrame** aFrameFound,
-                         bool* aXIsBeforeFirstFrame,
-                         bool* aXIsAfterLastFrame) MOZ_OVERRIDE;
+                         bool* aPosIsBeforeFirstFrame,
+                         bool* aPosIsAfterLastFrame) MOZ_OVERRIDE;
 
   NS_IMETHOD GetNextSiblingOnLine(nsIFrame*& aFrame, int32_t aLineNumber) MOZ_OVERRIDE;
   NS_IMETHOD CheckLineOrder(int32_t                  aLine,

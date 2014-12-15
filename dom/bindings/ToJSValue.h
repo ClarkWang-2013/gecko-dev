@@ -138,11 +138,10 @@ ToJSValue(JSContext* aCx,
   return MaybeWrapValue(aCx, aValue);
 }
 
-// Accept objects that inherit from nsWrapperCache and nsISupports (e.g. most
+// Accept objects that inherit from nsWrapperCache (e.g. most
 // DOM objects).
 template <class T>
-typename EnableIf<IsBaseOf<nsWrapperCache, T>::value &&
-                  IsBaseOf<nsISupports, T>::value, bool>::Type
+typename EnableIf<IsBaseOf<nsWrapperCache, T>::value, bool>::Type
 ToJSValue(JSContext* aCx,
           T& aArgument,
           JS::MutableHandle<JS::Value> aValue)
@@ -152,7 +151,7 @@ ToJSValue(JSContext* aCx,
   // Make sure non-webidl objects don't sneak in here
   MOZ_ASSERT(aArgument.IsDOMBinding());
 
-  return WrapNewBindingObject(aCx, aArgument, aValue);
+  return GetOrCreateDOMReflector(aCx, aArgument, aValue);
 }
 
 // Accept typed arrays built from appropriate nsTArray values
@@ -259,6 +258,14 @@ ToJSValue(JSContext* aCx, const JS::Rooted<JS::Value>& aArgument,
 bool
 ToJSValue(JSContext* aCx,
           nsresult aArgument,
+          JS::MutableHandle<JS::Value> aValue);
+
+// Accept ErrorResult, for use in rejections, and create an exception
+// representing the failure.  Note, the ErrorResult must indicate a failure
+// with aArgument.Failure() returning true.
+bool
+ToJSValue(JSContext* aCx,
+          ErrorResult& aArgument,
           JS::MutableHandle<JS::Value> aValue);
 
 // Accept pointers to other things we accept

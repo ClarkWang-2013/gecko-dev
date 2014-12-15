@@ -53,8 +53,11 @@ nsEmptyStyleRule::MapRuleInfoInto(nsRuleData* aRuleData)
 /* virtual */ void
 nsEmptyStyleRule::List(FILE* out, int32_t aIndent) const
 {
-  for (int32_t index = aIndent; --index >= 0; ) fputs("  ", out);
-  fputs("[empty style rule] {}\n", out);
+  nsAutoCString indentStr;
+  for (int32_t index = aIndent; --index >= 0; ) {
+    indentStr.AppendLiteral("  ");
+  }
+  fprintf_stderr(out, "%s[empty style rule] {}\n", indentStr.get());
 }
 #endif
 
@@ -103,8 +106,11 @@ nsInitialStyleRule::MapRuleInfoInto(nsRuleData* aRuleData)
 /* virtual */ void
 nsInitialStyleRule::List(FILE* out, int32_t aIndent) const
 {
-  for (int32_t index = aIndent; --index >= 0; ) fputs("  ", out);
-  fputs("[initial style rule] {}\n", out);
+  nsAutoCString indentStr;
+  for (int32_t index = aIndent; --index >= 0; ) {
+    indentStr.AppendLiteral("  ");
+  }
+  fprintf_stderr(out, "%s[initial style rule] {}\n", indentStr.get());
 }
 #endif
 
@@ -125,8 +131,11 @@ nsDisableTextZoomStyleRule::MapRuleInfoInto(nsRuleData* aRuleData)
 /* virtual */ void
 nsDisableTextZoomStyleRule::List(FILE* out, int32_t aIndent) const
 {
-  for (int32_t index = aIndent; --index >= 0; ) fputs("  ", out);
-  fputs("[disable text zoom style rule] {}\n", out);
+  nsAutoCString indentStr;
+  for (int32_t index = aIndent; --index >= 0; ) {
+    indentStr.AppendLiteral("  ");
+  }
+  fprintf_stderr(out, "%s[disable text zoom style rule] {}\n", indentStr.get());
 }
 #endif
 
@@ -1282,9 +1291,13 @@ nsStyleSet::ResolveStyleByAddingRules(nsStyleContext* aBaseContext,
 
   nsRuleWalker ruleWalker(mRuleTree, mAuthorStyleDisabled);
   ruleWalker.SetCurrentNode(aBaseContext->RuleNode());
-  // FIXME: Perhaps this should be passed in, but it probably doesn't
-  // matter.
-  ruleWalker.SetLevel(eDocSheet, false, false);
+  // This needs to be the transition sheet because that is the highest
+  // level of the cascade, and thus the only thing that makes sense if
+  // we are ever going to call ResolveStyleWithReplacement on the
+  // resulting context.  It's also the right thing for the one case (the
+  // transition manager's cover rule) where we put the result of this
+  // function in the style context tree.
+  ruleWalker.SetLevel(eTransitionSheet, false, false);
   for (int32_t i = 0; i < aRules.Count(); i++) {
     ruleWalker.ForwardOnPossiblyCSSRule(aRules.ObjectAt(i));
   }
@@ -1360,6 +1373,7 @@ nsStyleSet::RuleNodeWithReplacement(Element* aElement,
                                         eRestyle_SVGAttrAnimations |
                                         eRestyle_StyleAttribute |
                                         eRestyle_ChangeAnimationPhase |
+                                        eRestyle_ChangeAnimationPhaseDescendants |
                                         eRestyle_Force |
                                         eRestyle_ForceDescendants)),
                     // FIXME: Once bug 979133 lands we'll have a better
@@ -1367,20 +1381,29 @@ nsStyleSet::RuleNodeWithReplacement(Element* aElement,
                     nsPrintfCString("unexpected replacement bits 0x%lX",
                                     uint32_t(aReplacements)).get());
 
-  bool skipAnimationRules = false;
-  bool postAnimationRestyles = false;
-
   // If we're changing animation phase, we have to reconsider what rules
   // are in these four levels.
-  if (aReplacements & eRestyle_ChangeAnimationPhase) {
-    aReplacements |= eRestyle_CSSTransitions |
-                     eRestyle_CSSAnimations |
-                     eRestyle_SVGAttrAnimations |
-                     eRestyle_StyleAttribute;
-
-    RestyleManager* restyleManager = PresContext()->RestyleManager();
-    skipAnimationRules = restyleManager->SkipAnimationRules();
-    postAnimationRestyles = restyleManager->PostAnimationRestyles();
+  if (aReplacements & (eRestyle_ChangeAnimationPhase |
+                       eRestyle_ChangeAnimationPhaseDescendants)) {
+    // Animations are only on elements and on :before and :after
+    // pseudo-elements, so those are the only things we need to consider
+    // when changing animation phase.  Furthermore, the :before and
+    // :after pseudo-elements cannot have style attributes (although
+    // some other pseudo-elements can).  This lets us avoid the problem
+    // that the eRestyle_StyleAttribute case below can't handle
+    // pseudo-elements, but not adding that bit to aReplacements for
+    // pseudo-elements, since we don't need it.
+    if (aPseudoType == nsCSSPseudoElements::ePseudo_NotPseudoElement) {
+      aReplacements |= eRestyle_CSSTransitions |
+                       eRestyle_CSSAnimations |
+                       eRestyle_SVGAttrAnimations |
+                       eRestyle_StyleAttribute;
+    } else if (aPseudoType == nsCSSPseudoElements::ePseudo_before ||
+               aPseudoType == nsCSSPseudoElements::ePseudo_after) {
+      aReplacements |= eRestyle_CSSTransitions |
+                       eRestyle_CSSAnimations |
+                       eRestyle_SVGAttrAnimations;
+    }
   }
 
   // FIXME (perf): This should probably not rebuild the whole path, but
@@ -1421,58 +1444,32 @@ nsStyleSet::RuleNodeWithReplacement(Element* aElement,
     if (doReplace) {
       switch (level->mLevelReplacementHint) {
         case eRestyle_CSSAnimations: {
-          // FIXME: This should probably be more similar to what
-          // FileRules does; this feels like too much poking into the
-          // internals of nsAnimationManager.
-          nsPresContext* presContext = PresContext();
-          nsAnimationManager* animationManager =
-            presContext->AnimationManager();
-          AnimationPlayerCollection* collection =
-            animationManager->GetAnimationPlayers(aElement, aPseudoType, false);
-
-          if (collection) {
-            if (skipAnimationRules) {
-              if (postAnimationRestyles) {
-                collection->PostRestyleForAnimation(presContext);
-              }
-            } else {
-              animationManager->UpdateStyleAndEvents(
-                collection, PresContext()->RefreshDriver()->MostRecentRefresh(),
-                EnsureStyleRule_IsNotThrottled);
-              if (collection->mStyleRule) {
-                ruleWalker.ForwardOnPossiblyCSSRule(collection->mStyleRule);
-              }
+          if (aPseudoType == nsCSSPseudoElements::ePseudo_NotPseudoElement ||
+              aPseudoType == nsCSSPseudoElements::ePseudo_before ||
+              aPseudoType == nsCSSPseudoElements::ePseudo_after) {
+            nsIStyleRule* rule = PresContext()->AnimationManager()->
+              GetAnimationRule(aElement, aPseudoType);
+            if (rule) {
+              ruleWalker.ForwardOnPossiblyCSSRule(rule);
             }
           }
           break;
         }
         case eRestyle_CSSTransitions: {
-          // FIXME: This should probably be more similar to what
-          // FileRules does; this feels like too much poking into the
-          // internals of nsTransitionManager.
-          nsPresContext* presContext = PresContext();
-          AnimationPlayerCollection* collection =
-            presContext->TransitionManager()->GetElementTransitions(
-              aElement, aPseudoType, false);
-
-          if (collection) {
-            if (skipAnimationRules) {
-              if (postAnimationRestyles) {
-                collection->PostRestyleForAnimation(presContext);
-              }
-            } else {
-              collection->EnsureStyleRuleFor(
-                presContext->RefreshDriver()->MostRecentRefresh(),
-                EnsureStyleRule_IsNotThrottled);
-              if (collection->mStyleRule) {
-                ruleWalker.ForwardOnPossiblyCSSRule(collection->mStyleRule);
-              }
+          if (aPseudoType == nsCSSPseudoElements::ePseudo_NotPseudoElement ||
+              aPseudoType == nsCSSPseudoElements::ePseudo_before ||
+              aPseudoType == nsCSSPseudoElements::ePseudo_after) {
+            nsIStyleRule* rule = PresContext()->TransitionManager()->
+              GetAnimationRule(aElement, aPseudoType);
+            if (rule) {
+              ruleWalker.ForwardOnPossiblyCSSRule(rule);
             }
           }
           break;
         }
         case eRestyle_SVGAttrAnimations: {
-          MOZ_ASSERT(aReplacements & eRestyle_ChangeAnimationPhase,
+          MOZ_ASSERT(aReplacements & (eRestyle_ChangeAnimationPhase |
+                                      eRestyle_ChangeAnimationPhaseDescendants),
                      "don't know how to do this level without phase change");
 
           SVGAttrAnimationRuleProcessor* ruleProcessor =
@@ -1485,7 +1482,8 @@ nsStyleSet::RuleNodeWithReplacement(Element* aElement,
           break;
         }
         case eRestyle_StyleAttribute: {
-          MOZ_ASSERT(aReplacements & eRestyle_ChangeAnimationPhase,
+          MOZ_ASSERT(aReplacements & (eRestyle_ChangeAnimationPhase |
+                                      eRestyle_ChangeAnimationPhaseDescendants),
                      "don't know how to do this level without phase change");
 
           if (!level->mIsImportant) {
@@ -1537,6 +1535,10 @@ nsStyleSet::RuleNodeWithReplacement(Element* aElement,
       }
     }
   }
+
+  NS_ASSERTION(rulesIndex == 0,
+               "rules are in incorrect cascading order, "
+               "which means we replaced them incorrectly");
 
   return ruleWalker.CurrentNode();
 }
