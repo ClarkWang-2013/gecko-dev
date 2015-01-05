@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include "pldhash.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MathAlgorithms.h"
@@ -107,7 +108,26 @@ MOZ_ALWAYS_INLINE void
 PLDHashTable::MoveEntryStub(const PLDHashEntryHdr* aFrom,
                             PLDHashEntryHdr* aTo)
 {
-  memcpy(aTo, aFrom, mEntrySize);
+  uint64_t th, tl;
+  const void *dst = aTo, *src = aFrom, *end = src + mEntrySize;
+
+  asm volatile (
+    ".set push \n\t"
+    ".set noreorder \n\t"
+    ".set arch=loongson3a \n\t"
+    "gslq %[th], %[tl], (%[src]) \n\t"
+    "1: \n\t"
+    "daddiu %[dst], 0x10 \n\t"
+    "daddiu %[src], 0x10 \n\t"
+    "gssq %[th], %[tl], -0x10(%[dst]) \n\t"
+    "bnel %[src], %[end], 1b \n\t"
+    "gslq %[th], %[tl], (%[src]) \n\t"
+    ".set pop \n\t"
+    :[dst]"+r"(dst), [src]"+r"(src),
+     [th]"=&r"(th), [tl]"=&r"(tl)
+    :[end]"r"(end)
+    :"memory"
+  );
 }
 
 void
@@ -119,9 +139,36 @@ PL_DHashMoveEntryStub(PLDHashTable* aTable,
 }
 
 MOZ_ALWAYS_INLINE void
+memzero_ls3(void *s, size_t n)
+{
+  const void *dst = s, *end = dst + n;
+
+  asm volatile (
+    ".set push \n\t"
+    ".set noreorder \n\t"
+    ".set arch=loongson3a \n\t"
+    "1: \n\t"
+    "daddiu %[dst], 0x10 \n\t"
+    "bne %[dst], %[end], 1b \n\t"
+    "gssq $0, $0, -0x10(%[dst]) \n\t"
+    ".set pop \n\t"
+    :[dst]"+r"(dst)
+    :[end]"r"(end)
+    :"memory"
+  );
+}
+
+MOZ_ALWAYS_INLINE void
 PLDHashTable::ClearEntryStub(PLDHashEntryHdr* aEntry)
 {
-  memset(aEntry, 0, mEntrySize);
+  memzero_ls3(aEntry, mEntrySize);
+}
+
+MOZ_ALWAYS_INLINE void *
+malloc_aligned(size_t size)
+{
+  size = (size & 0xf) ? (size & ~0xf) + 0x10 : size;
+  return memalign(0x10, size);
 }
 
 void
@@ -136,7 +183,7 @@ PLDHashTable::FreeStringKey(PLDHashEntryHdr* aEntry)
   const PLDHashEntryStub* stub = (const PLDHashEntryStub*)aEntry;
 
   free((void*)stub->key);
-  memset(aEntry, 0, mEntrySize);
+  memzero_ls3(aEntry, mEntrySize);
 }
 
 void
@@ -171,7 +218,7 @@ PLDHashTable*
 PL_NewDHashTable(const PLDHashTableOps* aOps, uint32_t aEntrySize,
                  uint32_t aLength)
 {
-  PLDHashTable* table = (PLDHashTable*)malloc(sizeof(*table));
+  PLDHashTable* table = (PLDHashTable*)malloc_aligned(sizeof(*table));
 
   if (!table) {
     return nullptr;
@@ -239,19 +286,19 @@ PLDHashTable::Init(const PLDHashTableOps* aOps,
   capacity = 1u << log2;
   MOZ_ASSERT(capacity <= PL_DHASH_MAX_CAPACITY);
   mHashShift = PL_DHASH_BITS - log2;
-  mEntrySize = aEntrySize;
+  mEntrySize = (aEntrySize & 0xf) ? (aEntrySize & ~0xf) + 0x10 : aEntrySize;
   mEntryCount = mRemovedCount = 0;
   mGeneration = 0;
   uint32_t nbytes;
-  if (!SizeOfEntryStore(capacity, aEntrySize, &nbytes)) {
+  if (!SizeOfEntryStore(capacity, mEntrySize, &nbytes)) {
     return false;  // overflowed
   }
 
-  mEntryStore = (char*)malloc(nbytes);
+  mEntryStore = (char*)malloc_aligned(nbytes);
   if (!mEntryStore) {
     return false;
   }
-  memset(mEntryStore, 0, nbytes);
+  memzero_ls3(mEntryStore, nbytes);
   METER(memset(&mStats, 0, sizeof(mStats)));
 
   // Set this only once we reach a point where we know we can't fail.
@@ -390,33 +437,58 @@ PLDHashTable::SearchTable(const void* aKey, PLDHashNumber aKeyHash,
   /* Save the first removed entry pointer so Add() can recycle it. */
   PLDHashEntryHdr* firstRemoved = nullptr;
 
-  for (;;) {
-    if (MOZ_UNLIKELY(ENTRY_IS_REMOVED(entry))) {
-      if (!firstRemoved) {
-        firstRemoved = entry;
-      }
-    } else {
-      if (aIsAdd) {
+  if (aIsAdd) {
+    for (;;) {
+      if (MOZ_UNLIKELY(ENTRY_IS_REMOVED(entry))) {
+        if (!firstRemoved) {
+          firstRemoved = entry;
+        }
+      } else {
         entry->mKeyHash |= COLLISION_FLAG;
       }
+
+      METER(mStats.mSteps++);
+      hash1 -= hash2;
+      hash1 &= sizeMask;
+
+      entry = ADDRESS_ENTRY(this, hash1);
+      if (EntryIsFree(entry)) {
+        METER(mStats.mMisses++);
+        return firstRemoved ? firstRemoved : entry;
+      }
+
+      if (MATCH_ENTRY_KEYHASH(entry, aKeyHash) &&
+          matchEntry(this, entry, aKey)) {
+        METER(mStats.mHits++);
+        return entry;
+      }
     }
+  } else {
+    for (;;) {
+      if (MOZ_UNLIKELY(ENTRY_IS_REMOVED(entry))) {
+        if (!firstRemoved) {
+          firstRemoved = entry;
+        }
+      }
 
-    METER(mStats.mSteps++);
-    hash1 -= hash2;
-    hash1 &= sizeMask;
+      METER(mStats.mSteps++);
+      hash1 -= hash2;
+      hash1 &= sizeMask;
 
-    entry = ADDRESS_ENTRY(this, hash1);
-    if (EntryIsFree(entry)) {
-      METER(mStats.mMisses++);
-      return (firstRemoved && aIsAdd) ? firstRemoved : entry;
-    }
+      entry = ADDRESS_ENTRY(this, hash1);
+      if (EntryIsFree(entry)) {
+        METER(mStats.mMisses++);
+        return entry;
+      }
 
-    if (MATCH_ENTRY_KEYHASH(entry, aKeyHash) &&
-        matchEntry(this, entry, aKey)) {
-      METER(mStats.mHits++);
-      return entry;
+      if (MATCH_ENTRY_KEYHASH(entry, aKeyHash) &&
+          matchEntry(this, entry, aKey)) {
+        METER(mStats.mHits++);
+        return entry;
+      }
     }
   }
+
 
   /* NOTREACHED */
   return nullptr;
@@ -490,7 +562,7 @@ PLDHashTable::ChangeTable(int aDeltaLog2)
     return false;   // overflowed
   }
 
-  char* newEntryStore = (char*)malloc(nbytes);
+  char* newEntryStore = (char*)malloc_aligned(nbytes);
   if (!newEntryStore) {
     return false;
   }
@@ -504,7 +576,7 @@ PLDHashTable::ChangeTable(int aDeltaLog2)
   mGeneration++;
 
   /* Assign the new entry store to table. */
-  memset(newEntryStore, 0, nbytes);
+  memzero_ls3(newEntryStore, nbytes);
   char* oldEntryStore;
   char* oldEntryAddr;
   oldEntryAddr = oldEntryStore = mEntryStore;
