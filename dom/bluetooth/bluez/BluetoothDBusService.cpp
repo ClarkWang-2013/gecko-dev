@@ -46,7 +46,6 @@
 #include "mozilla/LazyIdleThread.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/Mutex.h"
-#include "mozilla/NullPtr.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/unused.h"
 
@@ -862,7 +861,7 @@ static int
 FindProperty(const InfallibleTArray<BluetoothNamedValue>& aProperties,
              const char* aPropertyType)
 {
-  for (int i = 0; i < aProperties.Length(); ++i) {
+  for (size_t i = 0; i < aProperties.Length(); ++i) {
     if (aProperties[i].name().EqualsASCII(aPropertyType)) {
       return i;
     }
@@ -4086,7 +4085,7 @@ BluetoothDBusService::SendMetaData(const nsAString& aTitle,
   a2dp->GetTitle(prevTitle);
   a2dp->GetAlbum(prevAlbum);
 
-  if (aMediaNumber != a2dp->GetMediaNumber() ||
+  if (aMediaNumber < 0 || (uint64_t)aMediaNumber != a2dp->GetMediaNumber() ||
       !aTitle.Equals(prevTitle) ||
       !aAlbum.Equals(prevAlbum)) {
     UpdateNotification(ControlEventId::EVENT_TRACK_CHANGED, aMediaNumber);

@@ -202,14 +202,21 @@ function whenNewWindowLoaded(aOptions, aCallback) {
   }, false);
 }
 
-function promiseWindowClosed(win) {
-  let deferred = Promise.defer();
-  win.addEventListener("unload", function onunload() {
-    win.removeEventListener("unload", onunload);
-    deferred.resolve();
+function promiseWindowWillBeClosed(win) {
+  return new Promise((resolve, reject) => {
+    Services.obs.addObserver(function observe(subject, topic) {
+      if (subject == win) {
+        Services.obs.removeObserver(observe, topic);
+        resolve();
+      }
+    }, "domwindowclosed", false);
   });
+}
+
+function promiseWindowClosed(win) {
+  let promise = promiseWindowWillBeClosed(win);
   win.close();
-  return deferred.promise;
+  return promise;
 }
 
 function promiseOpenAndLoadWindow(aOptions, aWaitForDelayedStartup=false) {
@@ -374,40 +381,6 @@ function promiseHistoryClearedState(aURIs, aShouldBeCleared) {
   });
 
   return deferred.promise;
-}
-
-/**
- * Allows waiting for an observer notification once.
- *
- * @param topic
- *        Notification topic to observe.
- *
- * @return {Promise}
- * @resolves The array [subject, data] from the observed notification.
- * @rejects Never.
- */
-function promiseTopicObserved(topic)
-{
-  let deferred = Promise.defer();
-  info("Waiting for observer topic " + topic);
-  Services.obs.addObserver(function PTO_observe(subject, topic, data) {
-    Services.obs.removeObserver(PTO_observe, topic);
-    deferred.resolve([subject, data]);
-  }, topic, false);
-  return deferred.promise;
-}
-
-/**
- * Clears history asynchronously.
- *
- * @return {Promise}
- * @resolves When history has been cleared.
- * @rejects Never.
- */
-function promiseClearHistory() {
-  let promise = promiseTopicObserved(PlacesUtils.TOPIC_EXPIRATION_FINISHED);
-  PlacesUtils.bhistory.removeAllPages();
-  return promise;
 }
 
 /**
@@ -665,6 +638,19 @@ function assertWebRTCIndicatorStatus(expected) {
   }
 
   if (!("nsISystemStatusBar" in Ci)) {
+    if (!expected) {
+      let win = Services.wm.getMostRecentWindow("Browser:WebRTCGlobalIndicator");
+      if (win) {
+        yield new Promise((resolve, reject) => {
+          win.addEventListener("unload", (e) => {
+            if (e.target == win.document) {
+              win.removeEventListener("unload", arguments.callee);
+              resolve();
+            }
+          }, false);
+        });
+      }
+    }
     let indicator = Services.wm.getEnumerator("Browser:WebRTCGlobalIndicator");
     let hasWindow = indicator.hasMoreElements();
     is(hasWindow, !!expected, "popup " + msg);
@@ -767,28 +753,34 @@ function promisePopupHidden(popup) {
   return promisePopupEvent(popup, "hidden");
 }
 
-// NOTE: If you're using this, and attempting to interact with one of the
-// autocomplete results, your test is likely to be unreliable on Linux.
-// See bug 1073339.
-let gURLBarOnSearchComplete = null;
-function promiseSearchComplete() {
-  info("Waiting for onSearchComplete");
-  return new Promise(resolve => {
-    if (!gURLBarOnSearchComplete) {
-      gURLBarOnSearchComplete = gURLBar.onSearchComplete;
-      registerCleanupFunction(() => {
-        gURLBar.onSearchComplete = gURLBarOnSearchComplete;
-      });
+function promiseNotificationShown(notification) {
+  let win = notification.browser.ownerDocument.defaultView;
+  if (win.PopupNotifications.panel.state == "open") {
+    return Promise.resolved();
+  }
+  let panelPromise = promisePopupShown(win.PopupNotifications.panel);
+  notification.reshow();
+  return panelPromise;
+}
+
+function promiseSearchComplete(win = window) {
+  return promisePopupShown(win.gURLBar.popup).then(() => {
+    function searchIsComplete() {
+      return win.gURLBar.controller.searchStatus >=
+        Ci.nsIAutoCompleteController.STATUS_COMPLETE_NO_MATCH;
     }
 
-    gURLBar.onSearchComplete = function () {
-      ok(gURLBar.popupOpen, "The autocomplete popup is correctly open");
-      gURLBarOnSearchComplete.apply(gURLBar);
-      resolve();
-    }
-  }).then(() => {
-    // On Linux, the popup may or may not be open at this stage. So we need
-    // additional checks to ensure we wait long enough.
-    return promisePopupShown(gURLBar.popup);
+    // Wait until there are at least two matches.
+    return new Promise(resolve => waitForCondition(searchIsComplete, resolve));
   });
+}
+
+function promiseAutocompleteResultPopup(inputText, win = window) {
+  waitForFocus(() => {
+    win.gURLBar.focus();
+    win.gURLBar.value = inputText;
+    win.gURLBar.controller.startSearch(inputText);
+  }, win);
+
+  return promiseSearchComplete(win);
 }

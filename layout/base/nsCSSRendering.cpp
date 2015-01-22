@@ -57,6 +57,7 @@
 #include "gfxColor.h"
 #include "gfxGradientCache.h"
 #include "GraphicsFilter.h"
+#include "nsInlineFrame.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -97,7 +98,7 @@ struct InlineBackgroundData
    */
   nsRect GetContinuousRect(nsIFrame* aFrame)
   {
-    MOZ_ASSERT(aFrame->GetType() == nsGkAtoms::inlineFrame);
+    MOZ_ASSERT(static_cast<nsInlineFrame*>(do_QueryFrame(aFrame)));
 
     SetFrame(aFrame);
 
@@ -545,7 +546,7 @@ static nsRect
 JoinBoxesForSlice(nsIFrame* aFrame, const nsRect& aBorderArea,
                   InlineBoxOrder aOrder)
 {
-  if (aFrame->GetType() == nsGkAtoms::inlineFrame) {
+  if (static_cast<nsInlineFrame*>(do_QueryFrame(aFrame))) {
     return (aOrder == eForBorder
             ? gInlineBGData->GetBorderContinuousRect(aFrame, aBorderArea)
             : gInlineBGData->GetContinuousRect(aFrame)) +
@@ -4202,7 +4203,7 @@ nsCSSRendering::PaintDecorationLine(nsIFrame* aFrame,
 
   // The block-direction position should be set to the middle of the line.
   if (aVertical) {
-    rect.x -= lineThickness / 2;
+    rect.x += lineThickness / 2;
   } else {
     rect.y += lineThickness / 2;
   }
@@ -4404,7 +4405,7 @@ nsCSSRendering::DecorationLineToPath(nsIFrame* aFrame,
 
   // The block-direction position should be set to the middle of the line.
   if (aVertical) {
-    rect.x -= lineThickness / 2;
+    rect.x += lineThickness / 2;
     aGfxContext->Rectangle
       (gfxRect(gfxPoint(rect.TopLeft() - gfxPoint(lineThickness / 2, 0.0)),
                gfxSize(lineThickness, rect.Height())));

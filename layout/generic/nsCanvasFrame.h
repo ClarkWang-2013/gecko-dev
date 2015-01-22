@@ -42,6 +42,18 @@ public:
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
 
+  virtual mozilla::WritingMode GetWritingMode() const MOZ_OVERRIDE
+  {
+    nsIContent* rootElem = GetContent();
+    if (rootElem) {
+      nsIFrame* rootElemFrame = rootElem->GetPrimaryFrame();
+      if (rootElemFrame) {
+        return rootElemFrame->GetWritingMode();
+      }
+    }
+    return nsIFrame::GetWritingMode();
+  }
+
 #ifdef DEBUG
   virtual void SetInitialChildList(ChildListID     aListID,
                                    nsFrameList&    aChildList) MOZ_OVERRIDE;
@@ -91,6 +103,18 @@ public:
   {
     return mCustomContentContainer;
   }
+
+  /**
+   * Unhide the CustomContentContainer. This call only has an effect if
+   * mCustomContentContainer is non-null.
+   */
+  void ShowCustomContentContainer();
+
+  /**
+   * Hide the CustomContentContainer. This call only has an effect if
+   * mCustomContentContainer is non-null.
+   */
+  void HideCustomContentContainer();
 
   /** SetHasFocus tells the CanvasFrame to draw with focus ring
    *  @param aHasFocus true to show focus ring, false to hide it

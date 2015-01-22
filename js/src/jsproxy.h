@@ -70,13 +70,13 @@ class JS_FRIEND_API(Wrapper);
  * With regard to the implementation of these internal methods, there are three
  * very different kinds of object in SpiderMonkey.
  *
- * 1.  Native objects' internal methods are implemented in js::baseops in
- *     vm/NativeObject.cpp, with duplicate (but functionally identical)
- *     implementations scattered through the ICs and JITs.
+ * 1.  Native objects' internal methods are implemented in vm/NativeObject.cpp,
+ *     with duplicate (but functionally identical) implementations scattered
+ *     through the ICs and JITs.
  *
  * 2.  Certain non-native objects have internal methods that are implemented as
  *     magical js::ObjectOps hooks. We're trying to get rid of these.
- * 
+ *
  * 3.  All other objects are proxies. A proxy's internal methods are
  *     implemented in C++, as the virtual methods of a C++ object stored on the
  *     proxy, known as its handler.
@@ -255,6 +255,13 @@ class JS_FRIEND_API(BaseProxyHandler)
     virtual bool ownPropertyKeys(JSContext *cx, HandleObject proxy,
                                  AutoIdVector &props) const = 0;
     virtual bool delete_(JSContext *cx, HandleObject proxy, HandleId id, bool *bp) const = 0;
+    /*
+     * Because [[Enumerate]] is one of the standard traps it should be overridden.
+     * However for convenience BaseProxyHandler includes a pure virtual implementation,
+     * that turns the properties returned by getOwnEnumerablePropertyKeys (and proto walking)
+     * into an Iterator object.
+     */
+    virtual bool enumerate(JSContext *cx, HandleObject proxy, MutableHandleObject objp) const = 0;
 
     /*
      * These methods are standard, but the engine does not normally call them.
@@ -305,10 +312,6 @@ class JS_FRIEND_API(BaseProxyHandler)
     virtual bool hasOwn(JSContext *cx, HandleObject proxy, HandleId id, bool *bp) const;
     virtual bool getOwnEnumerablePropertyKeys(JSContext *cx, HandleObject proxy,
                                               AutoIdVector &props) const;
-    virtual bool getEnumerablePropertyKeys(JSContext *cx, HandleObject proxy,
-                                           AutoIdVector &props) const = 0;
-    virtual bool iterate(JSContext *cx, HandleObject proxy, unsigned flags,
-                         MutableHandleObject objp) const;
     virtual bool nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl, CallArgs args) const;
     virtual bool hasInstance(JSContext *cx, HandleObject proxy, MutableHandleValue v, bool *bp) const;
     virtual bool objectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx) const;
@@ -317,6 +320,7 @@ class JS_FRIEND_API(BaseProxyHandler)
     virtual bool regexp_toShared(JSContext *cx, HandleObject proxy, RegExpGuard *g) const;
     virtual bool boxedValue_unbox(JSContext *cx, HandleObject proxy, MutableHandleValue vp) const;
     virtual bool defaultValue(JSContext *cx, HandleObject obj, JSType hint, MutableHandleValue vp) const;
+    virtual void trace(JSTracer *trc, JSObject *proxy) const;
     virtual void finalize(JSFreeOp *fop, JSObject *proxy) const;
     virtual void objectMoved(JSObject *proxy, const JSObject *old) const;
 
@@ -368,6 +372,8 @@ class JS_PUBLIC_API(DirectProxyHandler) : public BaseProxyHandler
                                  AutoIdVector &props) const MOZ_OVERRIDE;
     virtual bool delete_(JSContext *cx, HandleObject proxy, HandleId id,
                          bool *bp) const MOZ_OVERRIDE;
+    virtual bool enumerate(JSContext *cx, HandleObject proxy,
+                           MutableHandleObject objp) const MOZ_OVERRIDE;
     virtual bool getPrototypeOf(JSContext *cx, HandleObject proxy,
                                 MutableHandleObject protop) const MOZ_OVERRIDE;
     virtual bool setPrototypeOf(JSContext *cx, HandleObject proxy, HandleObject proto,
@@ -392,10 +398,6 @@ class JS_PUBLIC_API(DirectProxyHandler) : public BaseProxyHandler
                         bool *bp) const MOZ_OVERRIDE;
     virtual bool getOwnEnumerablePropertyKeys(JSContext *cx, HandleObject proxy,
                                               AutoIdVector &props) const MOZ_OVERRIDE;
-    virtual bool getEnumerablePropertyKeys(JSContext *cx, HandleObject proxy,
-                                           AutoIdVector &props) const MOZ_OVERRIDE;
-    virtual bool iterate(JSContext *cx, HandleObject proxy, unsigned flags,
-                         MutableHandleObject objp) const MOZ_OVERRIDE;
     virtual bool nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl,
                             CallArgs args) const MOZ_OVERRIDE;
     virtual bool hasInstance(JSContext *cx, HandleObject proxy, MutableHandleValue v,
@@ -407,7 +409,7 @@ class JS_PUBLIC_API(DirectProxyHandler) : public BaseProxyHandler
                                    unsigned indent) const MOZ_OVERRIDE;
     virtual bool regexp_toShared(JSContext *cx, HandleObject proxy,
                                  RegExpGuard *g) const MOZ_OVERRIDE;
-    virtual bool boxedValue_unbox(JSContext *cx, HandleObject proxy, MutableHandleValue vp) const;
+    virtual bool boxedValue_unbox(JSContext *cx, HandleObject proxy, MutableHandleValue vp) const MOZ_OVERRIDE;
     virtual bool isCallable(JSObject *obj) const MOZ_OVERRIDE;
     virtual JSObject *weakmapKeyDelegate(JSObject *proxy) const MOZ_OVERRIDE;
 };

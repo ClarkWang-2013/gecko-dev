@@ -65,11 +65,6 @@
 #define NS_MOZ_USER_IDLE                 (NS_WINDOW_START + 67)
 #define NS_MOZ_USER_ACTIVE               (NS_WINDOW_START + 68)
 
-// The resolution at which a plugin should draw has changed, for
-// example as the result of changing from a HiDPI mode to a non-
-// HiDPI mode.
-#define NS_PLUGIN_RESOLUTION_CHANGED     (NS_WINDOW_START + 69)
-
 #define NS_LANGUAGECHANGE                (NS_WINDOW_START + 70)
 
 #define NS_MOUSE_MESSAGE_START          300
@@ -500,6 +495,10 @@ public:
   // consumed by content.
   // Note that mDefaultPrevented must be true when this is true.
   bool    mDefaultPreventedByContent : 1;
+  // If mDefaultPreventedByChrome is true, the event has been
+  // consumed by chrome.
+  // Note that mDefaultPrevented must be true when this is true.
+  bool    mDefaultPreventedByChrome : 1;
   // mMultipleActionsPrevented may be used when default handling don't want to
   // be prevented, but only one of the event targets should handle the event.
   // For example, when a <label> element is in another <label> element and

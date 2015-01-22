@@ -200,7 +200,7 @@ this.PlacesUtils = {
    * @param aNode
    *        A result node
    */
-  nodeAncestors: function PU_nodeAncestors(aNode) {
+  nodeAncestors: function* PU_nodeAncestors(aNode) {
     let node = aNode.parent;
     while (node) {
       yield node;
@@ -1490,6 +1490,9 @@ this.PlacesUtils = {
    */
   getImageURLForResolution:
   function PU_getImageURLForResolution(aWindow, aURL, aWidth = 16, aHeight = 16) {
+    if (!aURL.endsWith('.ico') && !aURL.endsWith('.ICO')) {
+      return aURL;
+    }
     let width  = Math.round(aWidth * aWindow.devicePixelRatio);
     let height = Math.round(aHeight * aWindow.devicePixelRatio);
     return aURL + (aURL.contains("#") ? "&" : "#") +

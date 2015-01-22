@@ -101,7 +101,7 @@ pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  16384);
 
 // predictive actions
-pref("network.predictor.enabled", false);
+pref("network.predictor.enabled", true);
 pref("network.predictor.max-db-size", 2097152); // bytes
 pref("network.predictor.preserve", 50); // percentage of predictor data to keep when cleaning up
 
@@ -114,6 +114,7 @@ pref("browser.display.remotetabs.timeout", 10);
 /* session history */
 pref("browser.sessionhistory.max_total_viewers", 1);
 pref("browser.sessionhistory.max_entries", 50);
+pref("browser.sessionhistory.contentViewerTimeout", 360);
 
 /* session store */
 pref("browser.sessionstore.resume_session_once", false);
@@ -250,9 +251,6 @@ pref("browser.search.param.maxSuggestions", "4");
 pref("browser.ssl_override_behavior", 2);
 pref("browser.xul.error_pages.expert_bad_cert", false);
 
-// disable logging for the search service by default
-pref("browser.search.log", false);
-
 // ordering of search engines in the engine list.
 pref("browser.search.order.1", "chrome://browser/locale/region.properties");
 pref("browser.search.order.2", "chrome://browser/locale/region.properties");
@@ -260,8 +258,6 @@ pref("browser.search.order.3", "chrome://browser/locale/region.properties");
 
 // disable updating
 pref("browser.search.update", false);
-pref("browser.search.update.log", false);
-pref("browser.search.updateinterval", 6);
 
 // disable search suggestions by default
 pref("browser.search.suggest.enabled", false);
@@ -274,18 +270,16 @@ pref("browser.search.jarURIs", "chrome://browser/locale/searchplugins/");
 // tell the search service that we don't really expose the "current engine"
 pref("browser.search.noCurrentEngine", true);
 
-#ifdef MOZ_OFFICIAL_BRANDING
-// {moz:official} expands to "official"
-pref("browser.search.official", true);
-#endif
+// disable the search service geoIP check
+pref("browser.search.geoip.url", "");
 
-// Control media casting feature
+// Control media casting & mirroring features
 pref("browser.casting.enabled", true);
+pref("browser.mirroring.enabled", true);
 #ifdef RELEASE_BUILD
-pref("browser.mirroring.enabled", false);
+// Roku does not yet support mirroring in production
 pref("browser.mirroring.enabled.roku", false);
 #else
-pref("browser.mirroring.enabled", true);
 pref("browser.mirroring.enabled.roku", true);
 #endif
 
@@ -380,11 +374,7 @@ pref("javascript.options.mem.gc_low_frequency_heap_growth", 120);
 pref("javascript.options.mem.high_water_mark", 16);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 3);
 pref("javascript.options.mem.gc_decommit_threshold_mb", 1);
-#ifdef JSGC_GENERATIONAL
 pref("javascript.options.mem.gc_min_empty_chunk_count", 1);
-#else
-pref("javascript.options.mem.gc_min_empty_chunk_count", 0);
-#endif
 pref("javascript.options.mem.gc_max_empty_chunk_count", 2);
 #else
 pref("javascript.options.mem.high_water_mark", 32);
@@ -673,6 +663,19 @@ pref("ui.scrolling.negate_wheel_scrollY", true);
 // auto-detect based on reported hardware values
 pref("ui.scrolling.gamepad_dead_zone", 115);
 
+// Prefs for fling acceleration
+pref("ui.scrolling.fling_accel_interval", -1);
+pref("ui.scrolling.fling_accel_base_multiplier", -1);
+pref("ui.scrolling.fling_accel_supplemental_multiplier", -1);
+
+// Prefs for fling curving
+pref("ui.scrolling.fling_curve_function_x1", -1);
+pref("ui.scrolling.fling_curve_function_y1", -1);
+pref("ui.scrolling.fling_curve_function_x2", -1);
+pref("ui.scrolling.fling_curve_function_y2", -1);
+pref("ui.scrolling.fling_curve_threshold_velocity", -1);
+pref("ui.scrolling.fling_curve_max_velocity", -1);
+pref("ui.scrolling.fling_curve_newton_iterations", -1);
 
 // Enable accessibility mode if platform accessibility is enabled.
 pref("accessibility.accessfu.activate", 2);
@@ -693,26 +696,6 @@ pref("network.manage-offline-status", true);
 
 // increase the timeout clamp for background tabs to 15 minutes
 pref("dom.min_background_timeout_value", 900000);
-
-// The default state of reader mode works on loaded a page.
-pref("reader.parse-on-load.enabled", true);
-
-// Force to enable reader mode to parse on loaded a page.
-// Allow reader mode even on low-memory platforms
-pref("reader.parse-on-load.force-enabled", false);
-
-// The default of font size in reader (1-5)
-pref("reader.font_size", 3);
-
-// The default color scheme in reader (light, dark, sepia, auto)
-// auto = color automatically adjusts according to ambient light level
-pref("reader.color_scheme", "auto");
-
-// The font type in reader (sans-serif, serif)
-pref("reader.font_type", "sans-serif");
-
-// Used to show a first-launch tip in reader
-pref("reader.has_used_toolbar", false);
 
 // Media plugins for libstagefright playback on android
 pref("media.plugins.enabled", true);
@@ -745,7 +728,7 @@ pref("browser.chrome.dynamictoolbar", true);
 // The mode of browser titlebar
 // 0: Show a current page title.
 // 1: Show a current page url.
-pref("browser.chrome.titlebarMode", 0);
+pref("browser.chrome.titlebarMode", 1);
 
 // Hide common parts of URLs like "www." or "http://"
 pref("browser.urlbar.trimURLs", true);
@@ -858,3 +841,6 @@ pref("device.storage.enabled", true);
 
 // Enable meta-viewport support for font inflation code
 pref("dom.meta-viewport.enabled", true);
+
+// Enable the OpenH264 plugin support in the addon manager.
+pref("media.gmp-gmpopenh264.provider.enabled", true);

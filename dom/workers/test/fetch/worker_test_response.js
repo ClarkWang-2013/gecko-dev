@@ -29,6 +29,29 @@ function testClone() {
   is(res.headers.get('content-length'), "5", "Response content-length should be 5.");
 }
 
+function testRedirect() {
+  var res = Response.redirect("./redirect.response");
+  is(res.status, 302, "Default redirect has status code 302");
+  var h = res.headers.get("location");
+  ok(h === (new URL("./redirect.response", self.location.href)).href, "Location header should be correct absolute URL");
+
+  var successStatus = [301, 302, 303, 307, 308];
+  for (var i = 0; i < successStatus.length; ++i) {
+    var res = Response.redirect("./redirect.response", successStatus[i]);
+    is(res.status, successStatus[i], "Status code should match");
+  }
+
+  var failStatus = [300, 0, 304, 305, 306, 309, 500];
+  for (var i = 0; i < failStatus.length; ++i) {
+    try {
+      var res = Response.redirect(".", failStatus[i]);
+      ok(false, "Invalid status code should fail " + failStatus[i]);
+    } catch(e) {
+      is(e.name, "RangeError", "Invalid status code should fail " + failStatus[i]);
+    }
+  }
+}
+
 function testBodyUsed() {
   var res = new Response("Sample body");
   ok(!res.bodyUsed, "bodyUsed is initially false.");
@@ -95,11 +118,12 @@ function testBodyExtraction() {
       is(fs.readAsText(v), text, "Decoded Blob should match original");
     });
   }).then(function() {
-    return newRes().json().then(function(v) {
-      ok(false, "Invalid json should reject");
-    }, function(e) {
-      ok(true, "Invalid json should reject");
-    })
+    // FIXME(nsm): Enable once Bug 1107777 and Bug 1072144 have been fixed.
+    //return newRes().json().then(function(v) {
+    //  ok(false, "Invalid json should reject");
+    //}, function(e) {
+    //  ok(true, "Invalid json should reject");
+    //})
   }).then(function() {
     return newRes().arrayBuffer().then(function(v) {
       ok(v instanceof ArrayBuffer, "Should resolve to ArrayBuffer");
@@ -114,6 +138,7 @@ onmessage = function() {
 
   testDefaultCtor();
   testClone();
+  testRedirect();
 
   Promise.resolve()
     .then(testBodyCreation)

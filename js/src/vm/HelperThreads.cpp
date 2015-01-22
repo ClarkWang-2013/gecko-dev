@@ -9,6 +9,7 @@
 #include "mozilla/DebugOnly.h"
 
 #include "jsnativestack.h"
+#include "jsnum.h" // For FIX_FPU()
 #include "prmjtime.h"
 
 #include "frontend/BytecodeCompiler.h"
@@ -28,19 +29,32 @@ using mozilla::DebugOnly;
 
 namespace js {
 
-GlobalHelperThreadState gHelperThreadState;
+GlobalHelperThreadState *gHelperThreadState = nullptr;
 
 } // namespace js
 
-void
-js::EnsureHelperThreadsInitialized(ExclusiveContext *cx)
+bool
+js::CreateHelperThreadsState()
 {
-    // If 'cx' is not a JSContext, we are already off the main thread and the
-    // helper threads would have already been initialized.
-    if (!cx->isJSContext())
-        return;
+    MOZ_ASSERT(!gHelperThreadState);
+    gHelperThreadState = js_new<GlobalHelperThreadState>();
+    return gHelperThreadState != nullptr;
+}
 
-    HelperThreadState().ensureInitialized();
+void
+js::DestroyHelperThreadsState()
+{
+    MOZ_ASSERT(gHelperThreadState);
+    gHelperThreadState->finish();
+    js_delete(gHelperThreadState);
+    gHelperThreadState = nullptr;
+}
+
+void
+js::EnsureHelperThreadsInitialized()
+{
+    MOZ_ASSERT(gHelperThreadState);
+    gHelperThreadState->ensureInitialized();
 }
 
 static size_t
@@ -85,8 +99,6 @@ js::StartOffThreadAsmJSCompile(ExclusiveContext *cx, AsmJSParallelTask *asmData)
 bool
 js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
 {
-    EnsureHelperThreadsInitialized(cx);
-
     AutoLockHelperThreadState lock;
 
     if (!HelperThreadState().ionWorklist().append(builder))
@@ -176,10 +188,8 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
 
 static const JSClass parseTaskGlobalClass = {
     "internal-parse-task-global", JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,  JS_DeletePropertyStub,
-    JS_PropertyStub,  JS_StrictPropertyStub,
-    JS_EnumerateStub, JS_ResolveStub,
-    JS_ConvertStub,   nullptr,
+    nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr,
     nullptr, nullptr, nullptr,
     JS_GlobalObjectTraceHook
 };
@@ -198,7 +208,17 @@ ParseTask::ParseTask(ExclusiveContext *cx, JSObject *exclusiveContextGlobal, JSC
 bool
 ParseTask::init(JSContext *cx, const ReadOnlyCompileOptions &options)
 {
-    return this->options.copy(cx, options);
+    if (!this->options.copy(cx, options))
+        return false;
+
+    // If the main-thread global is a debuggee, disable asm.js
+    // compilation. This is preferred to marking the task compartment as a
+    // debuggee, as the task compartment is (1) invisible to Debugger and (2)
+    // cannot have any Debuggers.
+    if (cx->compartment()->isDebuggee())
+        this->options.asmJSOption = false;
+
+    return true;
 }
 
 void
@@ -301,8 +321,6 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     // which could require barriers on the atoms compartment.
     gc::AutoSuppressGC suppress(cx);
 
-    EnsureHelperThreadsInitialized(cx);
-
     JS::CompartmentOptions compartmentOptions(cx->compartment()->options());
     compartmentOptions.setZone(JS::FreshZone);
     compartmentOptions.setInvisibleToDebugger(true);
@@ -343,7 +361,7 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
 
     ScopedJSDeletePtr<ExclusiveContext> helpercx(
         cx->new_<ExclusiveContext>(cx->runtime(), (PerThreadData *) nullptr,
-                                   ThreadSafeContext::Context_Exclusive));
+                                   ExclusiveContext::Context_Exclusive));
     if (!helpercx)
         return false;
 
@@ -364,12 +382,6 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
             return false;
     } else {
         task->activate(cx->runtime());
-
-        if (cx->compartment()->isDebuggee()) {
-            task->cx->compartment()->setIsDebuggee();
-            if (cx->compartment()->debugObservesAllExecution())
-                task->cx->compartment()->setDebugObservesAllExecution();
-        }
 
         AutoLockHelperThreadState lock;
 
@@ -457,7 +469,7 @@ GlobalHelperThreadState::GlobalHelperThreadState()
    threads(nullptr),
    asmJSCompilationInProgress(false),
    helperLock(nullptr),
-#ifdef DEbUG
+#ifdef DEBUG
    lockOwner(nullptr),
 #endif
    consumerWakeup(nullptr),
@@ -915,6 +927,8 @@ GlobalHelperThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
         parseTask->errors[i]->throwError(cx);
     if (parseTask->overRecursed)
         js_ReportOverRecursed(cx);
+    if (cx->isExceptionPending())
+        return nullptr;
 
     if (script) {
         // The Debugger only needs to be told about the topmost script that was compiled.
@@ -969,6 +983,12 @@ HelperThread::ThreadMain(void *arg)
         NuwaMarkCurrentThread(nullptr, nullptr);
     }
 #endif
+
+    //See bug 1104658.
+    //Set the FPU control word to be the same as the main thread's, or math
+    //computations on this thread may use incorrect precision rules during
+    //Ion compilation.
+    FIX_FPU();
 
     static_cast<HelperThread *>(arg)->threadLoop();
 }
@@ -1047,9 +1067,10 @@ HelperThread::handleIonWorkload()
     ionBuilder = builder;
     ionBuilder->setPauseFlag(&pause);
 
-    TraceLogger *logger = TraceLoggerForCurrentThread();
-    AutoTraceLog logScript(logger, TraceLogCreateTextId(logger, ionBuilder->script()));
-    AutoTraceLog logCompile(logger, TraceLogger::IonCompilation);
+    TraceLoggerThread *logger = TraceLoggerForCurrentThread();
+    TraceLoggerEvent event(logger, TraceLogger_AnnotateScripts, ionBuilder->script());
+    AutoTraceLog logScript(logger, event);
+    AutoTraceLog logCompile(logger, TraceLogger_IonCompilation);
 
     JSRuntime *rt = ionBuilder->script()->compartment()->runtimeFromAnyThread();
 
@@ -1117,8 +1138,8 @@ CurrentHelperThread()
 void
 js::PauseCurrentHelperThread()
 {
-    TraceLogger *logger = TraceLoggerForCurrentThread();
-    AutoTraceLog logPaused(logger, TraceLogger::IonCompilationPaused);
+    TraceLoggerThread *logger = TraceLoggerForCurrentThread();
+    AutoTraceLog logPaused(logger, TraceLogger_IonCompilationPaused);
 
     HelperThread *thread = CurrentHelperThread();
 
@@ -1169,7 +1190,7 @@ HelperThread::handleParseWorkload()
         SourceBufferHolder srcBuf(parseTask->chars, parseTask->length,
                                   SourceBufferHolder::NoOwnership);
         parseTask->script = frontend::CompileScript(parseTask->cx, &parseTask->alloc,
-                                                    NullPtr(), NullPtr(),
+                                                    NullPtr(), NullPtr(), NullPtr(),
                                                     parseTask->options,
                                                     srcBuf);
     }
@@ -1212,8 +1233,6 @@ HelperThread::handleCompressionWorkload()
 bool
 js::StartOffThreadCompression(ExclusiveContext *cx, SourceCompressionTask *task)
 {
-    EnsureHelperThreadsInitialized(cx);
-
     AutoLockHelperThreadState lock;
 
     if (!HelperThreadState().compressionWorklist().append(task)) {

@@ -50,7 +50,7 @@ let gTests = [
   setup: function () { },
   run: function ()
   {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
     let snippetsElt = doc.getElementById("snippets");
     ok(snippetsElt, "Found snippets element")
     is(snippetsElt.getElementsByTagName("span").length, 1,
@@ -67,7 +67,7 @@ let gTests = [
   },
   run: function (aSnippetsMap)
   {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
 
     let snippetsElt = doc.getElementById("snippets");
     ok(snippetsElt, "Found snippets element");
@@ -110,7 +110,7 @@ let gTests = [
     let doc = gBrowser.contentDocument;
     let engineName = doc.documentElement.getAttribute("searchEngineName");
     is(engine.name, engineName, "Engine name in DOM should match engine we just added");
-    let mm = gBrowser.selectedTab.linkedBrowser.messageManager;
+    let mm = gBrowser.selectedBrowser.messageManager;
 
     mm.loadFrameScript(TEST_CONTENT_HELPER, false);
 
@@ -175,7 +175,7 @@ let gTests = [
   },
   run: function (aSnippetsMap)
   {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
 
     let snippetsElt = doc.getElementById("snippets");
     ok(snippetsElt, "Found snippets element");
@@ -198,7 +198,7 @@ let gTests = [
   setup: function () { },
   run: function (aSnippetsMap)
   {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
     let showRights = AboutHomeUtils.showKnowYourRights;
 
     ok(showRights, "AboutHomeUtils.showKnowYourRights should be TRUE");
@@ -220,7 +220,7 @@ let gTests = [
   setup: function () { },
   run: function (aSnippetsMap)
   {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
     let rightsData = AboutHomeUtils.knowYourRightsData;
 
     ok(!rightsData, "AboutHomeUtils.knowYourRightsData should be FALSE");
@@ -252,7 +252,7 @@ let gTests = [
 
       // Ready to execute the tests!
       let needle = "Search for something awesome.";
-      let document = gBrowser.selectedTab.linkedBrowser.contentDocument;
+      let document = gBrowser.selectedBrowser.contentDocument;
       let searchText = document.getElementById("searchText");
 
       // We're about to change the search engine. Once the change has
@@ -304,7 +304,7 @@ let gTests = [
   {
     let deferred = Promise.defer();
 
-    let browser = gBrowser.selectedTab.linkedBrowser;
+    let browser = gBrowser.selectedBrowser;
     waitForLoad(() => {
       let button = browser.contentDocument.getElementById("settings");
       ok(button, "Found settings button in test page");
@@ -387,7 +387,7 @@ let gTests = [
     CustomizableUI.removeWidgetFromArea("search-container");
   },
   run: Task.async(function* () {
-    let doc = gBrowser.selectedTab.linkedBrowser.contentDocument;
+    let doc = gBrowser.selectedBrowser.contentDocument;
     let logo = doc.getElementById("brandLogo");
     let searchInput = doc.getElementById("searchText");
 
@@ -404,7 +404,7 @@ let gTests = [
   desc: "Cmd+k should focus the search box in the toolbar when it's present",
   setup: function () {},
   run: Task.async(function* () {
-    let logo = gBrowser.selectedTab.linkedBrowser.contentDocument.getElementById("brandLogo");
+    let logo = gBrowser.selectedBrowser.contentDocument.getElementById("brandLogo");
     let doc = window.document;
     let searchInput = doc.getElementById("searchbar").textbox.inputField;
 
@@ -420,7 +420,7 @@ let gTests = [
   desc: "Sync button should open about:accounts page with `abouthome` entrypoint",
   setup: function () {},
   run: Task.async(function* () {
-    let syncButton = gBrowser.selectedTab.linkedBrowser.contentDocument.getElementById("sync");
+    let syncButton = gBrowser.selectedBrowser.contentDocument.getElementById("sync");
     yield EventUtils.synthesizeMouseAtCenter(syncButton, {}, gBrowser.contentWindow);
 
     yield promiseTabLoadEvent(gBrowser.selectedTab, null, "load");
@@ -439,7 +439,7 @@ let gTests = [
     info("Waiting for popup to open");
     EventUtils.synthesizeMouseAtCenter(searchIcon, {}, gBrowser.selectedBrowser.contentWindow);
     yield promiseWaitForEvent(panel, "popupshown");
-    ok("Saw popup open");
+    info("Saw popup open");
 
     let promise = promisePrefsOpen();
     let item = window.document.getElementById("abouthome-search-panel-manage");
@@ -632,12 +632,33 @@ function promiseWaitForEvent(node, type, capturing) {
 }
 
 let promisePrefsOpen = Task.async(function*() {
-  info("Waiting for the preferences tab to open...");
-  let event = yield promiseWaitForEvent(gBrowser.tabContainer, "TabOpen", true);
-  let tab = event.target;
-  yield promiseTabLoadEvent(tab);
-  is(tab.linkedBrowser.currentURI.spec, "about:preferences#search", "Should have seen the prefs tab");
-  gBrowser.removeTab(tab);
+  if (Services.prefs.getBoolPref("browser.preferences.inContent")) {
+    info("Waiting for the preferences tab to open...");
+    let event = yield promiseWaitForEvent(gBrowser.tabContainer, "TabOpen", true);
+    let tab = event.target;
+    yield promiseTabLoadEvent(tab);
+    is(tab.linkedBrowser.currentURI.spec, "about:preferences#search", "Should have seen the prefs tab");
+    gBrowser.removeTab(tab);
+  } else {
+    info("Waiting for the preferences window to open...");
+    yield new Promise(resolve => {
+      let winWatcher = Cc["@mozilla.org/embedcomp/window-watcher;1"].
+                       getService(Ci.nsIWindowWatcher);
+      winWatcher.registerNotification(function onWin(subj, topic, data) {
+        if (topic == "domwindowopened" && subj instanceof Ci.nsIDOMWindow) {
+          subj.addEventListener("load", function onLoad() {
+            subj.removeEventListener("load", onLoad);
+            is(subj.document.documentURI, "chrome://browser/content/preferences/preferences.xul", "Should have seen the prefs window");
+            winWatcher.unregisterNotification(onWin);
+            executeSoon(() => {
+              subj.close();
+              resolve();
+            });
+          });
+        }
+      });
+    });
+  }
 });
 
 function promiseNewEngine(basename) {

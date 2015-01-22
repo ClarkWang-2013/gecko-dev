@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import android.os.Build;
+
 import org.json.JSONObject;
 import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.AppConstants.Versions;
@@ -27,7 +28,7 @@ import org.mozilla.gecko.GeckoProfile;
 import org.mozilla.gecko.GeckoSharedPrefs;
 import org.mozilla.gecko.GuestSession;
 import org.mozilla.gecko.LocaleManager;
-import org.mozilla.gecko.NewTabletUI;
+import org.mozilla.gecko.Locales;
 import org.mozilla.gecko.PrefsHelper;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.RestrictedProfiles;
@@ -121,6 +122,8 @@ OnSharedPreferenceChangeListener
     private static final String PREFS_DISPLAY_REFLOW_ON_ZOOM = "browser.zoom.reflowOnZoom";
     private static final String PREFS_DISPLAY_TITLEBAR_MODE = "browser.chrome.titlebarMode";
     private static final String PREFS_SYNC = NON_PREF_PREFIX + "sync";
+    private static final String PREFS_TRACKING_PROTECTION = "privacy.trackingprotection.enabled";
+    private static final String PREFS_TRACKING_PROTECTION_LEARN_MORE = NON_PREF_PREFIX + "trackingprotection.learn_more";
 
     private static final String ACTION_STUMBLER_UPLOAD_PREF = AppConstants.ANDROID_PACKAGE_NAME + ".STUMBLER_PREF";
 
@@ -129,7 +132,6 @@ OnSharedPreferenceChangeListener
 
     public static final String PREFS_RESTORE_SESSION = NON_PREF_PREFIX + "restoreSession3";
     public static final String PREFS_SUGGESTED_SITES = NON_PREF_PREFIX + "home_suggested_sites";
-    public static final String PREFS_NEW_TABLET_UI = NON_PREF_PREFIX + "new_tablet_ui";
 
     // These values are chosen to be distinct from other Activity constants.
     private static final int REQUEST_CODE_PREF_SCREEN = 5;
@@ -298,10 +300,6 @@ OnSharedPreferenceChangeListener
     protected void onCreate(Bundle savedInstanceState) {
         // Make sure RestrictedProfiles is ready.
         RestrictedProfiles.initWithProfile(GeckoProfile.get(this));
-
-        if (GeckoProfile.get(this).inGuestMode()) {
-            GuestSession.configureWindow(getWindow());
-        }
 
         // Apply the current user-selected locale, if necessary.
         checkLocale();
@@ -674,9 +672,10 @@ OnSharedPreferenceChangeListener
                     preferences.removePreference(pref);
                     i--;
                     continue;
-                } else if ((AppConstants.RELEASE_BUILD || !HardwareUtils.isTablet()) &&
-                           PREFS_NEW_TABLET_UI.equals(key)) {
-                    // Remove toggle for new tablet UI on release builds and phones.
+                } else if (!AppConstants.NIGHTLY_BUILD &&
+                           (PREFS_TRACKING_PROTECTION.equals(key) ||
+                            PREFS_TRACKING_PROTECTION_LEARN_MORE.equals(key))) {
+                    // Remove UI for tracking protection preference on non-Nightly builds.
                     preferences.removePreference(pref);
                     i--;
                     continue;
@@ -734,7 +733,7 @@ OnSharedPreferenceChangeListener
                         }
                     });
                 } else if (PREFS_DISPLAY_TITLEBAR_MODE.equals(key) &&
-                           NewTabletUI.isEnabled(this)) {
+                           HardwareUtils.isTablet()) {
                     // New tablet always shows URLS, not titles.
                     preferences.removePreference(pref);
                     i--;
@@ -1014,12 +1013,10 @@ OnSharedPreferenceChangeListener
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
         if (PREFS_BROWSER_LOCALE.equals(key)) {
-            onLocaleSelected(BrowserLocaleManager.getLanguageTag(lastLocale),
+            onLocaleSelected(Locales.getLanguageTag(lastLocale),
                              sharedPreferences.getString(key, null));
         } else if (PREFS_SUGGESTED_SITES.equals(key)) {
             refreshSuggestedSites();
-        } else if (PREFS_NEW_TABLET_UI.equals(key)) {
-            Toast.makeText(this, R.string.new_tablet_restart, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -1054,7 +1051,7 @@ OnSharedPreferenceChangeListener
         if (PREFS_BROWSER_LOCALE.equals(prefName)) {
             // Even though this is a list preference, we don't want to handle it
             // below, so we return here.
-            return onLocaleSelected(BrowserLocaleManager.getLanguageTag(lastLocale), (String) newValue);
+            return onLocaleSelected(Locales.getLanguageTag(lastLocale), (String) newValue);
         }
 
         if (PREFS_MENU_CHAR_ENCODING.equals(prefName)) {

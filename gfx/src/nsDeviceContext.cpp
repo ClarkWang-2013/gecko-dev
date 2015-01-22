@@ -63,7 +63,8 @@ public:
     void Init(nsDeviceContext* aContext);
     void Destroy();
 
-    nsresult GetMetricsFor(const nsFont& aFont, nsIAtom* aLanguage,
+    nsresult GetMetricsFor(const nsFont& aFont,
+                           nsIAtom* aLanguage, bool aExplicitLanguage,
                            gfxFont::Orientation aOrientation,
                            gfxUserFontSet* aUserFontSet,
                            gfxTextPerfMetrics* aTextPerf,
@@ -124,7 +125,8 @@ nsFontCache::Observe(nsISupports*, const char* aTopic, const char16_t*)
 }
 
 nsresult
-nsFontCache::GetMetricsFor(const nsFont& aFont, nsIAtom* aLanguage,
+nsFontCache::GetMetricsFor(const nsFont& aFont,
+                           nsIAtom* aLanguage, bool aExplicitLanguage,
                            gfxFont::Orientation aOrientation,
                            gfxUserFontSet* aUserFontSet,
                            gfxTextPerfMetrics* aTextPerf,
@@ -157,8 +159,8 @@ nsFontCache::GetMetricsFor(const nsFont& aFont, nsIAtom* aLanguage,
 
     fm = new nsFontMetrics();
     NS_ADDREF(fm);
-    nsresult rv = fm->Init(aFont, aLanguage, aOrientation, mContext,
-                           aUserFontSet, aTextPerf);
+    nsresult rv = fm->Init(aFont, aLanguage, aExplicitLanguage, aOrientation,
+                           mContext, aUserFontSet, aTextPerf);
     if (NS_SUCCEEDED(rv)) {
         // the mFontMetrics list has the "head" at the end, because append
         // is cheaper than insert
@@ -177,8 +179,8 @@ nsFontCache::GetMetricsFor(const nsFont& aFont, nsIAtom* aLanguage,
     Compact();
     fm = new nsFontMetrics();
     NS_ADDREF(fm);
-    rv = fm->Init(aFont, aLanguage, aOrientation, mContext, aUserFontSet,
-                  aTextPerf);
+    rv = fm->Init(aFont, aLanguage, aExplicitLanguage, aOrientation, mContext,
+                  aUserFontSet, aTextPerf);
     if (NS_SUCCEEDED(rv)) {
         mFontMetrics.AppendElement(fm);
         aMetrics = fm;
@@ -266,6 +268,7 @@ nsDeviceContext::~nsDeviceContext()
 nsresult
 nsDeviceContext::GetMetricsFor(const nsFont& aFont,
                                nsIAtom* aLanguage,
+                               bool aExplicitLanguage,
                                gfxFont::Orientation aOrientation,
                                gfxUserFontSet* aUserFontSet,
                                gfxTextPerfMetrics* aTextPerf,
@@ -277,8 +280,9 @@ nsDeviceContext::GetMetricsFor(const nsFont& aFont,
         mFontCache->Init(this);
     }
 
-    return mFontCache->GetMetricsFor(aFont, aLanguage, aOrientation,
-                                     aUserFontSet, aTextPerf, aMetrics);
+    return mFontCache->GetMetricsFor(aFont, aLanguage, aExplicitLanguage,
+                                     aOrientation, aUserFontSet, aTextPerf,
+                                     aMetrics);
 }
 
 nsresult
@@ -371,18 +375,19 @@ nsDeviceContext::SetDPI()
 nsresult
 nsDeviceContext::Init(nsIWidget *aWidget)
 {
+    nsresult rv = NS_OK;
     if (mScreenManager && mWidget == aWidget)
-        return NS_OK;
+        return rv;
 
     mWidget = aWidget;
     SetDPI();
 
     if (mScreenManager)
-        return NS_OK;
+        return rv;
 
-    mScreenManager = do_GetService("@mozilla.org/gfx/screenmanager;1");
+    mScreenManager = do_GetService("@mozilla.org/gfx/screenmanager;1", &rv);
 
-    return NS_OK;
+    return rv;
 }
 
 already_AddRefed<gfxContext>
@@ -418,7 +423,7 @@ nsDeviceContext::CreateRenderingContext()
 nsresult
 nsDeviceContext::GetDepth(uint32_t& aDepth)
 {
-    if (mDepth == 0) {
+    if (mDepth == 0 && mScreenManager) {
         nsCOMPtr<nsIScreen> primaryScreen;
         mScreenManager->GetPrimaryScreen(getter_AddRefs(primaryScreen));
         primaryScreen->GetColorDepth(reinterpret_cast<int32_t *>(&mDepth));
@@ -640,11 +645,15 @@ nsDeviceContext::ComputeFullAreaUsingScreen(nsRect* outRect)
 void
 nsDeviceContext::FindScreen(nsIScreen** outScreen)
 {
-    if (mWidget && mWidget->GetOwningTabChild()) {
+    if (!mWidget || !mScreenManager) {
+        return;
+    }
+
+    if (mWidget->GetOwningTabChild()) {
         mScreenManager->ScreenForNativeWidget((void *)mWidget->GetOwningTabChild(),
                                               outScreen);
     }
-    else if (mWidget && mWidget->GetNativeData(NS_NATIVE_WINDOW)) {
+    else if (mWidget->GetNativeData(NS_NATIVE_WINDOW)) {
         mScreenManager->ScreenForNativeWidget(mWidget->GetNativeData(NS_NATIVE_WINDOW),
                                               outScreen);
     }

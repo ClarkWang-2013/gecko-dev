@@ -42,25 +42,28 @@ public:
   // Cancel Resource
   void cancelResource();
 
+  bool IsWaitingResource();
+
 protected:
   // MediaResourceManagerClient::EventListener::statusChanged()
   virtual void statusChanged(int event);
 
 private:
   // Forbidden
-  MediaResourceHandler() MOZ_DELETE;
-  MediaResourceHandler(const MediaResourceHandler &) MOZ_DELETE;
-  const MediaResourceHandler &operator=(const MediaResourceHandler &) MOZ_DELETE;
+  MediaResourceHandler() = delete;
+  MediaResourceHandler(const MediaResourceHandler &) = delete;
+  const MediaResourceHandler &operator=(const MediaResourceHandler &) = delete;
 
   // Resource Notification Listener
   wp<ResourceListener> mListener;
 
   // Resource Management
   Mutex mLock;
-  MediaResourceManagerClient::State mState;
   sp<IMediaResourceManagerClient> mClient;
   sp<IMediaResourceManagerService> mService;
   IMediaResourceManagerService::ResourceType mType;
+
+  bool mWaitingResource;
 };
 
 } // namespace android

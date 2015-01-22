@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko.tests;
 
 import android.view.View;
@@ -17,11 +21,11 @@ public class testHistory extends AboutHomeTest {
         String url3 = getAbsoluteUrl(StringHelper.ROBOCOP_BLANK_PAGE_03_URL);
 
         inputAndLoadUrl(url);
-        verifyPageTitle(StringHelper.ROBOCOP_BLANK_PAGE_01_URL, url);
+        verifyUrlBarTitle(url);
         inputAndLoadUrl(url2);
-        verifyPageTitle(StringHelper.ROBOCOP_BLANK_PAGE_02_URL, url2);
+        verifyUrlBarTitle(url2);
         inputAndLoadUrl(url3);
-        verifyPageTitle(StringHelper.ROBOCOP_BLANK_PAGE_03_URL, url3);
+        verifyUrlBarTitle(url3);
 
         openAboutHomeTab(AboutHomeTabs.HISTORY);
 
@@ -62,7 +66,7 @@ public class testHistory extends AboutHomeTest {
 
         // The first item here (since it was just visited) should be a "Switch to tab" item
         // i.e. don't expect a DOMContentLoaded event
-        verifyPageTitle(StringHelper.ROBOCOP_BLANK_PAGE_03_URL, StringHelper.ROBOCOP_BLANK_PAGE_03_URL);
+        verifyUrlBarTitle(StringHelper.ROBOCOP_BLANK_PAGE_03_URL);
         verifyUrl(url3);
     }
 }

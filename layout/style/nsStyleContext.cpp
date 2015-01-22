@@ -399,6 +399,8 @@ nsStyleContext::GetUniqueStyleData(const nsStyleStructID& aSID)
 
   UNIQUE_CASE(Display)
   UNIQUE_CASE(Background)
+  UNIQUE_CASE(Border)
+  UNIQUE_CASE(Padding)
   UNIQUE_CASE(Text)
   UNIQUE_CASE(TextReset)
 
@@ -507,8 +509,8 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
   //   # The computed 'display' of a flex item is determined
   //   # by applying the table in CSS 2.1 Chapter 9.7.
   // ...which converts inline-level elements to their block-level equivalents.
-  // Any direct children of elements with Ruby display values which are
-  // block-level are converted to their inline-level equivalents.
+  // Any block-level element directly contained by elements with ruby display
+  // values are converted to their inline-level equivalents.
   if (!aSkipParentDisplayBasedStyleFixup && mParent) {
     // Skip display:contents ancestors to reach the potential container.
     // (If there are only display:contents ancestors between this node and
@@ -529,9 +531,9 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
       uint8_t displayVal = disp->mDisplay;
       // Skip table parts.
       // NOTE: This list needs to be kept in sync with
-      // nsCSSFrameConstructor.cpp's "sDisplayData" array -- specifically,
-      // this should be the list of display-values that have
-      // FCDATA_DESIRED_PARENT_TYPE_TO_BITS specified in that array.
+      // nsCSSFrameConstructor::FindDisplayData() -- specifically,
+      // this should be the list of display-values that returns
+      // FCDATA_DESIRED_PARENT_TYPE_TO_BITS from that method.
       if (NS_STYLE_DISPLAY_TABLE_CAPTION      != displayVal &&
           NS_STYLE_DISPLAY_TABLE_ROW_GROUP    != displayVal &&
           NS_STYLE_DISPLAY_TABLE_HEADER_GROUP != displayVal &&
@@ -558,16 +560,45 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
           mutable_display->mDisplay = displayVal;
         }
       }
-    } else if (containerDisp->IsRubyDisplayType()) {
+    }
+
+    // The display change should only occur for "in-flow" children
+    if (!disp->IsOutOfFlowStyle() &&
+        ((containerDisp->mDisplay == NS_STYLE_DISPLAY_INLINE &&
+          containerContext->IsInlineDescendantOfRuby()) ||
+         containerDisp->IsRubyDisplayType())) {
+      mBits |= NS_STYLE_IS_INLINE_DESCENDANT_OF_RUBY;
       uint8_t displayVal = disp->mDisplay;
       nsRuleNode::EnsureInlineDisplay(displayVal);
-      // The display change should only occur for "in-flow" children
-      if (displayVal != disp->mDisplay && 
-          !disp->IsOutOfFlowStyle()) {
+      if (displayVal != disp->mDisplay) {
         nsStyleDisplay *mutable_display =
           static_cast<nsStyleDisplay*>(GetUniqueStyleData(eStyleStruct_Display));
         mutable_display->mDisplay = displayVal;
       }
+    }
+  }
+
+  // Suppress border/padding of ruby level containers
+  if (disp->mDisplay == NS_STYLE_DISPLAY_RUBY_BASE_CONTAINER ||
+      disp->mDisplay == NS_STYLE_DISPLAY_RUBY_TEXT_CONTAINER) {
+    if (StyleBorder()->GetComputedBorder() != nsMargin(0, 0, 0, 0)) {
+      nsStyleBorder* border =
+        static_cast<nsStyleBorder*>(GetUniqueStyleData(eStyleStruct_Border));
+      NS_FOR_CSS_SIDES(side) {
+        border->SetBorderWidth(side, 0);
+      }
+    }
+
+    nsMargin computedPadding;
+    if (!StylePadding()->GetPadding(computedPadding) ||
+        computedPadding != nsMargin(0, 0, 0, 0)) {
+      const nsStyleCoord zero(0, nsStyleCoord::CoordConstructor);
+      nsStylePadding* padding =
+        static_cast<nsStylePadding*>(GetUniqueStyleData(eStyleStruct_Padding));
+      NS_FOR_CSS_SIDES(side) {
+        padding->mPadding.Set(side, zero);
+      }
+      padding->RecalcData();
     }
   }
 
@@ -764,7 +795,10 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther,
       const nsStyleBorder *otherVisBorder = otherVis->StyleBorder();
       NS_FOR_CSS_SIDES(side) {
         bool thisFG, otherFG;
-        nscolor thisColor, otherColor;
+        // Dummy initialisations to keep Valgrind/Memcheck happy.
+        // See bug 1122375 comment 4.
+        nscolor thisColor = NS_RGBA(0, 0, 0, 0);
+        nscolor otherColor = NS_RGBA(0, 0, 0, 0);
         thisVisBorder->GetBorderColor(side, thisColor, thisFG);
         otherVisBorder->GetBorderColor(side, otherColor, otherFG);
         if (thisFG != otherFG || (!thisFG && thisColor != otherColor)) {
@@ -804,7 +838,10 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther,
     if (!change && PeekStyleTextReset()) {
       const nsStyleTextReset *thisVisTextReset = thisVis->StyleTextReset();
       const nsStyleTextReset *otherVisTextReset = otherVis->StyleTextReset();
-      nscolor thisVisDecColor, otherVisDecColor;
+      // Dummy initialisations to keep Valgrind/Memcheck happy.
+      // See bug 1122375 comment 4.
+      nscolor thisVisDecColor = NS_RGBA(0, 0, 0, 0);
+      nscolor otherVisDecColor = NS_RGBA(0, 0, 0, 0);
       bool thisVisDecColorIsFG, otherVisDecColorIsFG;
       thisVisTextReset->GetDecorationColor(thisVisDecColor,
                                            thisVisDecColorIsFG);
@@ -999,9 +1036,9 @@ nsStyleContext::GetVisitedDependentColor(nsCSSProperty aProperty)
   NS_ASSERTION(aProperty == eCSSProperty_color ||
                aProperty == eCSSProperty_background_color ||
                aProperty == eCSSProperty_border_top_color ||
-               aProperty == eCSSProperty_border_right_color_value ||
+               aProperty == eCSSProperty_border_right_color ||
                aProperty == eCSSProperty_border_bottom_color ||
-               aProperty == eCSSProperty_border_left_color_value ||
+               aProperty == eCSSProperty_border_left_color ||
                aProperty == eCSSProperty_outline_color ||
                aProperty == eCSSProperty__moz_column_rule_color ||
                aProperty == eCSSProperty_text_decoration_color ||

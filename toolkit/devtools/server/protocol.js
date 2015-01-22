@@ -4,8 +4,10 @@
 
 "use strict";
 
+let { Cu } = require("chrome");
+let DevToolsUtils = require("devtools/toolkit/DevToolsUtils");
 let Services = require("Services");
-let promise = require("devtools/toolkit/deprecated-sync-thenables");
+let promise = require("promise");
 let {Class} = require("sdk/core/heritage");
 let {EventTarget} = require("sdk/event/target");
 let events = require("sdk/event/core");
@@ -770,7 +772,7 @@ let Pool = Class({
    * Remove an actor as a child of this pool.
    */
   unmanage: function(actor) {
-    this.__poolMap.delete(actor.actorID);
+    this.__poolMap && this.__poolMap.delete(actor.actorID);
   },
 
   // true if the given actor ID exists in the pool.
@@ -997,7 +999,7 @@ let actorProto = function(actorProto) {
         try {
           args = spec.request.read(packet, this);
         } catch(ex) {
-          console.error("Error writing request: " + packet.type);
+          console.error("Error reading request: " + packet.type);
           throw ex;
         }
 
@@ -1148,7 +1150,7 @@ let Front = Class({
       this.actor().then(actorID => {
         packet.to = actorID;
         this.conn._transport.send(packet);
-      });
+      }).then(null, e => DevToolsUtils.reportException("Front.prototype.send", e));
     }
   },
 

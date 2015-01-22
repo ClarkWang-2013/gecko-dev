@@ -597,7 +597,7 @@ public:
     }
   }
 
-  virtual void Stop()
+  virtual void Stop() MOZ_OVERRIDE
   {
     if (mSourceStream) {
       mSourceStream->EndAllTrackAndFinish();
@@ -608,7 +608,7 @@ public:
   // single-source trackunion like we have here, the TrackUnion will assign trackids
   // that match the source's trackids, so we can avoid needing a mapping function.
   // XXX This will not handle more complex cases well.
-  virtual void StopTrack(TrackID aTrackID)
+  virtual void StopTrack(TrackID aTrackID) MOZ_OVERRIDE
   {
     if (mSourceStream) {
       mSourceStream->EndTrack(aTrackID);
@@ -681,12 +681,12 @@ public:
     GetStream()->AsProcessedStream()->ForwardTrackEnabled(aID, aEnabled);
   }
 
-  virtual DOMLocalMediaStream* AsDOMLocalMediaStream()
+  virtual DOMLocalMediaStream* AsDOMLocalMediaStream() MOZ_OVERRIDE
   {
     return this;
   }
 
-  virtual MediaEngineSource* GetMediaEngine(TrackID aTrackID)
+  virtual MediaEngineSource* GetMediaEngine(TrackID aTrackID) MOZ_OVERRIDE
   {
     // MediaEngine supports only one video and on video track now and TrackID is
     // fixed in MediaEngine.
@@ -1369,7 +1369,7 @@ public:
 
     nsRefPtr<MediaEngine> backend;
     if (mConstraints.mFake)
-      backend = new MediaEngineDefault();
+      backend = new MediaEngineDefault(mConstraints.mFakeTracks);
     else
       backend = mManager->GetBackend(mWindowId);
 
@@ -1580,7 +1580,7 @@ MediaManager::GetUserMedia(
   NS_ENSURE_TRUE(aOnFailure, NS_ERROR_NULL_POINTER);
   NS_ENSURE_TRUE(aOnSuccess, NS_ERROR_NULL_POINTER);
 
-  bool privileged = nsContentUtils::IsChromeDoc(aWindow->GetExtantDoc());
+  bool privileged = nsContentUtils::IsCallerChrome();
 
   nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> onSuccess(aOnSuccess);
   nsCOMPtr<nsIDOMGetUserMediaErrorCallback> onFailure(aOnFailure);
@@ -1668,7 +1668,7 @@ MediaManager::GetUserMedia(
   if (c.mFake) {
     // Fake stream from default backend.
     task = new GetUserMediaTask(c, onSuccess.forget(),
-      onFailure.forget(), windowID, listener, mPrefs, new MediaEngineDefault());
+      onFailure.forget(), windowID, listener, mPrefs, new MediaEngineDefault(c.mFakeTracks));
   } else {
     // Stream from default device from WebRTC backend.
     task = new GetUserMediaTask(c, onSuccess.forget(),

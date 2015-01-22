@@ -21,8 +21,8 @@
 using namespace android;
 
 namespace android {
-struct MOZ_EXPORT ALooper;
-class MOZ_EXPORT MediaBuffer;
+struct ALooper;
+class MediaBuffer;
 struct MOZ_EXPORT AString;
 class GonkNativeWindow;
 } // namespace android
@@ -52,6 +52,8 @@ public:
 
   virtual nsresult Flush() MOZ_OVERRIDE;
 
+  virtual void AllocateMediaResources();
+
   virtual void ReleaseMediaResources();
 
   static void RecycleCallback(TextureClient* aClient, void* aClosure);
@@ -79,9 +81,9 @@ private:
 
   private:
     // Forbidden
-    MessageHandler() MOZ_DELETE;
-    MessageHandler(const MessageHandler &rhs) MOZ_DELETE;
-    const MessageHandler &operator=(const MessageHandler &rhs) MOZ_DELETE;
+    MessageHandler() = delete;
+    MessageHandler(const MessageHandler &rhs) = delete;
+    const MessageHandler &operator=(const MessageHandler &rhs) = delete;
 
     GonkVideoDecoderManager *mManager;
   };
@@ -98,9 +100,9 @@ private:
 
   private:
     // Forbidden
-    VideoResourceListener() MOZ_DELETE;
-    VideoResourceListener(const VideoResourceListener &rhs) MOZ_DELETE;
-    const VideoResourceListener &operator=(const VideoResourceListener &rhs) MOZ_DELETE;
+    VideoResourceListener() = delete;
+    VideoResourceListener(const VideoResourceListener &rhs) = delete;
+    const VideoResourceListener &operator=(const VideoResourceListener &rhs) = delete;
 
     GonkVideoDecoderManager *mManager;
   };

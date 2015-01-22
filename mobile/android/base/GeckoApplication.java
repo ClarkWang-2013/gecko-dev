@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.home.HomePanelsManager;
+import org.mozilla.gecko.lwt.LightweightTheme;
 import org.mozilla.gecko.mozglue.GeckoLoader;
 import org.mozilla.gecko.util.Clipboard;
 import org.mozilla.gecko.util.HardwareUtils;
@@ -89,11 +90,11 @@ public class GeckoApplication extends Application
             GeckoAppShell.sendEventToGecko(GeckoEvent.createAppBackgroundingEvent());
             mPausedGecko = true;
 
+            final BrowserDB db = GeckoProfile.get(this).getDB();
             ThreadUtils.postToBackgroundThread(new Runnable() {
                 @Override
                 public void run() {
-                    BrowserDB.expireHistory(getContentResolver(),
-                                            BrowserContract.ExpirePriority.NORMAL);
+                    db.expireHistory(getContentResolver(), BrowserContract.ExpirePriority.NORMAL);
                 }
             });
         }

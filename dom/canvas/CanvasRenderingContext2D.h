@@ -269,6 +269,7 @@ public:
 
   void AddHitRegion(const HitRegionOptions& options, mozilla::ErrorResult& error);
   void RemoveHitRegion(const nsAString& id);
+  void ClearHitRegions();
 
   void DrawImage(const HTMLImageOrCanvasOrVideoElement& image,
                  double dx, double dy, mozilla::ErrorResult& error)
@@ -584,15 +585,15 @@ public:
 
   friend class CanvasRenderingContext2DUserData;
 
-  virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat);
+  virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat) MOZ_OVERRIDE;
 
 
   // Given a point, return hit region ID if it exists
-  nsString GetHitRegion(const mozilla::gfx::Point& aPoint);
+  nsString GetHitRegion(const mozilla::gfx::Point& aPoint) MOZ_OVERRIDE;
 
 
   // return true and fills in the bound rect if element has a hit region.
-  bool GetHitRegionRect(Element* aElement, nsRect& aRect);
+  bool GetHitRegionRect(Element* aElement, nsRect& aRect) MOZ_OVERRIDE;
 
 protected:
   nsresult GetImageDataArray(JSContext* aCx, int32_t aX, int32_t aY,
@@ -946,7 +947,8 @@ protected:
                      fillRule(mozilla::gfx::FillRule::FILL_WINDING),
                      lineCap(mozilla::gfx::CapStyle::BUTT),
                      lineJoin(mozilla::gfx::JoinStyle::MITER_OR_BEVEL),
-                     imageSmoothingEnabled(true)
+                     imageSmoothingEnabled(true),
+                     fontExplicitLanguage(false)
     { }
 
     ContextState(const ContextState& other)
@@ -977,7 +979,8 @@ protected:
           filterChainObserver(other.filterChainObserver),
           filter(other.filter),
           filterAdditionalImages(other.filterAdditionalImages),
-          imageSmoothingEnabled(other.imageSmoothingEnabled)
+          imageSmoothingEnabled(other.imageSmoothingEnabled),
+          fontExplicitLanguage(other.fontExplicitLanguage)
     { }
 
     void SetColorStyle(Style whichStyle, nscolor color)
@@ -1055,6 +1058,7 @@ protected:
     nsTArray<mozilla::RefPtr<mozilla::gfx::SourceSurface>> filterAdditionalImages;
 
     bool imageSmoothingEnabled;
+    bool fontExplicitLanguage;
   };
 
   nsAutoTArray<ContextState, 3> mStyleStack;

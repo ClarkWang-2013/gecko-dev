@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko.tests;
 
 import java.io.File;
@@ -60,8 +64,7 @@ public class testAddSearchEngine extends AboutHomeTest {
 
         // Load the page for the search engine to add.
         inputAndLoadUrl(searchEngineURL);
-        waitForText(StringHelper.ROBOCOP_SEARCH_TITLE);
-        verifyPageTitle(StringHelper.ROBOCOP_SEARCH_TITLE, searchEngineURL);
+        verifyUrlBarTitle(searchEngineURL);
 
         // Used to long-tap on the search input box for the search engine to add.
         getInstrumentation().waitForIdleSync();

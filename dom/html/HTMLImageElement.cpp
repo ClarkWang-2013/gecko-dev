@@ -149,6 +149,12 @@ NS_IMPL_STRING_ATTR(HTMLImageElement, UseMap, usemap)
 NS_IMPL_INT_ATTR(HTMLImageElement, Vspace, vspace)
 
 bool
+HTMLImageElement::IsInteractiveHTMLContent() const
+{
+  return HasAttr(kNameSpaceID_None, nsGkAtoms::usemap);
+}
+
+bool
 HTMLImageElement::IsSrcsetEnabled()
 {
   return Preferences::GetBool(kPrefSrcsetEnabled, false);
@@ -1103,7 +1109,10 @@ HTMLImageElement::TryCreateResponsiveSelector(nsIContent *aSourceNode,
 
     nsAutoString type;
     if (aSourceNode->GetAttr(kNameSpaceID_None, nsGkAtoms::type, type) &&
-        !imgLoader::SupportImageWithMimeType(NS_ConvertUTF16toUTF8(type).get())) {
+        !imgLoader::SupportImageWithMimeType(
+          NS_ConvertUTF16toUTF8(type).get(),
+          AcceptedMimeTypes::IMAGES_AND_DOCUMENTS)
+        ) {
       return false;
     }
   } else if (aSourceNode->Tag() == nsGkAtoms::img) {

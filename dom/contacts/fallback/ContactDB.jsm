@@ -944,7 +944,7 @@ ContactDB.prototype = {
       if (DEBUG) debug("No object ID passed");
       return;
     }
-    this.newTxn("readwrite", STORE_NAME, function(txn, store) {
+    this.newTxn("readwrite", SAVED_GETALL_STORE_NAME, function(txn, store) {
       store.openCursor().onsuccess = function(e) {
         let cursor = e.target.result;
         if (cursor) {
@@ -1003,9 +1003,8 @@ ContactDB.prototype = {
         }
         // Invalidate the entire cache. It will be incrementally regenerated on demand
         // See getCacheForQuery
-        let (getAllStore = txn.objectStore(SAVED_GETALL_STORE_NAME)) {
-          getAllStore.clear().onerror = errorCb;
-        }
+        let getAllStore = txn.objectStore(SAVED_GETALL_STORE_NAME);
+        getAllStore.clear().onerror = errorCb;
       }.bind(this);
 
       this.incrementRevision(txn);

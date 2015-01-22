@@ -14,6 +14,7 @@
 #include "SourceBufferResource.h"
 #include "VideoUtils.h"
 #include "mozilla/dom/TimeRanges.h"
+#include "mozilla/Preferences.h"
 #include "nsError.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
@@ -32,17 +33,26 @@ extern PRLogModuleInfo* GetMediaSourceAPILog();
 #define MSE_API(...)
 #endif
 
+// Time in seconds to substract from the current time when deciding the
+// time point to evict data before in a decoder. This is used to help
+// precent evicting the current playback point.
+#define MSE_EVICT_THRESHOLD_TIME 2.0
+
 namespace mozilla {
 
 TrackBuffer::TrackBuffer(MediaSourceDecoder* aParentDecoder, const nsACString& aType)
   : mParentDecoder(aParentDecoder)
   , mType(aType)
   , mLastStartTimestamp(0)
+  , mLastTimestampOffset(0)
+  , mShutdown(false)
 {
   MOZ_COUNT_CTOR(TrackBuffer);
   mParser = ContainerParser::CreateForMIMEType(aType);
   mTaskQueue = new MediaTaskQueue(GetMediaDecodeThreadPool());
   aParentDecoder->AddTrackBuffer(this);
+  mDecoderPerSegment = Preferences::GetBool("media.mediasource.decoder-per-segment", false);
+  MSE_DEBUG("TrackBuffer(%p) created for parent decoder %p", this, aParentDecoder);
 }
 
 TrackBuffer::~TrackBuffer()
@@ -67,7 +77,7 @@ private:
   nsRefPtr<SourceBufferDecoder> mDecoder;
 };
 
-MOZ_STACK_CLASS class DecodersToInitialize MOZ_FINAL {
+class MOZ_STACK_CLASS DecodersToInitialize MOZ_FINAL {
 public:
   explicit DecodersToInitialize(TrackBuffer* aOwner)
     : mOwner(aOwner)
@@ -81,9 +91,9 @@ public:
     }
   }
 
-  bool NewDecoder()
+  bool NewDecoder(int64_t aTimestampOffset)
   {
-    nsRefPtr<SourceBufferDecoder> decoder = mOwner->NewDecoder();
+    nsRefPtr<SourceBufferDecoder> decoder = mOwner->NewDecoder(aTimestampOffset);
     if (!decoder) {
       return false;
     }
@@ -96,34 +106,52 @@ private:
   nsAutoTArray<nsRefPtr<SourceBufferDecoder>,2> mDecoders;
 };
 
-void
+nsRefPtr<ShutdownPromise>
 TrackBuffer::Shutdown()
 {
-  // Finish any decoder initialization, which may add to mInitializedDecoders.
-  // Shutdown waits for any pending events, which may require the monitor,
-  // so we must not hold the monitor during this call.
-  mParentDecoder->GetReentrantMonitor().AssertNotCurrentThreadIn();
-  mTaskQueue->BeginShutdown();
-  mTaskQueue->AwaitShutdownAndIdle();
-  mTaskQueue = nullptr;
+  mParentDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+  mShutdown = true;
 
+  MOZ_ASSERT(mShutdownPromise.IsEmpty());
+  nsRefPtr<ShutdownPromise> p = mShutdownPromise.Ensure(__func__);
+
+  RefPtr<MediaTaskQueue> queue = mTaskQueue;
+  mTaskQueue = nullptr;
+  queue->BeginShutdown()
+       ->Then(mParentDecoder->GetReader()->GetTaskQueue(), __func__, this,
+              &TrackBuffer::ContinueShutdown, &TrackBuffer::ContinueShutdown);
+
+  return p;
+}
+
+void
+TrackBuffer::ContinueShutdown()
+{
   ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
-  for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
-    mDecoders[i]->GetReader()->Shutdown();
+  if (mDecoders.Length()) {
+    mDecoders[0]->GetReader()->Shutdown()
+                ->Then(mParentDecoder->GetReader()->GetTaskQueue(), __func__, this,
+                       &TrackBuffer::ContinueShutdown, &TrackBuffer::ContinueShutdown);
+    mShutdownDecoders.AppendElement(mDecoders[0]);
+    mDecoders.RemoveElementAt(0);
+    return;
   }
+
   mInitializedDecoders.Clear();
   mParentDecoder = nullptr;
+
+  mShutdownPromise.Resolve(true, __func__);
 }
 
 bool
-TrackBuffer::AppendData(const uint8_t* aData, uint32_t aLength)
+TrackBuffer::AppendData(const uint8_t* aData, uint32_t aLength, int64_t aTimestampOffset)
 {
   MOZ_ASSERT(NS_IsMainThread());
   DecodersToInitialize decoders(this);
   // TODO: Run more of the buffer append algorithm asynchronously.
   if (mParser->IsInitSegmentPresent(aData, aLength)) {
     MSE_DEBUG("TrackBuffer(%p)::AppendData: New initialization segment.", this);
-    if (!decoders.NewDecoder()) {
+    if (!decoders.NewDecoder(aTimestampOffset)) {
       return false;
     }
   } else if (!mParser->HasInitData()) {
@@ -133,15 +161,19 @@ TrackBuffer::AppendData(const uint8_t* aData, uint32_t aLength)
 
   int64_t start, end;
   if (mParser->ParseStartAndEndTimestamps(aData, aLength, start, end)) {
+    start += aTimestampOffset;
+    end += aTimestampOffset;
     if (mParser->IsMediaSegmentPresent(aData, aLength) &&
         mLastEndTimestamp &&
-        !mParser->TimestampsFuzzyEqual(start, mLastEndTimestamp.value())) {
+        (!mParser->TimestampsFuzzyEqual(start, mLastEndTimestamp.value()) ||
+         mLastTimestampOffset != aTimestampOffset ||
+         mDecoderPerSegment)) {
       MSE_DEBUG("TrackBuffer(%p)::AppendData: Data last=[%lld, %lld] overlaps [%lld, %lld]",
                 this, mLastStartTimestamp, mLastEndTimestamp.value(), start, end);
 
       // This data is earlier in the timeline than data we have already
       // processed, so we must create a new decoder to handle the decoding.
-      if (!decoders.NewDecoder()) {
+      if (!decoders.NewDecoder(aTimestampOffset)) {
         return false;
       }
       MSE_DEBUG("TrackBuffer(%p)::AppendData: Decoder marked as initialized.", this);
@@ -160,9 +192,9 @@ TrackBuffer::AppendData(const uint8_t* aData, uint32_t aLength)
     return false;
   }
 
-  // Schedule the state machine thread to ensure playback starts if required
-  // when data is appended.
-  mParentDecoder->ScheduleStateMachineThread();
+  // Tell our reader that we have more data to ensure that playback starts if
+  // required when data is appended.
+  mParentDecoder->GetReader()->MaybeNotifyHaveData();
   return true;
 }
 
@@ -180,16 +212,49 @@ TrackBuffer::AppendDataToCurrentResource(const uint8_t* aData, uint32_t aLength)
   // XXX: For future reference: NDA call must run on the main thread.
   mCurrentDecoder->NotifyDataArrived(reinterpret_cast<const char*>(aData),
                                      aLength, appendOffset);
+  mParentDecoder->NotifyBytesDownloaded();
   mParentDecoder->NotifyTimeRangesChanged();
 
   return true;
 }
 
+class DecoderSorter
+{
+public:
+  bool LessThan(SourceBufferDecoder* aFirst, SourceBufferDecoder* aSecond) const
+  {
+    nsRefPtr<dom::TimeRanges> first = new dom::TimeRanges();
+    aFirst->GetBuffered(first);
+
+    nsRefPtr<dom::TimeRanges> second = new dom::TimeRanges();
+    aSecond->GetBuffered(second);
+
+    return first->GetStartTime() < second->GetStartTime();
+  }
+
+  bool Equals(SourceBufferDecoder* aFirst, SourceBufferDecoder* aSecond) const
+  {
+    nsRefPtr<dom::TimeRanges> first = new dom::TimeRanges();
+    aFirst->GetBuffered(first);
+
+    nsRefPtr<dom::TimeRanges> second = new dom::TimeRanges();
+    aSecond->GetBuffered(second);
+
+    return first->GetStartTime() == second->GetStartTime();
+  }
+};
+
 bool
-TrackBuffer::EvictData(uint32_t aThreshold)
+TrackBuffer::EvictData(double aPlaybackTime,
+                       uint32_t aThreshold,
+                       double* aBufferStartTime)
 {
   MOZ_ASSERT(NS_IsMainThread());
   ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+
+  if (!mCurrentDecoder) {
+    return false;
+  }
 
   int64_t totalSize = 0;
   for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
@@ -197,20 +262,89 @@ TrackBuffer::EvictData(uint32_t aThreshold)
   }
 
   int64_t toEvict = totalSize - aThreshold;
-  if (toEvict <= 0) {
+  if (toEvict <= 0 || mInitializedDecoders.IsEmpty()) {
     return false;
   }
 
-  for (uint32_t i = 0; i < mInitializedDecoders.Length(); ++i) {
-    MSE_DEBUG("TrackBuffer(%p)::EvictData decoder=%u threshold=%u toEvict=%lld",
-              this, i, aThreshold, toEvict);
-    toEvict -= mInitializedDecoders[i]->GetResource()->EvictData(toEvict);
-    if (!mInitializedDecoders[i]->GetResource()->GetSize() &&
-        mInitializedDecoders[i] != mCurrentDecoder) {
-      RemoveDecoder(mInitializedDecoders[i]);
+  // Get a list of initialized decoders
+  nsTArray<SourceBufferDecoder*> decoders;
+  decoders.AppendElements(mInitializedDecoders);
+
+  // First try to evict data before the current play position, starting
+  // with the earliest time.
+  uint32_t i = 0;
+  bool pastCurrentDecoder = true;
+  for (; i < decoders.Length() && toEvict > 0; ++i) {
+    nsRefPtr<dom::TimeRanges> buffered = new dom::TimeRanges();
+    decoders[i]->GetBuffered(buffered);
+    bool onCurrent = decoders[i] == mCurrentDecoder;
+    if (onCurrent) {
+      pastCurrentDecoder = false;
+    }
+
+    MSE_DEBUG("TrackBuffer(%p)::EvictData decoder=%u/%u threshold=%u "
+              "toEvict=%lld current=%s pastCurrent=%s",
+              this, i, decoders.Length(), aThreshold, toEvict,
+              onCurrent ? "true" : "false",
+              pastCurrentDecoder ? "true" : "false");
+
+    if (pastCurrentDecoder
+        && !mParentDecoder->IsActiveReader(decoders[i]->GetReader())) {
+      // Remove data from older decoders than the current one.
+      // Don't remove data if it is currently active.
+      MSE_DEBUG("TrackBuffer(%p)::EvictData evicting all before start "
+                "bufferedStart=%f bufferedEnd=%f aPlaybackTime=%f size=%lld",
+                this, buffered->GetStartTime(), buffered->GetEndTime(),
+                aPlaybackTime, decoders[i]->GetResource()->GetSize());
+      toEvict -= decoders[i]->GetResource()->EvictAll();
+    } else {
+      // To ensure we don't evict data past the current playback position
+      // we apply a threshold of a few seconds back and evict data up to
+      // that point.
+      if (aPlaybackTime > MSE_EVICT_THRESHOLD_TIME) {
+        double time = aPlaybackTime - MSE_EVICT_THRESHOLD_TIME;
+        int64_t playbackOffset = decoders[i]->ConvertToByteOffset(time);
+        MSE_DEBUG("TrackBuffer(%p)::EvictData evicting some bufferedEnd=%f"
+                  "aPlaybackTime=%f time=%f, playbackOffset=%lld size=%lld",
+                  this, buffered->GetEndTime(), aPlaybackTime, time,
+                  playbackOffset, decoders[i]->GetResource()->GetSize());
+        if (playbackOffset > 0) {
+          toEvict -= decoders[i]->GetResource()->EvictData(playbackOffset,
+                                                           toEvict);
+        }
+      }
     }
   }
-  return toEvict < (totalSize - aThreshold);
+
+  // Remove decoders that have no data in them
+  for (i = 0; i < decoders.Length(); ++i) {
+    nsRefPtr<dom::TimeRanges> buffered = new dom::TimeRanges();
+    decoders[i]->GetBuffered(buffered);
+    MSE_DEBUG("TrackBuffer(%p):EvictData maybe remove empty decoders=%d "
+              "size=%lld start=%f end=%f",
+              this, i, decoders[i]->GetResource()->GetSize(),
+              buffered->GetStartTime(), buffered->GetEndTime());
+    if (decoders[i] == mCurrentDecoder
+        || mParentDecoder->IsActiveReader(decoders[i]->GetReader())) {
+      continue;
+    }
+
+    if (decoders[i]->GetResource()->GetSize() == 0 ||
+        buffered->GetStartTime() < 0.0 ||
+        buffered->GetEndTime() < 0.0) {
+      MSE_DEBUG("TrackBuffer(%p):EvictData remove empty decoders=%d", this, i);
+      RemoveDecoder(decoders[i]);
+    }
+  }
+
+  bool evicted = toEvict < (totalSize - aThreshold);
+  if (evicted) {
+    nsRefPtr<dom::TimeRanges> ranges = new dom::TimeRanges();
+    mCurrentDecoder->GetBuffered(ranges);
+    *aBufferStartTime = std::max(0.0, ranges->GetStartTime());
+  }
+
+  return evicted;
 }
 
 void
@@ -223,10 +357,6 @@ TrackBuffer::EvictBefore(double aTime)
     if (endOffset > 0) {
       MSE_DEBUG("TrackBuffer(%p)::EvictBefore decoder=%u offset=%lld", this, i, endOffset);
       mInitializedDecoders[i]->GetResource()->EvictBefore(endOffset);
-      if (!mInitializedDecoders[i]->GetResource()->GetSize() &&
-          mInitializedDecoders[i] != mCurrentDecoder) {
-        RemoveDecoder(mInitializedDecoders[i]);
-      }
     }
   }
 }
@@ -243,7 +373,7 @@ TrackBuffer::Buffered(dom::TimeRanges* aRanges)
     mDecoders[i]->GetBuffered(r);
     if (r->Length() > 0) {
       highestEndTime = std::max(highestEndTime, r->GetEndTime());
-      aRanges->Union(r);
+      aRanges->Union(r, double(mParser->GetRoundingError()) / USECS_PER_S);
     }
   }
 
@@ -251,14 +381,14 @@ TrackBuffer::Buffered(dom::TimeRanges* aRanges)
 }
 
 already_AddRefed<SourceBufferDecoder>
-TrackBuffer::NewDecoder()
+TrackBuffer::NewDecoder(int64_t aTimestampOffset)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mParentDecoder);
 
   DiscardDecoder();
 
-  nsRefPtr<SourceBufferDecoder> decoder = mParentDecoder->CreateSubDecoder(mType);
+  nsRefPtr<SourceBufferDecoder> decoder = mParentDecoder->CreateSubDecoder(mType, aTimestampOffset);
   if (!decoder) {
     return nullptr;
   }
@@ -268,6 +398,7 @@ TrackBuffer::NewDecoder()
 
   mLastStartTimestamp = 0;
   mLastEndTimestamp.reset();
+  mLastTimestampOffset = aTimestampOffset;
 
   decoder->SetTaskQueue(mTaskQueue);
   return decoder.forget();
@@ -276,6 +407,10 @@ TrackBuffer::NewDecoder()
 bool
 TrackBuffer::QueueInitializeDecoder(SourceBufferDecoder* aDecoder)
 {
+  if (NS_WARN_IF(!mTaskQueue)) {
+    return false;
+  }
+
   RefPtr<nsIRunnable> task =
     NS_NewRunnableMethodWithArg<SourceBufferDecoder*>(this,
                                                       &TrackBuffer::InitializeDecoder,
@@ -291,23 +426,42 @@ TrackBuffer::QueueInitializeDecoder(SourceBufferDecoder* aDecoder)
 void
 TrackBuffer::InitializeDecoder(SourceBufferDecoder* aDecoder)
 {
-  MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
-
-  // ReadMetadata may block the thread waiting on data, so it must not be
-  // called with the monitor held.
+  // ReadMetadata may block the thread waiting on data, so we must be able
+  // to leave the monitor while we call it. For the rest of this function
+  // we want to hold the monitor though, since we run on a different task queue
+  // from the reader and interact heavily with it.
   mParentDecoder->GetReentrantMonitor().AssertNotCurrentThreadIn();
+  ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
 
+  // We may be shut down at any time by the reader on another thread. So we need
+  // to check for this each time we acquire the monitor. If that happens, we
+  // need to abort immediately, because the reader has forgotten about us, and
+  // important pieces of our state (like mTaskQueue) have also been torn down.
+  if (mShutdown) {
+    MSE_DEBUG("TrackBuffer(%p) was shut down. Aborting initialization.", this);
+    return;
+  }
+
+  MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
   MediaDecoderReader* reader = aDecoder->GetReader();
   MSE_DEBUG("TrackBuffer(%p): Initializing subdecoder %p reader %p",
             this, aDecoder, reader);
 
   MediaInfo mi;
   nsAutoPtr<MetadataTags> tags; // TODO: Handle metadata.
-  nsresult rv = reader->ReadMetadata(&mi, getter_Transfers(tags));
+  nsresult rv;
+  {
+    ReentrantMonitorAutoExit mon(mParentDecoder->GetReentrantMonitor());
+    rv = reader->ReadMetadata(&mi, getter_Transfers(tags));
+  }
+
   reader->SetIdle();
+  if (mShutdown) {
+    MSE_DEBUG("TrackBuffer(%p) was shut down while reading metadata. Aborting initialization.", this);
+    return;
+  }
 
   if (NS_SUCCEEDED(rv) && reader->IsWaitingOnCDMResource()) {
-    ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
     mWaitingDecoders.AppendElement(aDecoder);
     return;
   }
@@ -337,6 +491,11 @@ TrackBuffer::InitializeDecoder(SourceBufferDecoder* aDecoder)
     RemoveDecoder(aDecoder);
     return;
   }
+
+  // Tell our reader that we have more data to ensure that playback starts if
+  // required when data is appended.
+  mParentDecoder->GetReader()->MaybeNotifyHaveData();
+
   MSE_DEBUG("TrackBuffer(%p): Reader %p activated", this, reader);
 }
 
@@ -363,7 +522,7 @@ TrackBuffer::ValidateTrackFormats(const MediaInfo& aInfo)
 bool
 TrackBuffer::RegisterDecoder(SourceBufferDecoder* aDecoder)
 {
-  ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+  mParentDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
   const MediaInfo& info = aDecoder->GetReader()->GetMediaInfo();
   // Initialize the track info since this is the first decoder.
   if (mInitializedDecoders.IsEmpty()) {
@@ -387,6 +546,15 @@ TrackBuffer::DiscardDecoder()
     mCurrentDecoder->GetResource()->Ended();
   }
   mCurrentDecoder = nullptr;
+}
+
+void
+TrackBuffer::EndCurrentDecoder()
+{
+  ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+  if (mCurrentDecoder) {
+    mCurrentDecoder->GetResource()->Ended();
+  }
 }
 
 void
@@ -433,12 +601,13 @@ TrackBuffer::BreakCycles()
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
-    mDecoders[i]->BreakCycles();
+  for (uint32_t i = 0; i < mShutdownDecoders.Length(); ++i) {
+    mShutdownDecoders[i]->BreakCycles();
   }
-  mDecoders.Clear();
+  mShutdownDecoders.Clear();
 
   // These are cleared in Shutdown()
+  MOZ_ASSERT(!mDecoders.Length());
   MOZ_ASSERT(mInitializedDecoders.IsEmpty());
   MOZ_ASSERT(!mParentDecoder);
 }
@@ -449,6 +618,12 @@ TrackBuffer::ResetDecode()
   for (uint32_t i = 0; i < mDecoders.Length(); ++i) {
     mDecoders[i]->GetReader()->ResetDecode();
   }
+}
+
+void
+TrackBuffer::ResetParserState()
+{
+  // TODO
 }
 
 const nsTArray<nsRefPtr<SourceBufferDecoder>>&
@@ -532,6 +707,9 @@ TrackBuffer::RemoveDecoder(SourceBufferDecoder* aDecoder)
 
   {
     ReentrantMonitorAutoEnter mon(mParentDecoder->GetReentrantMonitor());
+    // There should be no other references to the decoder. Assert that
+    // we aren't using it in the MediaSourceReader.
+    MOZ_ASSERT(!mParentDecoder->IsActiveReader(aDecoder->GetReader()));
     mInitializedDecoders.RemoveElement(aDecoder);
     mDecoders.RemoveElement(aDecoder);
 

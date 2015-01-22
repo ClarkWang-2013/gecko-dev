@@ -92,7 +92,7 @@ JS_IsDeadWrapper(JSObject *obj);
  * process. Uses bounded stack space.
  */
 extern JS_FRIEND_API(void)
-JS_TraceShapeCycleCollectorChildren(JSTracer *trc, void *shape);
+JS_TraceShapeCycleCollectorChildren(JSTracer *trc, JS::GCCellPtr shape);
 
 enum {
     JS_TELEMETRY_GC_REASON,
@@ -110,11 +110,12 @@ enum {
     JS_TELEMETRY_GC_NON_INCREMENTAL,
     JS_TELEMETRY_GC_SCC_SWEEP_TOTAL_MS,
     JS_TELEMETRY_GC_SCC_SWEEP_MAX_PAUSE_MS,
-    JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT
+    JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT,
+    JS_TELEMETRY_ADDON_EXCEPTIONS
 };
 
 typedef void
-(* JSAccumulateTelemetryDataCallback)(int id, uint32_t sample);
+(*JSAccumulateTelemetryDataCallback)(int id, uint32_t sample, const char *key);
 
 extern JS_FRIEND_API(void)
 JS_SetAccumulateTelemetryCallback(JSRuntime *rt, JSAccumulateTelemetryDataCallback callback);
@@ -231,10 +232,6 @@ JS_CopyPropertyFrom(JSContext *cx, JS::HandleId id, JS::HandleObject target,
 extern JS_FRIEND_API(bool)
 JS_WrapPropertyDescriptor(JSContext *cx, JS::MutableHandle<JSPropertyDescriptor> desc);
 
-extern JS_FRIEND_API(bool)
-JS_EnumerateState(JSContext *cx, JS::HandleObject obj, JSIterateOp enum_op,
-                  JS::MutableHandleValue statep, JS::MutableHandleId idp);
-
 struct JSFunctionSpecWithHelp {
     const char      *name;
     JSNative        call;
@@ -277,17 +274,17 @@ namespace js {
             JSCLASS_IS_PROXY |                                                          \
             JSCLASS_IMPLEMENTS_BARRIERS |                                               \
             flags,                                                                      \
-        JS_PropertyStub,         /* addProperty */                                      \
-        JS_DeletePropertyStub,   /* delProperty */                                      \
-        JS_PropertyStub,         /* getProperty */                                      \
-        JS_StrictPropertyStub,   /* setProperty */                                      \
-        JS_EnumerateStub,                                                               \
-        JS_ResolveStub,                                                                 \
+        nullptr,                 /* addProperty */                                      \
+        nullptr,                 /* delProperty */                                      \
+        nullptr,                 /* getProperty */                                      \
+        nullptr,                 /* setProperty */                                      \
+        nullptr,                 /* enumerate */                                        \
+        nullptr,                 /* resolve */                                          \
         js::proxy_Convert,                                                              \
         js::proxy_Finalize,      /* finalize    */                                      \
-        nullptr,                  /* call        */                                     \
+        nullptr,                 /* call        */                                      \
         js::proxy_HasInstance,   /* hasInstance */                                      \
-        nullptr,             /* construct   */                                          \
+        nullptr,                 /* construct   */                                      \
         js::proxy_Trace,         /* trace       */                                      \
         JS_NULL_CLASS_SPEC,                                                             \
         ext,                                                                            \
@@ -492,9 +489,7 @@ struct WeakMapTracer;
  * m will be nullptr if the weak map is not contained in a JS Object.
  */
 typedef void
-(* WeakMapTraceCallback)(WeakMapTracer *trc, JSObject *m,
-                         void *k, JSGCTraceKind kkind,
-                         void *v, JSGCTraceKind vkind);
+(* WeakMapTraceCallback)(WeakMapTracer *trc, JSObject *m, JS::GCCellPtr key, JS::GCCellPtr value);
 
 struct WeakMapTracer {
     JSRuntime            *runtime;
@@ -514,7 +509,7 @@ extern JS_FRIEND_API(bool)
 ZoneGlobalsAreAllGray(JS::Zone *zone);
 
 typedef void
-(*GCThingCallback)(void *closure, void *gcthing);
+(*GCThingCallback)(void *closure, JS::GCCellPtr thing);
 
 extern JS_FRIEND_API(void)
 VisitGrayWrapperTargets(JS::Zone *zone, GCThingCallback callback, void *closure);
@@ -1338,8 +1333,8 @@ class MOZ_STACK_CLASS AutoStableStringChars
     }
 
   private:
-    AutoStableStringChars(const AutoStableStringChars &other) MOZ_DELETE;
-    void operator=(const AutoStableStringChars &other) MOZ_DELETE;
+    AutoStableStringChars(const AutoStableStringChars &other) = delete;
+    void operator=(const AutoStableStringChars &other) = delete;
 };
 
 // Creates a string of the form |ErrorType: ErrorMessage| for a JSErrorReport,
@@ -1415,7 +1410,11 @@ js_GetSCOffset(JSStructuredCloneWriter* writer);
 namespace js {
 namespace Scalar {
 
-/* Scalar types which can appear in typed arrays and typed objects. */
+/* Scalar types which can appear in typed arrays and typed objects.  The enum
+ * values need to be kept in sync with the JS_SCALARTYPEREPR_ constants, as
+ * well as the TypedArrayObject::classes and TypedArrayObject::protoClasses
+ * definitions.
+ */
 enum Type {
     Int8 = 0,
     Uint8,
@@ -1432,7 +1431,13 @@ enum Type {
      */
     Uint8Clamped,
 
-    TypeMax
+    /*
+     * SIMD types don't have their own TypedArray equivalent, for now.
+     */
+    MaxTypedArrayViewType,
+
+    Float32x4,
+    Int32x4
 };
 
 static inline size_t
@@ -1452,6 +1457,9 @@ byteSize(Type atype)
         return 4;
       case Float64:
         return 8;
+      case Int32x4:
+      case Float32x4:
+        return 16;
       default:
         MOZ_CRASH("invalid scalar type");
     }
@@ -1814,7 +1822,7 @@ extern JS_FRIEND_API(JSObject *)
 JS_GetObjectAsArrayBuffer(JSObject *obj, uint32_t *length, uint8_t **data);
 
 /*
- * Get the type of elements in a typed array, or TypeMax if a DataView.
+ * Get the type of elements in a typed array, or MaxTypedArrayViewType if a DataView.
  *
  * |obj| must have passed a JS_IsArrayBufferView/JS_Is*Array test, or somehow
  * be known that it would pass such a test: it is an ArrayBufferView or a
@@ -2157,7 +2165,6 @@ struct JSJitInfo {
         Getter,
         Setter,
         Method,
-        ParallelNative,
         StaticMethod,
         // Must be last
         OpTypeCount
@@ -2212,11 +2219,6 @@ struct JSJitInfo {
         AliasSetCount
     };
 
-    bool hasParallelNative() const
-    {
-        return type() == ParallelNative;
-    }
-
     bool needsOuterizedThisObject() const
     {
         return type() != Getter && type() != Setter;
@@ -2246,8 +2248,6 @@ struct JSJitInfo {
         JSJitGetterOp getter;
         JSJitSetterOp setter;
         JSJitMethodOp method;
-        /* An alternative native that's safe to call in parallel mode. */
-        JSParallelNative parallelNative;
         /* A DOM static method, used for Promise wrappers */
         JSNative staticMethod;
     };
@@ -2331,45 +2331,6 @@ struct JSTypedMethodJitInfo
                                                  when argument coercions can
                                                  have side-effects. */
 };
-
-namespace JS {
-namespace detail {
-
-/* NEVER DEFINED, DON'T USE.  For use by JS_CAST_PARALLEL_NATIVE_TO only. */
-inline int CheckIsParallelNative(JSParallelNative parallelNative);
-
-} // namespace detail
-} // namespace JS
-
-#define JS_CAST_PARALLEL_NATIVE_TO(v, To) \
-    (static_cast<void>(sizeof(JS::detail::CheckIsParallelNative(v))), \
-     reinterpret_cast<To>(v))
-
-/*
- * You may ask yourself: why do we define a wrapper around a wrapper here?
- * The answer is that some compilers don't understand initializing a union
- * as we do below with a construct like:
- *
- * reinterpret_cast<JSJitGetterOp>(JSParallelNativeThreadSafeWrapper<op>)
- *
- * (We need the reinterpret_cast because we must initialize the union with
- * a datum of the type of the union's first member.)
- *
- * Presumably this has something to do with template instantiation.
- * Initializing with a normal function pointer seems to work fine. Hence
- * the ugliness that you see before you.
- */
-#define JS_JITINFO_NATIVE_PARALLEL(infoName, parallelOp)                \
-    const JSJitInfo infoName =                                          \
-        {{JS_CAST_PARALLEL_NATIVE_TO(parallelOp, JSJitGetterOp)},0,0,JSJitInfo::ParallelNative,JSJitInfo::AliasEverything,JSVAL_TYPE_MISSING,false,false,false,false,false,0}
-
-#define JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(infoName, wrapperName, serialOp) \
-    bool wrapperName##_ParallelNativeThreadSafeWrapper(js::ForkJoinContext *cx, unsigned argc, \
-                                                       JS::Value *vp)   \
-    {                                                                   \
-        return JSParallelNativeThreadSafeWrapper<serialOp>(cx, argc, vp); \
-    }                                                                   \
-    JS_JITINFO_NATIVE_PARALLEL(infoName, wrapperName##_ParallelNativeThreadSafeWrapper)
 
 static MOZ_ALWAYS_INLINE const JSJitInfo *
 FUNCTION_VALUE_TO_JITINFO(const JS::Value& v)
@@ -2569,10 +2530,6 @@ GetElementsWithAdder(JSContext *cx, JS::HandleObject obj, JS::HandleObject recei
 JS_FRIEND_API(bool)
 ForwardToNative(JSContext *cx, JSNative native, const JS::CallArgs &args);
 
-/* ES5 8.12.8. */
-extern JS_FRIEND_API(bool)
-DefaultValue(JSContext *cx, JS::HandleObject obj, JSType hint, JS::MutableHandleValue vp);
-
 /*
  * Helper function. To approximate a call to the [[DefineOwnProperty]] internal
  * method described in ES5, first call this, then call JS_DefinePropertyById.
@@ -2663,6 +2620,14 @@ SetJitExceptionHandler(JitExceptionHandler handler);
 extern JS_FRIEND_API(JSObject *)
 GetObjectEnvironmentObjectForFunction(JSFunction *fun);
 
+/*
+ * Get the stored principal of the stack frame this SavedFrame object
+ * represents.  note that this is not the same thing as the object principal of
+ * the object itself.  Do NOT pass a non-SavedFrame object here.
+ */
+extern JS_FRIEND_API(JSPrincipals *)
+GetSavedFramePrincipals(JS::HandleObject savedFrame);
+
 } /* namespace js */
 
 extern JS_FRIEND_API(bool)
@@ -2672,7 +2637,6 @@ js_DefineOwnProperty(JSContext *cx, JSObject *objArg, jsid idArg,
 extern JS_FRIEND_API(bool)
 js_ReportIsNotFunction(JSContext *cx, JS::HandleValue v);
 
-#ifdef JSGC_GENERATIONAL
 extern JS_FRIEND_API(void)
 JS_StoreObjectPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer *trc, JSObject *key, void *data),
@@ -2682,16 +2646,5 @@ extern JS_FRIEND_API(void)
 JS_StoreStringPostBarrierCallback(JSContext* cx,
                                   void (*callback)(JSTracer *trc, JSString *key, void *data),
                                   JSString *key, void *data);
-#else
-inline void
-JS_StoreObjectPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, JSObject *key, void *data),
-                                  JSObject *key, void *data) {}
-
-inline void
-JS_StoreStringPostBarrierCallback(JSContext* cx,
-                                  void (*callback)(JSTracer *trc, JSString *key, void *data),
-                                  JSString *key, void *data) {}
-#endif /* JSGC_GENERATIONAL */
 
 #endif /* jsfriendapi_h */

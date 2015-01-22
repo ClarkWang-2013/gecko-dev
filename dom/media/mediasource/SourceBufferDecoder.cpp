@@ -33,10 +33,12 @@ class ImageContainer;
 NS_IMPL_ISUPPORTS0(SourceBufferDecoder)
 
 SourceBufferDecoder::SourceBufferDecoder(MediaResource* aResource,
-                                         AbstractMediaDecoder* aParentDecoder)
+                                         AbstractMediaDecoder* aParentDecoder,
+                                         int64_t aTimestampOffset)
   : mResource(aResource)
   , mParentDecoder(aParentDecoder)
   , mReader(nullptr)
+  , mTimestampOffset(aTimestampOffset)
   , mMediaDuration(-1)
 {
   MOZ_ASSERT(NS_IsMainThread());
@@ -91,13 +93,15 @@ SourceBufferDecoder::IsMediaSeekable()
 
 void
 SourceBufferDecoder::MetadataLoaded(nsAutoPtr<MediaInfo> aInfo,
-                                    nsAutoPtr<MetadataTags> aTags)
+                                    nsAutoPtr<MetadataTags> aTags,
+                                    bool aRestoredFromDromant)
 {
   MSE_DEBUG("SourceBufferDecoder(%p)::MetadataLoaded UNIMPLEMENTED", this);
 }
 
 void
-SourceBufferDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo)
+SourceBufferDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
+                                      bool aRestoredFromDromant)
 {
   MSE_DEBUG("SourceBufferDecoder(%p)::FirstFrameLoaded UNIMPLEMENTED", this);
 }

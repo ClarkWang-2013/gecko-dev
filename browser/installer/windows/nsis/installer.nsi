@@ -624,6 +624,9 @@ Section "-InstallEndCleanup"
   ${GetShortcutsLogPath} $0
   WriteIniStr "$0" "TASKBAR" "Migrated" "true"
 
+  ; Add the Firewall entries during install
+  Call AddFirewallEntries
+
   ; Refresh desktop icons
   System::Call "shell32::SHChangeNotify(i ${SHCNE_ASSOCCHANGED}, i ${SHCNF_DWORDFLUSH}, i 0, i 0)"
 

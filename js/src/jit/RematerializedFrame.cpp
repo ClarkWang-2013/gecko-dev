@@ -28,8 +28,8 @@ struct CopyValueToRematerializedFrame
     }
 };
 
-RematerializedFrame::RematerializedFrame(ThreadSafeContext *cx, uint8_t *top,
-                                         unsigned numActualArgs, InlineFrameIterator &iter)
+RematerializedFrame::RematerializedFrame(JSContext *cx, uint8_t *top, unsigned numActualArgs,
+                                         InlineFrameIterator &iter, MaybeReadFallback &fallback)
   : prevUpToDate_(false),
     isDebuggee_(iter.script()->isDebuggee()),
     top_(top),
@@ -39,31 +39,32 @@ RematerializedFrame::RematerializedFrame(ThreadSafeContext *cx, uint8_t *top,
     script_(iter.script())
 {
     CopyValueToRematerializedFrame op(slots_);
-    MaybeReadFallback fallback(MagicValue(JS_OPTIMIZED_OUT));
-    iter.readFrameArgsAndLocals(cx, op, op, &scopeChain_, &returnValue_,
+    iter.readFrameArgsAndLocals(cx, op, op, &scopeChain_, &hasCallObj_, &returnValue_,
                                 &argsObj_, &thisValue_, ReadFrame_Actuals,
                                 fallback);
 }
 
 /* static */ RematerializedFrame *
-RematerializedFrame::New(ThreadSafeContext *cx, uint8_t *top, InlineFrameIterator &iter)
+RematerializedFrame::New(JSContext *cx, uint8_t *top, InlineFrameIterator &iter,
+                         MaybeReadFallback &fallback)
 {
-    unsigned numFormals = iter.isFunctionFrame() ? iter.callee()->nargs() : 0;
-    unsigned numActualArgs = Max(numFormals, iter.numActualArgs());
+    unsigned numFormals = iter.isFunctionFrame() ? iter.calleeTemplate()->nargs() : 0;
+    unsigned argSlots = Max(numFormals, iter.numActualArgs());
     size_t numBytes = sizeof(RematerializedFrame) +
-        (numActualArgs + iter.script()->nfixed()) * sizeof(Value) -
+        (argSlots + iter.script()->nfixed()) * sizeof(Value) -
         sizeof(Value); // 1 Value included in sizeof(RematerializedFrame)
 
     void *buf = cx->pod_calloc<uint8_t>(numBytes);
     if (!buf)
         return nullptr;
 
-    return new (buf) RematerializedFrame(cx, top, numActualArgs, iter);
+    return new (buf) RematerializedFrame(cx, top, iter.numActualArgs(), iter, fallback);
 }
 
 /* static */ bool
-RematerializedFrame::RematerializeInlineFrames(ThreadSafeContext *cx, uint8_t *top,
+RematerializedFrame::RematerializeInlineFrames(JSContext *cx, uint8_t *top,
                                                InlineFrameIterator &iter,
+                                               MaybeReadFallback &fallback,
                                                Vector<RematerializedFrame *> &frames)
 {
     if (!frames.resize(iter.frameCount()))
@@ -71,9 +72,15 @@ RematerializedFrame::RematerializeInlineFrames(ThreadSafeContext *cx, uint8_t *t
 
     while (true) {
         size_t frameNo = iter.frameNo();
-        frames[frameNo] = RematerializedFrame::New(cx, top, iter);
-        if (!frames[frameNo])
+        RematerializedFrame *frame = RematerializedFrame::New(cx, top, iter, fallback);
+        if (!frame)
             return false;
+        if (frame->scopeChain()) {
+            if (!EnsureHasScopeObjects(cx, frame))
+                return false;
+        }
+
+        frames[frameNo] = frame;
 
         if (!iter.more())
             break;
@@ -110,6 +117,27 @@ RematerializedFrame::callObj() const
     while (!scope->is<CallObject>())
         scope = scope->enclosingScope();
     return scope->as<CallObject>();
+}
+
+void
+RematerializedFrame::pushOnScopeChain(ScopeObject &scope)
+{
+    MOZ_ASSERT(*scopeChain() == scope.enclosingScope() ||
+               *scopeChain() == scope.as<CallObject>().enclosingScope().as<DeclEnvObject>().enclosingScope());
+    scopeChain_ = &scope;
+}
+
+bool
+RematerializedFrame::initFunctionScopeObjects(JSContext *cx)
+{
+    MOZ_ASSERT(isNonEvalFunctionFrame());
+    MOZ_ASSERT(fun()->isHeavyweight());
+    CallObject *callobj = CallObject::createForFunction(cx, this);
+    if (!callobj)
+        return false;
+    pushOnScopeChain(*callobj);
+    hasCallObj_ = true;
+    return true;
 }
 
 void

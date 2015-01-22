@@ -65,7 +65,7 @@ using JS::CanonicalizeNaN;
 // a stable ID, it need not be at the end of the list and should not be used for
 // sizing data structures.
 
-enum StructuredDataType MOZ_ENUM_TYPE(uint32_t) {
+enum StructuredDataType : uint32_t {
     /* Structured data types provided by the engine */
     SCTAG_FLOAT_MAX = 0xFFF00000,
     SCTAG_NULL = 0xFFFF0000,
@@ -100,7 +100,7 @@ enum StructuredDataType MOZ_ENUM_TYPE(uint32_t) {
     SCTAG_TYPED_ARRAY_V1_FLOAT32 = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::Float32,
     SCTAG_TYPED_ARRAY_V1_FLOAT64 = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::Float64,
     SCTAG_TYPED_ARRAY_V1_UINT8_CLAMPED = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::Uint8Clamped,
-    SCTAG_TYPED_ARRAY_V1_MAX = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::TypeMax - 1,
+    SCTAG_TYPED_ARRAY_V1_MAX = SCTAG_TYPED_ARRAY_V1_MIN + Scalar::MaxTypedArrayViewType - 1,
 
     /*
      * Define a separate range of numbers for Transferable-only tags, since
@@ -1245,7 +1245,7 @@ JSStructuredCloneWriter::write(HandleValue v)
                 if (found) {
                     RootedValue val(context());
                     if (!startWrite(key) ||
-                        !JSObject::getGeneric(context(), obj, obj, id, &val) ||
+                        !GetProperty(context(), obj, obj, id, &val) ||
                         !startWrite(val))
                     {
                         return false;
@@ -1632,8 +1632,8 @@ JSStructuredCloneReader::startRead(MutableHandleValue vp)
       case SCTAG_ARRAY_OBJECT:
       case SCTAG_OBJECT_OBJECT: {
         JSObject *obj = (tag == SCTAG_ARRAY_OBJECT)
-                        ? NewDenseEmptyArray(context())
-                        : NewBuiltinClassInstance(context(), &JSObject::class_);
+                        ? (JSObject *) NewDenseEmptyArray(context())
+                        : (JSObject *) NewBuiltinClassInstance<PlainObject>(context());
         if (!obj || !objs.append(ObjectValue(*obj)))
             return false;
         vp.setObject(*obj);
@@ -1863,7 +1863,7 @@ JSStructuredCloneReader::read(MutableHandleValue vp)
             if (!ValueToId<CanGC>(context(), key, &id))
                 return false;
 
-            if (!JSObject::defineGeneric(context(), obj, id, val))
+            if (!DefineProperty(context(), obj, id, val))
                 return false;
          }
     }

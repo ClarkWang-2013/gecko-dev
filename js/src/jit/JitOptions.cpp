@@ -82,7 +82,7 @@ JitOptions::JitOptions()
     SET_DEFAULT(disableRangeAnalysis, false);
 
     // Toggles whether sink code motion is globally disabled.
-    SET_DEFAULT(disableSink, false);
+    SET_DEFAULT(disableSink, true);
 
     // Toggles whether Loop Unrolling is globally disabled.
     SET_DEFAULT(disableLoopUnrolling, true);
@@ -135,9 +135,6 @@ JitOptions::JitOptions()
     // We may want to tune it further after other optimizations have gone
     // in.
     SET_DEFAULT(smallFunctionMaxBytecodeLength_, 100);
-
-    // How many uses of a parallel kernel before we attempt compilation.
-    SET_DEFAULT(compilerWarmUpThresholdPar, 1);
 }
 
 bool

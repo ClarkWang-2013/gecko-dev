@@ -75,8 +75,13 @@ protected:
     virtual bool RecvSettingChanged(const PluginSettings& aSettings) MOZ_OVERRIDE;
 
     // Implement the PPluginModuleChild interface
+    virtual bool RecvDisableFlashProtectedMode() MOZ_OVERRIDE;
     virtual bool AnswerNP_GetEntryPoints(NPError* rv) MOZ_OVERRIDE;
     virtual bool AnswerNP_Initialize(const PluginSettings& aSettings, NPError* rv) MOZ_OVERRIDE;
+    virtual bool RecvAsyncNP_Initialize(const PluginSettings& aSettings) MOZ_OVERRIDE;
+    virtual bool AnswerSyncNPP_New(PPluginInstanceChild* aActor, NPError* rv)
+                                   MOZ_OVERRIDE;
+    virtual bool RecvAsyncNPP_New(PPluginInstanceChild* aActor) MOZ_OVERRIDE;
 
     virtual PPluginModuleChild*
     AllocPPluginModuleChild(mozilla::ipc::Transport* aTransport,
@@ -86,19 +91,19 @@ protected:
     AllocPPluginInstanceChild(const nsCString& aMimeType,
                               const uint16_t& aMode,
                               const InfallibleTArray<nsCString>& aNames,
-                              const InfallibleTArray<nsCString>& aValues,
-                              NPError* rv) MOZ_OVERRIDE;
+                              const InfallibleTArray<nsCString>& aValues)
+                              MOZ_OVERRIDE;
 
     virtual bool
     DeallocPPluginInstanceChild(PPluginInstanceChild* aActor) MOZ_OVERRIDE;
 
     virtual bool
-    AnswerPPluginInstanceConstructor(PPluginInstanceChild* aActor,
-                                     const nsCString& aMimeType,
-                                     const uint16_t& aMode,
-                                     const InfallibleTArray<nsCString>& aNames,
-                                     const InfallibleTArray<nsCString>& aValues,
-                                     NPError* rv) MOZ_OVERRIDE;
+    RecvPPluginInstanceConstructor(PPluginInstanceChild* aActor,
+                                   const nsCString& aMimeType,
+                                   const uint16_t& aMode,
+                                   InfallibleTArray<nsCString>&& aNames,
+                                   InfallibleTArray<nsCString>&& aValues)
+                                   MOZ_OVERRIDE;
     virtual bool
     AnswerNP_Shutdown(NPError *rv) MOZ_OVERRIDE;
 
@@ -144,13 +149,13 @@ protected:
 
     virtual bool RecvStartProfiler(const uint32_t& aEntries,
                                    const double& aInterval,
-                                   const nsTArray<nsCString>& aFeatures,
-                                   const nsTArray<nsCString>& aThreadNameFilters) MOZ_OVERRIDE;
+                                   nsTArray<nsCString>&& aFeatures,
+                                   nsTArray<nsCString>&& aThreadNameFilters) MOZ_OVERRIDE;
     virtual bool RecvStopProfiler() MOZ_OVERRIDE;
     virtual bool AnswerGetProfile(nsCString* aProfile) MOZ_OVERRIDE;
 
 public:
-    PluginModuleChild(bool aIsChrome);
+    explicit PluginModuleChild(bool aIsChrome);
     virtual ~PluginModuleChild();
 
     bool CommonInit(base::ProcessHandle aParentProcessHandle,
@@ -278,6 +283,12 @@ public:
         // CGContextRef we pass to it in NPP_HandleEvent(NPCocoaEventDrawRect)
         // outside of that call.  See bug 804606.
         QUIRK_FLASH_AVOID_CGMODE_CRASHES                = 1 << 10,
+        // Mac: Work around a Flash bug that causes long hangs when Flash
+        // tries to display its camera and microphone access dialog while
+        // it thinks HiDPI support is available. This is Adobe bug
+        // ADBE 3921114, which should get fixed in a future release. When
+        // this happens we'll no longer need this quirk. See bug 1118615.
+        QUIRK_FLASH_HIDE_HIDPI_SUPPORT                  = 1 << 11,
     };
 
     int GetQuirks() { return mQuirks; }
@@ -285,6 +296,7 @@ public:
     const PluginSettings& Settings() const { return mCachedSettings; }
 
 private:
+    NPError DoNP_Initialize(const PluginSettings& aSettings);
     void AddQuirk(PluginQuirks quirk) {
       if (mQuirks == QUIRKS_NOT_INITIALIZED)
         mQuirks = 0;
@@ -293,6 +305,12 @@ private:
     void InitQuirksModes(const nsCString& aMimeType);
     bool InitGraphics();
     void DeinitGraphics();
+
+#if defined(OS_WIN)
+    void HookProtectedMode();
+    void CleanupProtectedModeHook();
+#endif
+
 #if defined(MOZ_WIDGET_GTK)
     static gboolean DetectNestedEventLoop(gpointer data);
     static gboolean ProcessBrowserEvents(gpointer data);

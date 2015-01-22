@@ -9,6 +9,7 @@
 
 #include "mozilla/MemoryReporting.h"
 
+#include "prmjtime.h"
 #include "builtin/RegExp.h"
 #include "gc/Zone.h"
 #include "vm/GlobalObject.h"
@@ -103,7 +104,7 @@ struct CrossCompartmentKey
     }
 
   private:
-    CrossCompartmentKey() MOZ_DELETE;
+    CrossCompartmentKey() = delete;
 };
 
 struct WrapperHasher : public DefaultHasher<CrossCompartmentKey>
@@ -166,10 +167,22 @@ struct JSCompartment
     js::ReadBarrieredGlobalObject global_;
 
     unsigned                     enterCompartmentDepth;
+    int64_t                      startInterval;
 
   public:
-    void enter() { enterCompartmentDepth++; }
-    void leave() { enterCompartmentDepth--; }
+    int64_t                      totalTime;
+    void enter() {
+        if (addonId && !enterCompartmentDepth) {
+            startInterval = PRMJ_Now();
+        }
+        enterCompartmentDepth++;
+    }
+    void leave() {
+        enterCompartmentDepth--;
+        if (addonId && !enterCompartmentDepth) {
+            totalTime += (PRMJ_Now() - startInterval);
+        }
+    }
     bool hasBeenEntered() { return !!enterCompartmentDepth; }
 
     JS::Zone *zone() { return zone_; }
@@ -207,13 +220,6 @@ struct JSCompartment
     inline void initGlobal(js::GlobalObject &global);
 
   public:
-    /*
-     * Moves all data from the allocator |workerAllocator|, which was
-     * in use by a parallel worker, into the compartment's main
-     * allocator.  This is used at the end of a parallel section.
-     */
-    void adoptWorkerAllocator(js::Allocator *workerAllocator);
-
     /* Type information about the scripts and objects in this compartment. */
     js::types::TypeCompartment   types;
 
@@ -271,13 +277,13 @@ struct JSCompartment
     void sweepInitialShapeTable();
 
     /* Set of default 'new' or lazy types in the compartment. */
-    js::types::TypeObjectWithNewScriptSet newTypeObjects;
-    js::types::TypeObjectWithNewScriptSet lazyTypeObjects;
-    void sweepNewTypeObjectTable(js::types::TypeObjectWithNewScriptSet &table);
+    js::types::NewTypeObjectTable newTypeObjects;
+    js::types::NewTypeObjectTable lazyTypeObjects;
+    void sweepNewTypeObjectTable(js::types::NewTypeObjectTable &table);
 
 #ifdef JSGC_HASH_TABLE_CHECKS
     void checkTypeObjectTablesAfterMovingGC();
-    void checkTypeObjectTableAfterMovingGC(js::types::TypeObjectWithNewScriptSet &table);
+    void checkTypeObjectTableAfterMovingGC(js::types::NewTypeObjectTable &table);
     void checkInitialShapesTableAfterMovingGC();
     void checkWrapperMapAfterMovingGC();
 #endif
@@ -392,12 +398,10 @@ struct JSCompartment
     void purge();
     void clearTables();
 
-#ifdef JSGC_COMPACTING
     void fixupInitialShapeTable();
-    void fixupNewTypeObjectTable(js::types::TypeObjectWithNewScriptSet &table);
+    void fixupNewTypeObjectTable(js::types::NewTypeObjectTable &table);
     void fixupAfterMovingGC();
     void fixupGlobal();
-#endif
 
     bool hasObjectMetadataCallback() const { return objectMetadataCallback; }
     void setObjectMetadataCallback(js::ObjectMetadataCallback callback);
@@ -430,8 +434,8 @@ struct JSCompartment
     // InterpreterFrame::isDebuggee, and Baseline::isDebuggee are enumerated
     // below.
     //
-    // 1. When a compartment's isDebuggee() == true, relazification and lazy
-    //    parsing are disabled.
+    // 1. When a compartment's isDebuggee() == true, relazification, lazy
+    //    parsing, and asm.js are disabled.
     //
     // 2. When a compartment's debugObservesAllExecution() == true, all of the
     //    compartment's scripts are considered debuggee scripts.
@@ -584,8 +588,8 @@ class AutoCompartment
     JSCompartment *origin() const { return origin_; }
 
   private:
-    AutoCompartment(const AutoCompartment &) MOZ_DELETE;
-    AutoCompartment & operator=(const AutoCompartment &) MOZ_DELETE;
+    AutoCompartment(const AutoCompartment &) = delete;
+    AutoCompartment & operator=(const AutoCompartment &) = delete;
 };
 
 /*

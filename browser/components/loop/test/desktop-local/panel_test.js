@@ -13,7 +13,9 @@ var sharedUtils = loop.shared.utils;
 describe("loop.panel", function() {
   "use strict";
 
-  var sandbox, notifications, fakeXHR, requests = [];
+  var sandbox, notifications;
+  var fakeXHR, fakeWindow, fakeMozLoop;
+  var requests = [];
 
   beforeEach(function(done) {
     sandbox = sinon.sandbox.create();
@@ -23,9 +25,16 @@ describe("loop.panel", function() {
     fakeXHR.xhr.onCreate = function (xhr) {
       requests.push(xhr);
     };
+
+    fakeWindow = {
+      close: sandbox.stub(),
+      document: { addEventListener: function(){} }
+    };
+    loop.shared.mixins.setRootObject(fakeWindow);
+
     notifications = new loop.shared.models.NotificationCollection();
 
-    navigator.mozLoop = {
+    fakeMozLoop = navigator.mozLoop = {
       doNotDisturb: true,
       fxAEnabled: true,
       getStrings: function() {
@@ -39,10 +48,6 @@ describe("loop.panel", function() {
       getPluralForm: function() {
         return "fakeText";
       },
-      copyString: sandbox.stub(),
-      noteCallUrlExpiry: sinon.spy(),
-      composeEmail: sinon.spy(),
-      telemetryAdd: sinon.spy(),
       contacts: {
         getAll: function(callback) {
           callback(null, []);
@@ -65,12 +70,13 @@ describe("loop.panel", function() {
 
   afterEach(function() {
     delete navigator.mozLoop;
+    loop.shared.mixins.setRootObject(window);
     sandbox.restore();
   });
 
   describe("#init", function() {
     beforeEach(function() {
-      sandbox.stub(React, "renderComponent");
+      sandbox.stub(React, "render");
       sandbox.stub(document.mozL10n, "initialize");
       sandbox.stub(document.mozL10n, "get").returns("Fake title");
     });
@@ -86,10 +92,10 @@ describe("loop.panel", function() {
     it("should render the panel view", function() {
       loop.panel.init();
 
-      sinon.assert.calledOnce(React.renderComponent);
-      sinon.assert.calledWith(React.renderComponent,
+      sinon.assert.calledOnce(React.render);
+      sinon.assert.calledWith(React.render,
         sinon.match(function(value) {
-          return TestUtils.isDescriptorOfType(value,
+          return TestUtils.isCompositeComponentElement(value,
             loop.panel.PanelView);
       }));
     });
@@ -111,7 +117,8 @@ describe("loop.panel", function() {
     var view;
 
     beforeEach(function() {
-      view = TestUtils.renderIntoDocument(loop.panel.AvailabilityDropdown());
+      view = TestUtils.renderIntoDocument(
+        React.createElement(loop.panel.AvailabilityDropdown));
     });
 
     describe("doNotDisturb preference change", function() {
@@ -156,90 +163,67 @@ describe("loop.panel", function() {
 
       dispatcher = new loop.Dispatcher();
       roomStore = new loop.store.RoomStore(dispatcher, {
-        mozLoop: navigator.mozLoop
+        mozLoop: fakeMozLoop
       });
     });
 
     function createTestPanelView() {
-      return TestUtils.renderIntoDocument(loop.panel.PanelView({
-        notifications: notifications,
-        client: fakeClient,
-        showTabButtons: true,
-        dispatcher: dispatcher,
-        roomStore: roomStore
-      }));
+      return TestUtils.renderIntoDocument(
+        React.createElement(loop.panel.PanelView, {
+          notifications: notifications,
+          client: fakeClient,
+          showTabButtons: true,
+          mozLoop: fakeMozLoop,
+          dispatcher: dispatcher,
+          roomStore: roomStore
+        }));
     }
 
     describe('TabView', function() {
       var view, callTab, roomsTab, contactsTab;
 
-      describe("loop.rooms.enabled on", function() {
-        beforeEach(function() {
-          navigator.mozLoop.getLoopPref = function(pref) {
-            if (pref === "rooms.enabled" ||
-                pref === "gettingStarted.seen") {
-              return true;
-            }
-          };
+      beforeEach(function() {
+        navigator.mozLoop.getLoopPref = function(pref) {
+          if (pref === "gettingStarted.seen") {
+            return true;
+          }
+        };
 
-          view = createTestPanelView();
+        view = createTestPanelView();
 
-          [roomsTab, contactsTab] =
-            TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
-        });
-
-        it("should select contacts tab when clicking tab button", function() {
-          TestUtils.Simulate.click(
-            view.getDOMNode().querySelector("li[data-tab-name=\"contacts\"]"));
-
-          expect(contactsTab.getDOMNode().classList.contains("selected"))
-            .to.be.true;
-        });
-
-        it("should select rooms tab when clicking tab button", function() {
-          TestUtils.Simulate.click(
-            view.getDOMNode().querySelector("li[data-tab-name=\"rooms\"]"));
-
-          expect(roomsTab.getDOMNode().classList.contains("selected"))
-            .to.be.true;
-        });
+        [roomsTab, contactsTab] =
+          TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
       });
 
-      describe("loop.rooms.enabled off", function() {
-        beforeEach(function() {
-          navigator.mozLoop.getLoopPref = function(pref) {
-            if (pref === "rooms.enabled") {
-              return false;
-            } else if (pref === "gettingStarted.seen") {
-              return true;
-            }
-          };
+      it("should select contacts tab when clicking tab button", function() {
+        TestUtils.Simulate.click(
+          view.getDOMNode().querySelector("li[data-tab-name=\"contacts\"]"));
 
-          view = createTestPanelView();
+        expect(contactsTab.getDOMNode().classList.contains("selected"))
+          .to.be.true;
+      });
 
-          [callTab, contactsTab] =
-            TestUtils.scryRenderedDOMComponentsWithClass(view, "tab");
-        });
+      it("should select rooms tab when clicking tab button", function() {
+        TestUtils.Simulate.click(
+          view.getDOMNode().querySelector("li[data-tab-name=\"rooms\"]"));
 
-        it("should select contacts tab when clicking tab button", function() {
-          TestUtils.Simulate.click(
-            view.getDOMNode().querySelector("li[data-tab-name=\"contacts\"]"));
-
-          expect(contactsTab.getDOMNode().classList.contains("selected"))
-            .to.be.true;
-        });
-
-        it("should select call tab when clicking tab button", function() {
-          TestUtils.Simulate.click(
-            view.getDOMNode().querySelector("li[data-tab-name=\"call\"]"));
-
-          expect(callTab.getDOMNode().classList.contains("selected"))
-            .to.be.true;
-        });
+        expect(roomsTab.getDOMNode().classList.contains("selected"))
+          .to.be.true;
       });
     });
 
     describe("AuthLink", function() {
+
+      beforeEach(function() {
+        navigator.mozLoop.calls = { clearCallInProgress: function() {} };
+      });
+
+      afterEach(function() {
+        delete navigator.mozLoop.logInToFxA;
+        delete navigator.mozLoop.calls;
+        navigator.mozLoop.fxAEnabled = true;
+      });
+
       it("should trigger the FxA sign in/up process when clicking the link",
         function() {
           navigator.mozLoop.loggedInToFxA = false;
@@ -253,15 +237,25 @@ describe("loop.panel", function() {
           sinon.assert.calledOnce(navigator.mozLoop.logInToFxA);
         });
 
+      it("should close the panel after clicking the link",
+        function() {
+          navigator.mozLoop.loggedInToFxA = false;
+          navigator.mozLoop.logInToFxA = sandbox.stub();
+
+          var view = createTestPanelView();
+
+          TestUtils.Simulate.click(
+            view.getDOMNode().querySelector(".signin-link a"));
+
+          sinon.assert.calledOnce(fakeWindow.close);
+        });
+
       it("should be hidden if FxA is not enabled",
         function() {
           navigator.mozLoop.fxAEnabled = false;
-          var view = TestUtils.renderIntoDocument(loop.panel.AuthLink());
+          var view = TestUtils.renderIntoDocument(
+            React.createElement(loop.panel.AuthLink));
           expect(view.getDOMNode()).to.be.null;
-      });
-
-      afterEach(function() {
-        navigator.mozLoop.fxAEnabled = true;
       });
     });
 
@@ -279,7 +273,8 @@ describe("loop.panel", function() {
       it("should be hidden if FxA is not enabled",
         function() {
           navigator.mozLoop.fxAEnabled = false;
-          var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+          var view = TestUtils.renderIntoDocument(
+            React.createElement(loop.panel.SettingsDropdown));
           expect(view.getDOMNode()).to.be.null;
       });
 
@@ -287,7 +282,8 @@ describe("loop.panel", function() {
         function() {
           navigator.mozLoop.loggedInToFxA = false;
 
-          var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+          var view = TestUtils.renderIntoDocument(
+            React.createElement(loop.panel.SettingsDropdown));
 
           expect(view.getDOMNode().querySelectorAll(".icon-signout"))
             .to.have.length.of(0);
@@ -298,7 +294,8 @@ describe("loop.panel", function() {
       it("should show a signout entry when user is authenticated", function() {
         navigator.mozLoop.userProfile = {email: "test@example.com"};
 
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         expect(view.getDOMNode().querySelectorAll(".icon-signout"))
           .to.have.length.of(1);
@@ -309,7 +306,8 @@ describe("loop.panel", function() {
       it("should show an account entry when user is authenticated", function() {
         navigator.mozLoop.userProfile = {email: "test@example.com"};
 
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         expect(view.getDOMNode().querySelectorAll(".icon-account"))
           .to.have.length.of(1);
@@ -318,7 +316,8 @@ describe("loop.panel", function() {
       it("should open the FxA settings when the account entry is clicked", function() {
         navigator.mozLoop.userProfile = {email: "test@example.com"};
 
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         TestUtils.Simulate.click(
           view.getDOMNode().querySelector(".icon-account"));
@@ -330,7 +329,8 @@ describe("loop.panel", function() {
         function() {
           navigator.mozLoop.loggedInToFxA = false;
 
-          var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+          var view = TestUtils.renderIntoDocument(
+            React.createElement(loop.panel.SettingsDropdown));
 
           expect(view.getDOMNode().querySelectorAll(".icon-account"))
             .to.have.length.of(0);
@@ -338,7 +338,8 @@ describe("loop.panel", function() {
 
       it("should sign in the user on click when unauthenticated", function() {
         navigator.mozLoop.loggedInToFxA = false;
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         TestUtils.Simulate.click(
           view.getDOMNode().querySelector(".icon-signin"));
@@ -348,7 +349,8 @@ describe("loop.panel", function() {
 
       it("should sign out the user on click when authenticated", function() {
         navigator.mozLoop.userProfile = {email: "test@example.com"};
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         TestUtils.Simulate.click(
           view.getDOMNode().querySelector(".icon-signout"));
@@ -372,7 +374,8 @@ describe("loop.panel", function() {
       });
 
       it("should open a tab to the support page", function() {
-        var view = TestUtils.renderIntoDocument(loop.panel.SettingsDropdown());
+        var view = TestUtils.renderIntoDocument(
+          React.createElement(loop.panel.SettingsDropdown));
 
         TestUtils.Simulate
           .click(view.getDOMNode().querySelector(".icon-help"));
@@ -425,272 +428,6 @@ describe("loop.panel", function() {
     });
   });
 
-  describe("loop.panel.CallUrlResult", function() {
-    var fakeClient, callUrlData, view;
-
-    beforeEach(function() {
-      callUrlData = {
-        callUrl: "http://call.invalid/fakeToken",
-        expiresAt: 1000
-      };
-
-      fakeClient = {
-        requestCallUrl: function(_, cb) {
-          cb(null, callUrlData);
-        }
-      };
-
-      sandbox.stub(notifications, "reset");
-      view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-        notifications: notifications,
-        client: fakeClient
-      }));
-    });
-
-    describe("Rendering the component should generate a call URL", function() {
-
-      beforeEach(function() {
-        document.mozL10n.initialize({
-          getStrings: function(key) {
-            var text;
-
-            if (key === "share_email_subject4")
-              text = "email-subject";
-            else if (key === "share_email_body4")
-              text = "{{callUrl}}";
-
-            return JSON.stringify({textContent: text});
-          }
-        });
-      });
-
-      it("should make a request to requestCallUrl", function() {
-        sandbox.stub(fakeClient, "requestCallUrl");
-        var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-          notifications: notifications,
-          client: fakeClient
-        }));
-
-        sinon.assert.calledOnce(view.props.client.requestCallUrl);
-        sinon.assert.calledWithExactly(view.props.client.requestCallUrl,
-                                       sinon.match.string, sinon.match.func);
-      });
-
-      it("should set the call url form in a pending state", function() {
-        // Cancel requestCallUrl effect to keep the state pending
-        fakeClient.requestCallUrl = sandbox.stub();
-        var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-          notifications: notifications,
-          client: fakeClient
-        }));
-
-        expect(view.state.pending).eql(true);
-      });
-
-      it("should update state with the call url received", function() {
-        expect(view.state.pending).eql(false);
-        expect(view.state.callUrl).eql(callUrlData.callUrl);
-      });
-
-      it("should clear the pending state when a response is received",
-        function() {
-          expect(view.state.pending).eql(false);
-        });
-
-      it("should update CallUrlResult with the call url", function() {
-        var urlField = view.getDOMNode().querySelector("input[type='url']");
-
-        expect(urlField.value).eql(callUrlData.callUrl);
-      });
-
-      it("should have 0 pending notifications", function() {
-        expect(view.props.notifications.length).eql(0);
-      });
-
-      it("should display a share button for email", function() {
-        fakeClient.requestCallUrl = sandbox.stub();
-        var composeCallUrlEmail = sandbox.stub(sharedUtils, "composeCallUrlEmail");
-        var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-          notifications: notifications,
-          client: fakeClient
-        }));
-        view.setState({pending: false, callUrl: "http://example.com"});
-
-        TestUtils.findRenderedDOMComponentWithClass(view, "button-email");
-        TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
-
-        sinon.assert.calledOnce(composeCallUrlEmail);
-        sinon.assert.calledWithExactly(composeCallUrlEmail, "http://example.com");
-      });
-
-      it("should feature a copy button capable of copying the call url when clicked", function() {
-        fakeClient.requestCallUrl = sandbox.stub();
-        var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-          notifications: notifications,
-          client: fakeClient
-        }));
-        view.setState({
-          pending: false,
-          copied: false,
-          callUrl: "http://example.com",
-          callUrlExpiry: 6000
-        });
-
-        TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
-
-        sinon.assert.calledOnce(navigator.mozLoop.copyString);
-        sinon.assert.calledWithExactly(navigator.mozLoop.copyString,
-          view.state.callUrl);
-      });
-
-      it("should note the call url expiry when the url is copied via button",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
-
-          sinon.assert.calledOnce(navigator.mozLoop.noteCallUrlExpiry);
-          sinon.assert.calledWithExactly(navigator.mozLoop.noteCallUrlExpiry,
-            6000);
-        });
-
-      it("should call mozLoop.telemetryAdd when the url is copied via button",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          // Multiple clicks should result in the URL being counted only once.
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-copy"));
-
-          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
-          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
-                                  "LOOP_CLIENT_CALL_URL_SHARED",
-                                  true);
-        });
-
-      it("should note the call url expiry when the url is emailed",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
-
-          sinon.assert.calledOnce(navigator.mozLoop.noteCallUrlExpiry);
-          sinon.assert.calledWithExactly(navigator.mozLoop.noteCallUrlExpiry,
-            6000);
-        });
-
-      it("should call mozLoop.telemetryAdd when the url is emailed",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          // Multiple clicks should result in the URL being counted only once.
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
-          TestUtils.Simulate.click(view.getDOMNode().querySelector(".button-email"));
-
-          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
-          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
-                                  "LOOP_CLIENT_CALL_URL_SHARED",
-                                  true);
-        });
-
-      it("should note the call url expiry when the url is copied manually",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          var urlField = view.getDOMNode().querySelector("input[type='url']");
-          TestUtils.Simulate.copy(urlField);
-
-          sinon.assert.calledOnce(navigator.mozLoop.noteCallUrlExpiry);
-          sinon.assert.calledWithExactly(navigator.mozLoop.noteCallUrlExpiry,
-            6000);
-        });
-
-      it("should call mozLoop.telemetryAdd when the url is copied manually",
-        function() {
-          var view = TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-            notifications: notifications,
-            client: fakeClient
-          }));
-          view.setState({
-            pending: false,
-            copied: false,
-            callUrl: "http://example.com",
-            callUrlExpiry: 6000
-          });
-
-          // Multiple copies should result in the URL being counted only once.
-          var urlField = view.getDOMNode().querySelector("input[type='url']");
-          TestUtils.Simulate.copy(urlField);
-          TestUtils.Simulate.copy(urlField);
-
-          sinon.assert.calledOnce(navigator.mozLoop.telemetryAdd);
-          sinon.assert.calledWith(navigator.mozLoop.telemetryAdd,
-                                  "LOOP_CLIENT_CALL_URL_SHARED",
-                                  true);
-        });
-
-      it("should notify the user when the operation failed", function() {
-        fakeClient.requestCallUrl = function(_, cb) {
-          cb("fake error");
-        };
-        sandbox.stub(notifications, "errorL10n");
-        TestUtils.renderIntoDocument(loop.panel.CallUrlResult({
-          notifications: notifications,
-          client: fakeClient
-        }));
-
-        sinon.assert.calledOnce(notifications.errorL10n);
-        sinon.assert.calledWithExactly(notifications.errorL10n,
-                                       "unable_retrieve_url");
-      });
-    });
-  });
-
   describe("loop.panel.RoomEntry", function() {
     var dispatcher, roomData;
 
@@ -712,7 +449,8 @@ describe("loop.panel", function() {
     });
 
     function mountRoomEntry(props) {
-      return TestUtils.renderIntoDocument(loop.panel.RoomEntry(props));
+      return TestUtils.renderIntoDocument(
+        React.createElement(loop.panel.RoomEntry, props));
     }
 
     describe("Edit room name", function() {
@@ -840,27 +578,56 @@ describe("loop.panel", function() {
     });
 
     describe("Room URL click", function() {
-      var roomEntry;
 
-      it("should dispatch an OpenRoom action", function() {
+      var roomEntry, urlLink;
+
+      beforeEach(function() {
         sandbox.stub(dispatcher, "dispatch");
+
         roomEntry = mountRoomEntry({
           dispatcher: dispatcher,
           room: new loop.store.Room(roomData)
         });
-        var urlLink = roomEntry.getDOMNode().querySelector("p > a");
+        urlLink = roomEntry.getDOMNode().querySelector("p > a");
+      });
 
+      it("should dispatch an OpenRoom action", function() {
         TestUtils.Simulate.click(urlLink);
 
         sinon.assert.calledOnce(dispatcher.dispatch);
         sinon.assert.calledWithExactly(dispatcher.dispatch,
           new sharedActions.OpenRoom({roomToken: roomData.roomToken}));
       });
+
+      it("should call window.close", function() {
+        TestUtils.Simulate.click(urlLink);
+
+        sinon.assert.calledOnce(fakeWindow.close);
+      });
+    });
+
+    describe("Room name updated", function() {
+      it("should update room name", function() {
+        var roomEntry = mountRoomEntry({
+          dispatcher: dispatcher,
+          room: new loop.store.Room(roomData)
+        });
+        var updatedRoom = new loop.store.Room(_.extend({}, roomData, {
+          roomName: "New room name",
+          ctime: new Date().getTime()
+        }));
+
+        roomEntry.setProps({room: updatedRoom});
+
+        expect(
+          roomEntry.getDOMNode().querySelector(".edit-in-place").textContent)
+        .eql("New room name");
+      });
     });
   });
 
   describe("loop.panel.RoomList", function() {
-    var roomStore, dispatcher, fakeEmail;
+    var roomStore, dispatcher, fakeEmail, dispatch;
 
     beforeEach(function() {
       fakeEmail = "fakeEmail@example.com";
@@ -874,19 +641,19 @@ describe("loop.panel", function() {
         rooms: [],
         error: undefined
       });
+      dispatch = sandbox.stub(dispatcher, "dispatch");
     });
 
     function createTestComponent() {
-      return TestUtils.renderIntoDocument(loop.panel.RoomList({
-        store: roomStore,
-        dispatcher: dispatcher,
-        userDisplayName: fakeEmail
-      }));
+      return TestUtils.renderIntoDocument(
+        React.createElement(loop.panel.RoomList, {
+          store: roomStore,
+          dispatcher: dispatcher,
+          userDisplayName: fakeEmail
+        }));
     }
 
     it("should dispatch a GetAllRooms action on mount", function() {
-      var dispatch = sandbox.stub(dispatcher, "dispatch");
-
       createTestComponent();
 
       sinon.assert.calledOnce(dispatch);
@@ -897,7 +664,6 @@ describe("loop.panel", function() {
        "conversation button",
       function() {
         navigator.mozLoop.userProfile = {email: fakeEmail};
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         var view = createTestComponent();
 
         TestUtils.Simulate.click(view.getDOMNode().querySelector("button"));
@@ -908,9 +674,21 @@ describe("loop.panel", function() {
         }));
       });
 
+    it("should close the panel once a room is created and there is no error",
+      function() {
+        var view = createTestComponent();
+
+        roomStore.setStoreState({pendingCreation: true});
+
+        sinon.assert.notCalled(fakeWindow.close);
+
+        roomStore.setStoreState({pendingCreation: false});
+
+        sinon.assert.calledOnce(fakeWindow.close);
+      });
+
     it("should disable the create button when a creation operation is ongoing",
       function() {
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         roomStore.setStoreState({pendingCreation: true});
 
         var view = createTestComponent();
@@ -921,7 +699,6 @@ describe("loop.panel", function() {
 
     it("should disable the create button when a list retrieval operation is pending",
       function() {
-        var dispatch = sandbox.stub(dispatcher, "dispatch");
         roomStore.setStoreState({pendingInitialRetrieval: true});
 
         var view = createTestComponent();
@@ -934,22 +711,64 @@ describe("loop.panel", function() {
   describe('loop.panel.ToSView', function() {
 
     it("should render when the value of loop.seenToS is not set", function() {
-      var view = TestUtils.renderIntoDocument(loop.panel.ToSView());
+      navigator.mozLoop.getLoopPref = function(key) {
+        return {
+          "gettingStarted.seen": true,
+          "seenToS": "unseen"
+        }[key];
+      };
+
+      var view = TestUtils.renderIntoDocument(
+        React.createElement(loop.panel.ToSView));
 
       TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
     });
 
     it("should not render when the value of loop.seenToS is set to 'seen'",
       function(done) {
-        navigator.mozLoop.getLoopPref = function() {
-          return "seen";
+        navigator.mozLoop.getLoopPref = function(key) {
+          return {
+            "gettingStarted.seen": true,
+            "seenToS": "seen"
+          }[key];
         };
 
         try {
-          TestUtils.findRenderedDOMComponentWithClass(view, "tos");
+          TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
         } catch (err) {
           done();
         }
     });
+
+    it("should render when the value of loop.gettingStarted.seen is false",
+       function() {
+         navigator.mozLoop.getLoopPref = function(key) {
+           return {
+             "gettingStarted.seen": false,
+             "seenToS": "seen"
+           }[key];
+         };
+         var view = TestUtils.renderIntoDocument(
+           React.createElement(loop.panel.ToSView));
+
+         TestUtils.findRenderedDOMComponentWithClass(view, "terms-service");
+       });
+
+    it("should render the telefonica logo after the first time use",
+       function() {
+         navigator.mozLoop.getLoopPref = function(key) {
+           return {
+             "gettingStarted.seen": false,
+             "seenToS": "unseen",
+             "showPartnerLogo": false
+           }[key];
+         };
+
+         var view = TestUtils.renderIntoDocument(
+           React.createElement(loop.panel.ToSView));
+
+         expect(view.getDOMNode().querySelector(".powered-by")).eql(null);
+       });
+
   });
 });

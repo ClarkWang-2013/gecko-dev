@@ -607,6 +607,31 @@ bool RFloor::recover(JSContext *cx, SnapshotIterator &iter) const
 }
 
 bool
+MCeil::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_Ceil));
+    return true;
+}
+
+RCeil::RCeil(CompactBufferReader &reader)
+{ }
+
+
+bool
+RCeil::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedValue v(cx, iter.read());
+    RootedValue result(cx);
+
+    if (!js::math_ceil_handle(cx, v, &result))
+        return false;
+
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
 MRound::writeRecoverData(CompactBufferWriter &writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
@@ -885,6 +910,7 @@ MMathFunction::writeRecoverData(CompactBufferWriter &writer) const
         writer.writeUnsigned(uint32_t(RInstruction::Recover_Round));
         return true;
       case Sin:
+      case Log:
         writer.writeUnsigned(uint32_t(RInstruction::Recover_MathFunction));
         writer.writeByte(function_);
         return true;
@@ -907,6 +933,16 @@ RMathFunction::recover(JSContext *cx, SnapshotIterator &iter) const
         RootedValue result(cx);
 
         if (!js::math_sin_handle(cx, arg, &result))
+            return false;
+
+        iter.storeInstructionResult(result);
+        return true;
+      }
+      case MMathFunction::Log: {
+        RootedValue arg(cx, iter.read());
+        RootedValue result(cx);
+
+        if (!js::math_log_handle(cx, arg, &result))
             return false;
 
         iter.storeInstructionResult(result);
@@ -1105,7 +1141,7 @@ RNewObject::RNewObject(CompactBufferReader &reader)
 bool
 RNewObject::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
+    RootedPlainObject templateObject(cx, &iter.read().toObject().as<PlainObject>());
     RootedValue result(cx);
     JSObject *resultObject = nullptr;
 
@@ -1203,12 +1239,40 @@ RCreateThisWithTemplate::RCreateThisWithTemplate(CompactBufferReader &reader)
 bool
 RCreateThisWithTemplate::recover(JSContext *cx, SnapshotIterator &iter) const
 {
-    RootedNativeObject templateObject(cx, &iter.read().toObject().as<NativeObject>());
+    RootedPlainObject templateObject(cx, &iter.read().toObject().as<PlainObject>());
 
     // See CodeGenerator::visitCreateThisWithTemplate
     gc::AllocKind allocKind = templateObject->asTenured().getAllocKind();
     gc::InitialHeap initialHeap = tenuredHeap_ ? gc::TenuredHeap : gc::DefaultHeap;
     JSObject *resultObject = NativeObject::copy(cx, allocKind, initialHeap, templateObject);
+    if (!resultObject)
+        return false;
+
+    RootedValue result(cx);
+    result.setObject(*resultObject);
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
+MLambda::writeRecoverData(CompactBufferWriter &writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_Lambda));
+    return true;
+}
+
+RLambda::RLambda(CompactBufferReader &reader)
+{
+}
+
+bool
+RLambda::recover(JSContext *cx, SnapshotIterator &iter) const
+{
+    RootedObject scopeChain(cx, &iter.read().toObject());
+    RootedFunction fun(cx, &iter.read().toObject().as<JSFunction>());
+
+    JSObject *resultObject = js::Lambda(cx, fun, scopeChain);
     if (!resultObject)
         return false;
 

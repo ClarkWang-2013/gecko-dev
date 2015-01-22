@@ -78,11 +78,11 @@ js::CreateRegExpMatchResult(JSContext *cx, HandleString input, const MatchPairs 
 #ifdef DEBUG
     RootedValue test(cx);
     RootedId id(cx, NameToId(cx->names().index));
-    if (!baseops::GetProperty(cx, arr, id, &test))
+    if (!NativeGetProperty(cx, arr, id, &test))
         return false;
     MOZ_ASSERT(test == arr->getSlot(0));
     id = NameToId(cx->names().input);
-    if (!baseops::GetProperty(cx, arr, id, &test))
+    if (!NativeGetProperty(cx, arr, id, &test))
         return false;
     MOZ_ASSERT(test == arr->getSlot(1));
 #endif
@@ -251,7 +251,7 @@ CompileRegExpObject(JSContext *cx, RegExpObjectBuilder &builder, CallArgs args)
          * to executing RegExpObject::getSource on the unwrapped object.
          */
         RootedValue v(cx);
-        if (!JSObject::getProperty(cx, sourceObj, sourceObj, cx->names().source, &v))
+        if (!GetProperty(cx, sourceObj, sourceObj, cx->names().source, &v))
             return false;
 
         // For proxies like CPOWs, we can't assume the result of a property get
@@ -370,6 +370,72 @@ regexp_toString(JSContext *cx, unsigned argc, Value *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     return CallNonGenericMethod<IsRegExp, regexp_toString_impl>(cx, args);
 }
+
+/* ES6 draft rev29 21.2.5.3 RegExp.prototype.flags */
+bool
+regexp_flags(JSContext *cx, unsigned argc, JS::Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    /* Steps 1-2. */
+    if (!args.thisv().isObject()) {
+        char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, args.thisv(), NullPtr());
+        if (!bytes)
+            return false;
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
+                             bytes, "not an object");
+        js_free(bytes);
+        return false;
+    }
+    RootedObject thisObj(cx, &args.thisv().toObject());
+
+    /* Step 3. */
+    StringBuffer sb(cx);
+
+    /* Steps 4-6. */
+    RootedValue global(cx);
+    if (!GetProperty(cx, thisObj, thisObj, cx->names().global, &global))
+        return false;
+    if (ToBoolean(global) && !sb.append('g'))
+        return false;
+
+    /* Steps 7-9. */
+    RootedValue ignoreCase(cx);
+    if (!GetProperty(cx, thisObj, thisObj, cx->names().ignoreCase, &ignoreCase))
+        return false;
+    if (ToBoolean(ignoreCase) && !sb.append('i'))
+        return false;
+
+    /* Steps 10-12. */
+    RootedValue multiline(cx);
+    if (!GetProperty(cx, thisObj, thisObj, cx->names().multiline, &multiline))
+        return false;
+    if (ToBoolean(multiline) && !sb.append('m'))
+        return false;
+
+    /* Steps 13-15. */
+    RootedValue unicode(cx);
+    if (!GetProperty(cx, thisObj, thisObj, cx->names().unicode, &unicode))
+        return false;
+    if (ToBoolean(unicode) && !sb.append('u'))
+        return false;
+
+    /* Steps 16-18. */
+    RootedValue sticky(cx);
+    if (!GetProperty(cx, thisObj, thisObj, cx->names().sticky, &sticky))
+        return false;
+    if (ToBoolean(sticky) && !sb.append('y'))
+        return false;
+
+    /* Step 19. */
+    args.rval().setString(sb.finishString());
+    return true;
+}
+
+static const JSPropertySpec regexp_properties[] = {
+    JS_PSG("flags", regexp_flags, 0),
+    JS_PS_END
+};
 
 static const JSFunctionSpec regexp_methods[] = {
 #if JS_HAS_TOSOURCE
@@ -507,17 +573,17 @@ js_InitRegExpClass(JSContext *cx, HandleObject obj)
 
     Rooted<GlobalObject*> global(cx, &obj->as<GlobalObject>());
 
-    RootedNativeObject proto(cx, global->createBlankPrototype(cx, &RegExpObject::class_));
+    Rooted<RegExpObject*> proto(cx, global->createBlankPrototype<RegExpObject>(cx));
     if (!proto)
         return nullptr;
-    proto->setPrivate(nullptr);
+    proto->NativeObject::setPrivate(nullptr);
 
     HandlePropertyName empty = cx->names().empty;
-    RegExpObjectBuilder builder(cx, &proto->as<RegExpObject>());
+    RegExpObjectBuilder builder(cx, proto);
     if (!builder.build(empty, RegExpFlag(0)))
         return nullptr;
 
-    if (!DefinePropertiesAndFunctions(cx, proto, nullptr, regexp_methods))
+    if (!DefinePropertiesAndFunctions(cx, proto, regexp_properties, regexp_methods))
         return nullptr;
 
     RootedFunction ctor(cx);

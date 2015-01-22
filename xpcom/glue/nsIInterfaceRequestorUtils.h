@@ -22,7 +22,7 @@ CallGetInterface(T* aSource, DestinationType** aDestination)
                                reinterpret_cast<void**>(aDestination));
 }
 
-class nsGetInterface : public nsCOMPtr_helper
+class MOZ_STACK_CLASS nsGetInterface : public nsCOMPtr_helper
 {
 public:
   nsGetInterface(nsISupports* aSource, nsresult* aError)
@@ -34,7 +34,7 @@ public:
   virtual nsresult NS_FASTCALL operator()(const nsIID&, void**) const;
 
 private:
-  nsISupports* mSource;
+  nsISupports* MOZ_NON_OWNING_REF mSource;
   nsresult* mErrorPtr;
 };
 

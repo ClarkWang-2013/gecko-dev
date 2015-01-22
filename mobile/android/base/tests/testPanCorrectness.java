@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko.tests;
 
 import org.mozilla.gecko.Actions;
@@ -19,6 +23,9 @@ public class testPanCorrectness extends PixelTest {
 
         // load page and check we're at 0,0
         loadAndVerifyBoxes(url);
+
+        // Tell Gecko to ignore any longpress events triggered by MEH.
+        meh.disableGeckoLongpress();
 
         // drag page upwards by 100 pixels
         Actions.RepeatedEventExpecter paintExpecter = mActions.expectPaint();

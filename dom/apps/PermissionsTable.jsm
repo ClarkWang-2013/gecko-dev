@@ -215,6 +215,12 @@ this.PermissionsTable =  { geolocation: {
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
+                           "global-clickthrough-overlay": {
+                             app: DENY_ACTION,
+                             trusted: DENY_ACTION,
+                             privileged: ALLOW_ACTION,
+                             certified: ALLOW_ACTION
+                           },
                            "moz-attention": {
                              app: DENY_ACTION,
                              trusted: DENY_ACTION,
@@ -407,12 +413,23 @@ this.PermissionsTable =  { geolocation: {
                              privileged: PROMPT_ACTION,
                              certified: ALLOW_ACTION
                            },
-                           "nfc": {
+                           "audio-capture:3gpp": {
+			     app: DENY_ACTION,
+			     trusted: DENY_ACTION,
+			     privileged: ALLOW_ACTION,
+			     certified: ALLOW_ACTION
+			   },
+			   "nfc": {
+                             app: DENY_ACTION,
+                             trusted: DENY_ACTION,
+                             privileged: ALLOW_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "nfc-share": {
                              app: DENY_ACTION,
                              trusted: DENY_ACTION,
                              privileged: DENY_ACTION,
-                             certified: ALLOW_ACTION,
-                             access: ["read", "write"]
+                             certified: ALLOW_ACTION
                            },
                            "nfc-manager": {
                              app: DENY_ACTION,
@@ -488,7 +505,7 @@ this.PermissionsTable =  { geolocation: {
                            "settings:wallpaper.image": {
                              app: DENY_ACTION,
                              trusted: DENY_ACTION,
-                             privileged: PROMPT_ACTION,
+                             privileged: ALLOW_ACTION,
                              certified: ALLOW_ACTION,
                              access: ["read", "write"],
                              additional: ["settings-api"]
@@ -505,6 +522,12 @@ this.PermissionsTable =  { geolocation: {
                              certified: ALLOW_ACTION
                            },
                            "before-after-keyboard-event": {
+                             app: DENY_ACTION,
+                             trusted: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "presentation-device-manage": {
                              app: DENY_ACTION,
                              trusted: DENY_ACTION,
                              privileged: DENY_ACTION,

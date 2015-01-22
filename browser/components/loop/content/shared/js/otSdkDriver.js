@@ -8,7 +8,7 @@ var loop = loop || {};
 loop.OTSdkDriver = (function() {
 
   var sharedActions = loop.shared.actions;
-  var FAILURE_REASONS = loop.shared.utils.FAILURE_REASONS;
+  var FAILURE_DETAILS = loop.shared.utils.FAILURE_DETAILS;
 
   /**
    * This is a wrapper for the OT sdk. It is used to translate the SDK events into
@@ -24,6 +24,8 @@ loop.OTSdkDriver = (function() {
 
       this.dispatcher = options.dispatcher;
       this.sdk = options.sdk;
+
+      this.connections = {};
 
       this.dispatcher.register(this, [
         "setupStreamElements",
@@ -115,6 +117,38 @@ loop.OTSdkDriver = (function() {
       delete this._publisherReady;
       delete this._publishedLocalStream;
       delete this._subscribedRemoteStream;
+      this.connections = {};
+    },
+
+    /**
+     * Oust all users from an ongoing session. This is typically done when a room
+     * owner deletes the room.
+     *
+     * @param {Function} callback Function to be invoked once all connections are
+     *                            ousted
+     */
+    forceDisconnectAll: function(callback) {
+      if (!this._sessionConnected) {
+        callback();
+        return;
+      }
+
+      var connectionNames = Object.keys(this.connections);
+      if (connectionNames.length === 0) {
+        callback();
+        return;
+      }
+      var disconnectCount = 0;
+      connectionNames.forEach(function(id) {
+        var connection = this.connections[id];
+        this.session.forceDisconnect(connection, function() {
+          // When all connections have disconnected, call the callback, since
+          // we're done.
+          if (++disconnectCount === connectionNames.length) {
+            callback();
+          }
+        });
+      }, this);
     },
 
     /**
@@ -126,7 +160,7 @@ loop.OTSdkDriver = (function() {
       if (error) {
         console.error("Failed to complete connection", error);
         this.dispatcher.dispatch(new sharedActions.ConnectionFailure({
-          reason: FAILURE_REASONS.COULD_NOT_CONNECT
+          reason: FAILURE_DETAILS.COULD_NOT_CONNECT
         }));
         return;
       }
@@ -139,10 +173,14 @@ loop.OTSdkDriver = (function() {
     /**
      * Handles the connection event for a peer's connection being dropped.
      *
-     * @param {SessionDisconnectEvent} event The event details
-     * https://tokbox.com/opentok/libraries/client/js/reference/SessionDisconnectEvent.html
+     * @param {ConnectionEvent} event The event details
+     * https://tokbox.com/opentok/libraries/client/js/reference/ConnectionEvent.html
      */
     _onConnectionDestroyed: function(event) {
+      var connection = event.connection;
+      if (connection && (connection.id in this.connections)) {
+        delete this.connections[connection.id];
+      }
       this.dispatcher.dispatch(new sharedActions.RemotePeerDisconnected({
         peerHungup: event.reason === "clientDisconnected"
       }));
@@ -156,19 +194,36 @@ loop.OTSdkDriver = (function() {
      * https://tokbox.com/opentok/libraries/client/js/reference/SessionDisconnectEvent.html
      */
     _onSessionDisconnected: function(event) {
-      // We only need to worry about the network disconnected reason here.
-      if (event.reason === "networkDisconnected") {
-        this.dispatcher.dispatch(new sharedActions.ConnectionFailure({
-          reason: FAILURE_REASONS.NETWORK_DISCONNECTED
-        }));
+      var reason;
+      switch (event.reason) {
+        case "networkDisconnected":
+          reason = FAILURE_DETAILS.NETWORK_DISCONNECTED;
+          break;
+        case "forceDisconnected":
+          reason = FAILURE_DETAILS.EXPIRED_OR_INVALID;
+          break;
+        default:
+          // Other cases don't need to be handled.
+          return;
       }
+
+      this.dispatcher.dispatch(new sharedActions.ConnectionFailure({
+        reason: reason
+      }));
     },
 
+    /**
+     * Handles the connection event for a newly connecting peer.
+     *
+     * @param {ConnectionEvent} event The event details
+     * https://tokbox.com/opentok/libraries/client/js/reference/ConnectionEvent.html
+     */
     _onConnectionCreated: function(event) {
-      if (this.session.connection.id === event.connection.id) {
+      var connection = event.connection;
+      if (this.session.connection.id === connection.id) {
         return;
       }
-
+      this.connections[connection.id] = connection;
       this.dispatcher.dispatch(new sharedActions.RemotePeerConnected());
     },
 
@@ -223,7 +278,7 @@ loop.OTSdkDriver = (function() {
       event.preventDefault();
 
       this.dispatcher.dispatch(new sharedActions.ConnectionFailure({
-        reason: FAILURE_REASONS.MEDIA_DENIED
+        reason: FAILURE_DETAILS.MEDIA_DENIED
       }));
     },
 

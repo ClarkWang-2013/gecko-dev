@@ -97,6 +97,7 @@ void Mark##base##Range(JSTracer *trc, size_t len, HeapPtr<type*> *thing, const c
 void Mark##base##RootRange(JSTracer *trc, size_t len, type **thing, const char *name);            \
 bool Is##base##Marked(type **thingp);                                                             \
 bool Is##base##Marked(BarrieredBase<type*> *thingp);                                              \
+bool Is##base##MarkedFromAnyThread(BarrieredBase<type*> *thingp);                                 \
 bool Is##base##AboutToBeFinalized(type **thingp);                                                 \
 bool Is##base##AboutToBeFinalizedFromAnyThread(type **thingp);                                    \
 bool Is##base##AboutToBeFinalized(BarrieredBase<type*> *thingp);                                  \
@@ -117,6 +118,7 @@ DeclMarker(Object, GlobalObject)
 DeclMarker(Object, JSObject)
 DeclMarker(Object, JSFunction)
 DeclMarker(Object, NestedScopeObject)
+DeclMarker(Object, PlainObject)
 DeclMarker(Object, SavedFrame)
 DeclMarker(Object, ScopeObject)
 DeclMarker(Object, SharedArrayBufferObject)
@@ -404,40 +406,13 @@ ToMarkable(Cell *cell)
     return cell;
 }
 
-inline JSGCTraceKind
-TraceKind(const Value &v)
-{
-    MOZ_ASSERT(v.isMarkable());
-    if (v.isObject())
-        return JSTRACE_OBJECT;
-    if (v.isString())
-        return JSTRACE_STRING;
-    MOZ_ASSERT(v.isSymbol());
-    return JSTRACE_SYMBOL;
-}
-
-inline JSGCTraceKind
-TraceKind(JSObject *obj)
-{
-    return JSTRACE_OBJECT;
-}
-
-inline JSGCTraceKind
-TraceKind(JSScript *script)
-{
-    return JSTRACE_SCRIPT;
-}
-
-inline JSGCTraceKind
-TraceKind(LazyScript *lazy)
-{
-    return JSTRACE_LAZY_SCRIPT;
-}
-
 } /* namespace gc */
 
 void
 TraceChildren(JSTracer *trc, void *thing, JSGCTraceKind kind);
+
+bool
+UnmarkGrayShapeRecursively(Shape *shape);
 
 } /* namespace js */
 

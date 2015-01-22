@@ -14,7 +14,6 @@ var FindHelper = {
     switch(aTopic) {
       case "FindInPage:Opened": {
         this._findOpened();
-        this._init();
         break;
       }
 
@@ -55,7 +54,13 @@ var FindHelper = {
     }
 
     this._targetTab = BrowserApp.selectedTab;
-    this._finder = this._targetTab.browser.finder;
+    try {
+      this._finder = this._targetTab.browser.finder;
+    } catch (e) {
+      throw new Error("FindHelper: " + e + "\n" +
+        "JS stack: \n" + (e.stack || Components.stack.formattedStack));
+    }
+
     this._finder.addResultListener(this);
     this._initialViewport = JSON.stringify(this._targetTab.getViewport());
     this._viewportChanged = false;
@@ -109,7 +114,9 @@ var FindHelper = {
   },
 
   findAgain: function(searchString, findBackwards, matchCase) {
-    // This can happen if the user taps next/previous after re-opening the search bar
+    // This always happens if the user taps next/previous after re-opening the
+    // search bar, and not only forces _init() but also an initial fastFind(STRING)
+    // before any findAgain(DIRECTION).
     if (!this._finder) {
       this.doFind(searchString, matchCase);
       return;

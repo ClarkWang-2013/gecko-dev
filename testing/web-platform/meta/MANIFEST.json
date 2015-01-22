@@ -482,7 +482,16 @@
         "url": "/DOMEvents/tests/submissions/Microsoft/support/style01.css"
       },
       {
+        "url": "/FileAPI/BlobURL/support/file_test1.js"
+      },
+      {
+        "url": "/FileAPI/BlobURL/support/file_test2.txt"
+      },
+      {
         "url": "/FileAPI/FileReader-interface/support/blue-100x100.png"
+      },
+      {
+        "url": "/FileAPI/FileReader/support/file_test1.txt"
       },
       {
         "url": "/FileAPI/filelist-section/support/upload.txt"
@@ -899,6 +908,9 @@
         "url": "/XMLHttpRequest/resources/image.gif"
       },
       {
+        "url": "/XMLHttpRequest/resources/img.jpg"
+      },
+      {
         "url": "/XMLHttpRequest/resources/infinite-redirects.py"
       },
       {
@@ -1001,18 +1013,6 @@
         "url": "/app-uri/resources/icons/w3c-48.png"
       },
       {
-        "url": "/app-uri/resources/idlharness.js"
-      },
-      {
-        "url": "/app-uri/resources/testharness.css"
-      },
-      {
-        "url": "/app-uri/resources/testharness.js"
-      },
-      {
-        "url": "/app-uri/resources/testharnessreport.js"
-      },
-      {
         "url": "/battery-status/battery-interface.js"
       },
       {
@@ -1073,13 +1073,43 @@
         "url": "/content-security-policy/generic/wildcardPortTestSuceeds.js"
       },
       {
+        "url": "/content-security-policy/img-src/img-src-4_1.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_1.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_1_2.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_2.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_2_2.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_3.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_3_2.html.sub.headers"
+      },
+      {
         "url": "/content-security-policy/object-src/object-src-2_1.html.sub.headers"
       },
       {
         "url": "/content-security-policy/object-src/object-src-2_2.html.sub.headers"
       },
       {
+        "url": "/content-security-policy/script-src/10_1_support_1.js"
+      },
+      {
+        "url": "/content-security-policy/script-src/10_1_support_2.js"
+      },
+      {
         "url": "/content-security-policy/script-src/addInlineTestsWithDOMManipulation.js"
+      },
+      {
+        "url": "/content-security-policy/script-src/buildInlineWorker.js"
       },
       {
         "url": "/content-security-policy/script-src/inlineSuccessTest.js"
@@ -1091,6 +1121,12 @@
         "url": "/content-security-policy/script-src/script-src-1_1.html.sub.headers"
       },
       {
+        "url": "/content-security-policy/script-src/script-src-1_10.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/script-src/script-src-1_10_1.html.sub.headers"
+      },
+      {
         "url": "/content-security-policy/script-src/script-src-1_2_1.html.sub.headers"
       },
       {
@@ -1100,10 +1136,19 @@
         "url": "/content-security-policy/script-src/script-src-1_4.html.sub.headers"
       },
       {
+        "url": "/content-security-policy/script-src/script-src-1_9.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/style-src/3_3.css"
+      },
+      {
         "url": "/content-security-policy/style-src/style-src-3_1.html.sub.headers"
       },
       {
         "url": "/content-security-policy/style-src/style-src-3_2.html.sub.headers"
+      },
+      {
+        "url": "/content-security-policy/style-src/style-src-3_3.html.sub.headers"
       },
       {
         "url": "/content-security-policy/style-src/style-src-3_4-import.css"
@@ -1118,7 +1163,13 @@
         "url": "/content-security-policy/support/checkReport.sub.js"
       },
       {
+        "url": "/content-security-policy/support/fail.png"
+      },
+      {
         "url": "/content-security-policy/support/media/flash.swf"
+      },
+      {
+        "url": "/content-security-policy/support/pass.png"
       },
       {
         "url": "/content-security-policy/support/report.py"
@@ -1215,6 +1266,12 @@
       },
       {
         "url": "/dom/nodes/DOMImplementation-createHTMLDocument.js"
+      },
+      {
+        "url": "/dom/nodes/Document-Element-getElementsByTagName.js"
+      },
+      {
+        "url": "/dom/nodes/Document-Element-getElementsByTagNameNS.js"
       },
       {
         "url": "/dom/nodes/Document-contentType/resources/blob.txt"
@@ -1895,6 +1952,9 @@
         "url": "/html/obsolete/requirements-for-implementations/other-elements-attributes-and-apis/original-id.json"
       },
       {
+        "url": "/html/rendering/bindings/the-select-element-0/option-label-ref.html"
+      },
+      {
         "url": "/html/rendering/interactive-media/links-forms-and-navigation/original-id.json"
       },
       {
@@ -1911,6 +1971,9 @@
       },
       {
         "url": "/html/rendering/non-replaced-elements/tables/table-width-150percent-ref.html"
+      },
+      {
+        "url": "/html/rendering/non-replaced-elements/the-page/body_text_00ffff-ref.html"
       },
       {
         "url": "/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/img_border-ref.xhtml"
@@ -1950,6 +2013,9 @@
       },
       {
         "url": "/html/semantics/document-metadata/the-meta-element/contains.json"
+      },
+      {
+        "url": "/html/semantics/document-metadata/the-style-element/html_style_in_comment-ref.html"
       },
       {
         "url": "/html/semantics/embedded-content/image-maps/contains.json"
@@ -2660,6 +2726,12 @@
         "url": "/media/A4.ogv"
       },
       {
+        "url": "/media/foo.vtt"
+      },
+      {
+        "url": "/media/foo.vtt.headers"
+      },
+      {
         "url": "/media/green-at-15.mp4"
       },
       {
@@ -2703,24 +2775,6 @@
       },
       {
         "url": "/old-tests/submission/Infraware/Session_History/contents/Session_History/css/result.css"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/WebIDLParser.js"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/idlharness.js"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/readme.md"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/testharness.css"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/testharness.js"
-      },
-      {
-        "url": "/old-tests/submission/Infraware/Session_History/resources/testharnessreport.js"
       },
       {
         "url": "/old-tests/submission/Microsoft/dragdrop/dragdrop_support.js"
@@ -2831,9 +2885,6 @@
         "url": "/pointerevents/pointerevent_support.js"
       },
       {
-        "url": "/progress-events/tests/submissions/Samsung/resources/img.jpg"
-      },
-      {
         "url": "/progress-events/tests/submissions/Samsung/resources/no-content-length.py"
       },
       {
@@ -2922,6 +2973,33 @@
       },
       {
         "url": "/shadow-dom/testcommon.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-base64-encoded-sha-digests.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-correct-content-type.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-improper-integrity-uri-scheme.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-incorrect-content-type.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-matching-digest.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-non-matching-digest.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-unhyphenated-digest-name.js"
+      },
+      {
+        "url": "/subresource-integrity/loads-scripts-with-weak-digest-algorithms.js"
+      },
+      {
+        "url": "/subresource-integrity/tools/generate_javascript.py"
       },
       {
         "url": "/touch-events/multi-touch-interactions.js"
@@ -4145,6 +4223,9 @@
         "url": "/workers/constructors/Worker/undefined"
       },
       {
+        "url": "/workers/interfaces.idl"
+      },
+      {
         "url": "/workers/interfaces/DedicatedWorkerGlobalScope/postMessage/message-event.js"
       },
       {
@@ -4188,6 +4269,9 @@
       },
       {
         "url": "/workers/semantics/encodings/003-1.py"
+      },
+      {
+        "url": "/workers/semantics/interface-objects/001.worker.js"
       },
       {
         "url": "/workers/semantics/multiple-workers/004-2.js"
@@ -4337,6 +4421,18 @@
       },
       {
         "url": "/battery-status/battery-unplugged-manual.html"
+      },
+      {
+        "url": "/gamepad/events-manual.html"
+      },
+      {
+        "url": "/gamepad/getgamepads-polling-manual.html"
+      },
+      {
+        "url": "/gamepad/idlharness-manual.html"
+      },
+      {
+        "url": "/gamepad/timestamp-manual.html"
       },
       {
         "url": "/geolocation-API/getCurrentPosition_permission-manual.html"
@@ -4987,6 +5083,9 @@
         "url": "/pointerevents/pointerevent_touch-action-table-test_touch-manual.html"
       },
       {
+        "url": "/quirks-mode/active-and-hover-manual.html"
+      },
+      {
         "url": "/touch-events/multi-touch-interactions-manual.html"
       },
       {
@@ -5364,6 +5463,11 @@
       },
       {
         "ref_type": "==",
+        "ref_url": "/html/rendering/bindings/the-select-element-0/option-label-ref.html",
+        "url": "/html/rendering/bindings/the-select-element-0/option-label.html"
+      },
+      {
+        "ref_type": "==",
         "ref_url": "/html/rendering/non-replaced-elements/flow-content-0/figure-ref.html",
         "url": "/html/rendering/non-replaced-elements/flow-content-0/figure.html"
       },
@@ -5389,6 +5493,11 @@
       },
       {
         "ref_type": "==",
+        "ref_url": "/html/rendering/non-replaced-elements/the-page/body_text_00ffff-ref.html",
+        "url": "/html/rendering/non-replaced-elements/the-page/body_text_00ffff.xhtml"
+      },
+      {
+        "ref_type": "==",
         "ref_url": "/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/img_border-ref.xhtml",
         "url": "/html/rendering/replaced-elements/attributes-for-embedded-content-and-images/img_border_percent.xhtml"
       },
@@ -5406,6 +5515,11 @@
         "ref_type": "==",
         "ref_url": "/html/rendering/replaced-elements/images/space-ref.html",
         "url": "/html/rendering/replaced-elements/images/space.html"
+      },
+      {
+        "ref_type": "==",
+        "ref_url": "/html/semantics/document-metadata/the-style-element/html_style_in_comment-ref.html",
+        "url": "/html/semantics/document-metadata/the-style-element/html_style_in_comment.xhtml"
       },
       {
         "ref_type": "==",
@@ -5656,6 +5770,26 @@
         "ref_type": "==",
         "ref_url": "/html/semantics/text-level-semantics/the-wbr-element/wbr-element-ref.html",
         "url": "/html/semantics/text-level-semantics/the-wbr-element/wbr-element.html"
+      },
+      {
+        "ref_type": "==",
+        "ref_url": "/quirks-mode/font-element-text-decoration-color/001-ref.html",
+        "url": "/quirks-mode/font-element-text-decoration-color/001-a.html"
+      },
+      {
+        "ref_type": "==",
+        "ref_url": "/quirks-mode/font-element-text-decoration-color/001-ref.html",
+        "url": "/quirks-mode/font-element-text-decoration-color/001-q.html"
+      },
+      {
+        "ref_type": "==",
+        "ref_url": "/quirks-mode/font-element-text-decoration-color/001-ref.html",
+        "url": "/quirks-mode/font-element-text-decoration-color/001-s.html"
+      },
+      {
+        "ref_type": "==",
+        "ref_url": "/quirks-mode/font-element-text-decoration-color/001-ref.html",
+        "url": "/quirks-mode/font-element-text-decoration-color/001-x.xhtml"
       },
       {
         "ref_type": "==",
@@ -9171,9 +9305,6 @@
         "url": "/DOMEvents/tests/approved/Determined.candidate.EventListeners.html"
       },
       {
-        "url": "/DOMEvents/tests/approved/Event.bubbles.false.html"
-      },
-      {
         "url": "/DOMEvents/tests/approved/EventListener.dispatch.new.event.html"
       },
       {
@@ -9214,9 +9345,6 @@
       },
       {
         "url": "/DOMEvents/tests/submissions/Microsoft/converted/Determined.candidate.EventListeners.html"
-      },
-      {
-        "url": "/DOMEvents/tests/submissions/Microsoft/converted/Event.bubbles.false.html"
       },
       {
         "url": "/DOMEvents/tests/submissions/Microsoft/converted/EventListener.dispatch.new.event.html"
@@ -9282,6 +9410,15 @@
         "url": "/FileAPI/Blob-slice.html"
       },
       {
+        "url": "/FileAPI/BlobURL/test1_manual.html"
+      },
+      {
+        "url": "/FileAPI/BlobURL/test2_manual.html"
+      },
+      {
+        "url": "/FileAPI/BlobURL/test3_manual.html"
+      },
+      {
         "url": "/FileAPI/File-constructor.html"
       },
       {
@@ -9307,6 +9444,12 @@
       },
       {
         "url": "/FileAPI/FileReader/Determining-Encoding.html"
+      },
+      {
+        "url": "/FileAPI/FileReader/test_errors_manual.html"
+      },
+      {
+        "url": "/FileAPI/FileReaderSync.worker"
       },
       {
         "url": "/FileAPI/filelist-section/filelist.html"
@@ -9900,6 +10043,12 @@
         "url": "/IndexedDB/idbobjectstore_get5.htm"
       },
       {
+        "url": "/IndexedDB/idbobjectstore_get6.htm"
+      },
+      {
+        "url": "/IndexedDB/idbobjectstore_get7.htm"
+      },
+      {
         "url": "/IndexedDB/idbobjectstore_index.htm"
       },
       {
@@ -10033,6 +10182,18 @@
       },
       {
         "url": "/IndexedDB/value_recursive.htm"
+      },
+      {
+        "url": "/WebCryptoAPI/test_getRandomValues.html"
+      },
+      {
+        "url": "/WebIDL/ecmascript-binding/es-exceptions/DOMException-constants.html"
+      },
+      {
+        "url": "/WebIDL/ecmascript-binding/es-exceptions/DOMException-constructor.html"
+      },
+      {
+        "url": "/WebIDL/ecmascript-binding/es-exceptions/exceptions.html"
       },
       {
         "url": "/XMLHttpRequest/FormData-append.html"
@@ -10297,6 +10458,9 @@
       },
       {
         "url": "/XMLHttpRequest/responsexml-non-well-formed.htm"
+      },
+      {
+        "url": "/XMLHttpRequest/security-consideration.sub.html"
       },
       {
         "url": "/XMLHttpRequest/send-accept-language.htm"
@@ -10572,6 +10736,9 @@
         "url": "/battery-status/battery-interface.html"
       },
       {
+        "url": "/battery-status/battery-promise.html"
+      },
+      {
         "url": "/content-security-policy/generic/generic-0_10.html"
       },
       {
@@ -10596,6 +10763,27 @@
         "url": "/content-security-policy/generic/generic-0_9.sub.html"
       },
       {
+        "url": "/content-security-policy/img-src/img-src-4_1.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_1.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_1_2.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_2.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_2_2.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_3.html"
+      },
+      {
+        "url": "/content-security-policy/media-src/media-src-7_3_2.html"
+      },
+      {
         "url": "/content-security-policy/object-src/object-src-2_1.html"
       },
       {
@@ -10603,6 +10791,12 @@
       },
       {
         "url": "/content-security-policy/script-src/script-src-1_1.html"
+      },
+      {
+        "url": "/content-security-policy/script-src/script-src-1_10.html"
+      },
+      {
+        "url": "/content-security-policy/script-src/script-src-1_10_1.html"
       },
       {
         "url": "/content-security-policy/script-src/script-src-1_2_1.html"
@@ -10614,10 +10808,16 @@
         "url": "/content-security-policy/script-src/script-src-1_4.html"
       },
       {
+        "url": "/content-security-policy/script-src/script-src-1_9.html"
+      },
+      {
         "url": "/content-security-policy/style-src/style-src-3_1.html"
       },
       {
         "url": "/content-security-policy/style-src/style-src-3_2.html"
+      },
+      {
+        "url": "/content-security-policy/style-src/style-src-3_3.html"
       },
       {
         "url": "/content-security-policy/style-src/style-src-3_4.html"
@@ -10845,12 +11045,6 @@
         "url": "/dom/collections/HTMLCollection-empty-name.html"
       },
       {
-        "url": "/dom/errors/DOMException-constants.html"
-      },
-      {
-        "url": "/dom/errors/exceptions.html"
-      },
-      {
         "url": "/dom/events/Event-constants.html"
       },
       {
@@ -10858,6 +11052,9 @@
       },
       {
         "url": "/dom/events/Event-defaultPrevented.html"
+      },
+      {
+        "url": "/dom/events/Event-dispatch-bubbles-false.html"
       },
       {
         "url": "/dom/events/Event-dispatch-omitted-capture.html"
@@ -10932,6 +11129,9 @@
         "url": "/dom/nodes/DOMImplementation-hasFeature.html"
       },
       {
+        "url": "/dom/nodes/Document-URL.sub.html"
+      },
+      {
         "url": "/dom/nodes/Document-adoptNode.html"
       },
       {
@@ -10966,9 +11166,6 @@
       },
       {
         "url": "/dom/nodes/Document-contentType/contentType/contenttype_mimeheader_02.html"
-      },
-      {
-        "url": "/dom/nodes/Document-contentType/contentType/contenttype_mimeheader_03.html"
       },
       {
         "url": "/dom/nodes/Document-contentType/contentType/contenttype_png.html"
@@ -11128,6 +11325,12 @@
       },
       {
         "url": "/dom/nodes/Element-getElementsByClassName.html"
+      },
+      {
+        "url": "/dom/nodes/Element-getElementsByTagName.html"
+      },
+      {
+        "url": "/dom/nodes/Element-getElementsByTagNameNS.html"
       },
       {
         "url": "/dom/nodes/Element-lastElementChild.html"
@@ -11394,6 +11597,9 @@
         "url": "/dom/traversal/TreeWalker-walking-outside-a-tree.html"
       },
       {
+        "url": "/domparsing/DOMParser-parseFromString-html.html"
+      },
+      {
         "url": "/domparsing/insert-adjacent.html"
       },
       {
@@ -11416,9 +11622,6 @@
       },
       {
         "url": "/encoding/iso-2022-jp-encoder.html"
-      },
-      {
-        "url": "/encoding/single-byte-decoder.html"
       },
       {
         "url": "/eventsource/dedicated-worker/eventsource-close.htm"
@@ -11587,6 +11790,9 @@
       },
       {
         "url": "/ext-xhtml-pubid/the-xhtml-syntax/parsing-xhtml-documents/xhtml-pubid-1.html"
+      },
+      {
+        "url": "/gamepad/idlharness.html"
       },
       {
         "url": "/geolocation-API/PositionOptions.html"
@@ -12241,6 +12447,9 @@
       },
       {
         "url": "/html/dom/elements/global-attributes/classlist-nonstring.html"
+      },
+      {
+        "url": "/html/dom/elements/global-attributes/custom-attrs.html"
       },
       {
         "url": "/html/dom/elements/global-attributes/data_unicode_attr.html"
@@ -13383,6 +13592,9 @@
         "url": "/html/semantics/embedded-content/the-img-element/current-pixel-density/error.html"
       },
       {
+        "url": "/html/semantics/embedded-content/the-img-element/environment-changes/viewport-change.html"
+      },
+      {
         "url": "/html/semantics/embedded-content/the-img-element/img.complete.html"
       },
       {
@@ -13471,6 +13683,9 @@
       },
       {
         "url": "/html/semantics/forms/constraints/inputwillvalidate.html"
+      },
+      {
+        "url": "/html/semantics/forms/form-control-infrastructure/form.html"
       },
       {
         "url": "/html/semantics/forms/resetting-a-form/reset-form.html"
@@ -14206,6 +14421,9 @@
       },
       {
         "url": "/js/builtins/Object.prototype.hasOwnProperty-order.html"
+      },
+      {
+        "url": "/js/builtins/Object.prototype.hasOwnProperty-prototype-chain.html"
       },
       {
         "url": "/js/builtins/WeakMap.prototype-properties.html"
@@ -15051,9 +15269,6 @@
         "url": "/progress-events/tests/submissions/Samsung/firing-events-http-no-content-length.html"
       },
       {
-        "url": "/progress-events/tests/submissions/Samsung/security-consideration.sub.html"
-      },
-      {
         "url": "/proximity/DeviceProximityEvent_tests.html"
       },
       {
@@ -15510,6 +15725,9 @@
         "url": "/shadow-dom/user-interaction/ranges-and-selections/test-002.html"
       },
       {
+        "url": "/subresource-integrity/subresource-integrity.html"
+      },
+      {
         "url": "/touch-events/create-touch-touchlist.html"
       },
       {
@@ -15597,6 +15815,15 @@
         "url": "/web-animations/animation-node/animation-node-before.html"
       },
       {
+        "url": "/web-animations/animation-node/animation-node-next-sibling.html"
+      },
+      {
+        "url": "/web-animations/animation-node/animation-node-parent.html"
+      },
+      {
+        "url": "/web-animations/animation-node/animation-node-previous-sibling.html"
+      },
+      {
         "url": "/web-animations/animation-node/animation-node-remove.html"
       },
       {
@@ -15604,6 +15831,12 @@
       },
       {
         "url": "/web-animations/animation-node/idlharness.html"
+      },
+      {
+        "url": "/web-animations/animation-timeline/animation-timeline.html"
+      },
+      {
+        "url": "/web-animations/animation-timeline/idlharness.html"
       },
       {
         "url": "/webaudio/the-audio-api/the-audiobuffer-interface/idl-test.html"
@@ -15895,6 +16128,9 @@
       },
       {
         "url": "/webmessaging/without-ports/028.html"
+      },
+      {
+        "url": "/webmessaging/without-ports/029.html"
       },
       {
         "url": "/webrtc/simplecall.html"
@@ -16863,6 +17099,9 @@
         "url": "/workers/constructors/Worker/unresolvable-url.html"
       },
       {
+        "url": "/workers/interfaces.worker"
+      },
+      {
         "url": "/workers/interfaces/DedicatedWorkerGlobalScope/onmessage.html"
       },
       {
@@ -17049,10 +17288,7 @@
         "url": "/workers/semantics/encodings/004.html"
       },
       {
-        "url": "/workers/semantics/interface-objects/001.html"
-      },
-      {
-        "url": "/workers/semantics/interface-objects/002.html"
+        "url": "/workers/semantics/interface-objects/002.worker"
       },
       {
         "url": "/workers/semantics/interface-objects/003.html"
@@ -17258,6 +17494,10 @@
       {
         "timeout": "long",
         "url": "/dom/traversal/NodeIterator.html"
+      },
+      {
+        "timeout": "long",
+        "url": "/encoding/single-byte-decoder.html"
       },
       {
         "timeout": "long",
@@ -17694,6 +17934,6 @@
     "deleted": [],
     "items": {}
   },
-  "rev": "fdbdabd4c8adb385e19f541cd03f1832b1aea468",
+  "rev": "78bc2a28397159604ce41997e408fbb171e11f8f",
   "url_base": "/"
 }

@@ -8,6 +8,7 @@
 #define BUFFER_DECODER_H_
 
 #include "AbstractMediaDecoder.h"
+#include "MediaTaskQueue.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/ReentrantMonitor.h"
 
@@ -27,7 +28,7 @@ public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   // This has to be called before decoding begins
-  void BeginDecoding(nsIThread* aDecodeThread);
+  void BeginDecoding(MediaTaskQueue* aTaskQueueIdentity);
 
   virtual ReentrantMonitor& GetReentrantMonitor() MOZ_FINAL MOZ_OVERRIDE;
 
@@ -58,9 +59,9 @@ public:
 
   virtual bool IsMediaSeekable() MOZ_FINAL MOZ_OVERRIDE;
 
-  virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) MOZ_FINAL MOZ_OVERRIDE;
+  virtual void MetadataLoaded(nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags, bool aRestoredFromDromant) MOZ_FINAL MOZ_OVERRIDE;
   virtual void QueueMetadata(int64_t aTime, nsAutoPtr<MediaInfo> aInfo, nsAutoPtr<MetadataTags> aTags) MOZ_FINAL MOZ_OVERRIDE;
-  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo) MOZ_FINAL MOZ_OVERRIDE;
+  virtual void FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo, bool aRestoredFromDromant) MOZ_FINAL MOZ_OVERRIDE;
 
   virtual void RemoveMediaTracks() MOZ_FINAL MOZ_OVERRIDE;
 
@@ -83,7 +84,7 @@ private:
   // It's just there in order for us to be able to override
   // GetReentrantMonitor correctly.
   ReentrantMonitor mReentrantMonitor;
-  nsCOMPtr<nsIThread> mDecodeThread;
+  nsRefPtr<MediaTaskQueue> mTaskQueueIdentity;
   nsRefPtr<MediaResource> mResource;
 };
 

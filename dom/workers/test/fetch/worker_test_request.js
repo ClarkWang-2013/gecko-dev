@@ -1,10 +1,8 @@
 function ok(a, msg) {
-  dump("OK: " + !!a + "  =>  " + a + " " + msg + "\n");
   postMessage({type: 'status', status: !!a, msg: a + ": " + msg });
 }
 
 function is(a, b, msg) {
-  dump("IS: " + (a===b) + "  =>  " + a + " | " + b + " " + msg + "\n");
   postMessage({type: 'status', status: a === b, msg: a + " === " + b + ": " + msg });
 }
 
@@ -13,7 +11,7 @@ function testDefaultCtor() {
   is(req.method, "GET", "Default Request method is GET");
   ok(req.headers instanceof Headers, "Request should have non-null Headers object");
   is(req.url, self.location.href, "URL should be resolved with entry settings object's API base URL");
-  is(req.referrer, "", "Default referrer is `client` which serializes to empty string.");
+  is(req.referrer, "about:client", "Default referrer is `client` which serializes to about:client.");
   is(req.mode, "cors", "Request mode for string input is cors");
   is(req.credentials, "omit", "Default Request credentials is omit");
 
@@ -21,7 +19,7 @@ function testDefaultCtor() {
   is(req.method, "GET", "Default Request method is GET");
   ok(req.headers instanceof Headers, "Request should have non-null Headers object");
   is(req.url, self.location.href, "URL should be resolved with entry settings object's API base URL");
-  is(req.referrer, "", "Default referrer is `client` which serializes to empty string.");
+  is(req.referrer, "about:client", "Default referrer is `client` which serializes to about:client.");
   is(req.mode, "cors", "Request mode string input is cors");
   is(req.credentials, "omit", "Default Request credentials is omit");
 }
@@ -39,7 +37,7 @@ function testClone() {
   is(req.headers.get('content-length'), "5", "Request content-length should be 5.");
   ok(req.url === (new URL("./cloned_request.txt", self.location.href)).href,
        "URL should be resolved with entry settings object's API base URL");
-  ok(req.referrer === "", "Default referrer is `client` which serializes to empty string.");
+  ok(req.referrer === "about:client", "Default referrer is `client` which serializes to about:client.");
   ok(req.mode === "same-origin", "Request mode is same-origin");
   ok(req.credentials === "same-origin", "Default credentials is same-origin");
 }
@@ -69,18 +67,44 @@ function testSimpleUrlParse() {
   is(req.url, (new URL("/file.html", self.location.href)).href, "URL parser should be used to resolve Request URL");
 }
 
+// Bug 1109574 - Passing a Request with null body should keep bodyUsed unset.
+function testBug1109574() {
+  var r1 = new Request("");
+  is(r1.bodyUsed, false, "Initial value of bodyUsed should be false");
+  var r2 = new Request(r1);
+  is(r1.bodyUsed, false, "Request with null body should not have bodyUsed set");
+  // This should succeed.
+  var r3 = new Request(r1);
+}
+
 function testMethod() {
-  var allowed = ["delete", "get", "head", "options", "post", "put"];
+  // These get normalized.
+  var allowed = ["delete", "get", "head", "options", "post", "put" ];
   for (var i = 0; i < allowed.length; ++i) {
     try {
       var r = new Request("", { method: allowed[i] });
       ok(true, "Method " + allowed[i] + " should be allowed");
+      is(r.method, allowed[i].toUpperCase(),
+         "Standard HTTP method " + allowed[i] + " should be normalized");
     } catch(e) {
       ok(false, "Method " + allowed[i] + " should be allowed");
     }
   }
 
-  var forbidden = ["aardvark", "connect", "trace", "track"];
+  var allowed = [ "pAtCh", "foo" ];
+  for (var i = 0; i < allowed.length; ++i) {
+    try {
+      var r = new Request("", { method: allowed[i] });
+      ok(true, "Method " + allowed[i] + " should be allowed");
+      is(r.method, allowed[i],
+         "Non-standard but valid HTTP method " + allowed[i] +
+         " should not be normalized");
+    } catch(e) {
+      ok(false, "Method " + allowed[i] + " should be allowed");
+    }
+  }
+
+  var forbidden = ["connect", "trace", "track", "<invalid token??"];
   for (var i = 0; i < forbidden.length; ++i) {
     try {
       var r = new Request("", { method: forbidden[i] });
@@ -182,11 +206,12 @@ function testBodyExtraction() {
       is(fs.readAsText(v), text, "Decoded Blob should match original");
     });
   }).then(function() {
-    return newReq().json().then(function(v) {
-      ok(false, "Invalid json should reject");
-    }, function(e) {
-      ok(true, "Invalid json should reject");
-    })
+    // FIXME(nsm): Enable once Bug 1107777 and Bug 1072144 have been fixed.
+    //return newReq().json().then(function(v) {
+    //  ok(false, "Invalid json should reject");
+    //}, function(e) {
+    //  ok(true, "Invalid json should reject");
+    //})
   }).then(function() {
     return newReq().arrayBuffer().then(function(v) {
       ok(v instanceof ArrayBuffer, "Should resolve to ArrayBuffer");
@@ -194,6 +219,28 @@ function testBodyExtraction() {
       is(dec.decode(new Uint8Array(v)), text, "UTF-8 decoded ArrayBuffer should match original");
     });
   })
+}
+
+// mode cannot be set to "CORS-with-forced-preflight" from javascript.
+function testModeCorsPreflightEnumValue() {
+  try {
+    var r = new Request(".", { mode: "cors-with-forced-preflight" });
+    ok(false, "Creating Request with mode cors-with-forced-preflight should fail.");
+  } catch(e) {
+    ok(true, "Creating Request with mode cors-with-forced-preflight should fail.");
+    // Also ensure that the error message matches error messages for truly
+    // invalid strings.
+    var invalidMode = "not-in-requestmode-enum";
+    var invalidExc;
+    try {
+      var r = new Request(".", { mode: invalidMode });
+    } catch(e) {
+      invalidExc = e;
+    }
+    var expectedMessage = invalidExc.message.replace(invalidMode, 'cors-with-forced-preflight');
+    is(e.message, expectedMessage,
+       "mode cors-with-forced-preflight should throw same error as invalid RequestMode strings.");
+  }
 }
 
 onmessage = function() {
@@ -204,6 +251,8 @@ onmessage = function() {
   testSimpleUrlParse();
   testUrlFragment();
   testMethod();
+  testBug1109574();
+  testModeCorsPreflightEnumValue();
 
   Promise.resolve()
     .then(testBodyCreation)

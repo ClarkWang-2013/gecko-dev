@@ -20,12 +20,8 @@ import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PorterDuff.Mode;
-import android.graphics.PorterDuffXfermode;
 import android.graphics.Region;
-import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -71,7 +67,7 @@ public class TabStripItemView extends ThemedLinearLayout
         final Resources res = context.getResources();
 
         final ColorStateList tabColors =
-                res.getColorStateList(R.drawable.new_tablet_tab_strip_item_bg);
+                res.getColorStateList(R.color.new_tablet_tab_strip_item_bg);
         backgroundDrawable = new ResizablePathDrawable(new TabCurveShape(), tabColors);
         setBackgroundDrawable(backgroundDrawable);
 

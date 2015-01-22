@@ -24,54 +24,6 @@
 #include "jsgcinlines.h"
 #include "jsinferinlines.h"
 
-#include "gc/ForkJoinNursery-inl.h"
-
-/* static */ inline bool
-JSObject::setGenericAttributes(JSContext *cx, js::HandleObject obj,
-                               js::HandleId id, unsigned *attrsp)
-{
-    js::types::MarkTypePropertyNonData(cx, obj, id);
-    js::GenericAttributesOp op = obj->getOps()->setGenericAttributes;
-    if (op)
-        return op(cx, obj, id, attrsp);
-    return js::baseops::SetAttributes(cx, obj.as<js::NativeObject>(), id, attrsp);
-}
-
-/* static */ inline bool
-JSObject::deleteGeneric(JSContext *cx, js::HandleObject obj, js::HandleId id,
-                         bool *succeeded)
-{
-    js::types::MarkTypePropertyNonData(cx, obj, id);
-    js::DeleteGenericOp op = obj->getOps()->deleteGeneric;
-    if (op)
-        return op(cx, obj, id, succeeded);
-    return js::baseops::DeleteGeneric(cx, obj.as<js::NativeObject>(), id, succeeded);
-}
-
-/* static */ inline bool
-JSObject::deleteElement(JSContext *cx, js::HandleObject obj, uint32_t index, bool *succeeded)
-{
-    JS::RootedId id(cx);
-    if (!js::IndexToId(cx, index, &id))
-        return false;
-    return deleteGeneric(cx, obj, id, succeeded);
-}
-
-/* static */ inline bool
-JSObject::watch(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                JS::HandleObject callable)
-{
-    js::WatchOp op = obj->getOps()->watch;
-    return (op ? op : js::baseops::Watch)(cx, obj, id, callable);
-}
-
-/* static */ inline bool
-JSObject::unwatch(JSContext *cx, JS::HandleObject obj, JS::HandleId id)
-{
-    js::UnwatchOp op = obj->getOps()->unwatch;
-    return (op ? op : js::baseops::Unwatch)(cx, obj, id);
-}
-
 inline void
 JSObject::finalize(js::FreeOp *fop)
 {
@@ -166,8 +118,11 @@ JSObject::setType(js::types::TypeObject *newType)
     type_ = newType;
 }
 
-/* static */ inline bool
-JSObject::getProto(JSContext *cx, js::HandleObject obj, js::MutableHandleObject protop)
+
+/*** Standard internal methods *******************************************************************/
+
+inline bool
+js::GetPrototype(JSContext *cx, js::HandleObject obj, js::MutableHandleObject protop)
 {
     if (obj->getTaggedProto().isLazy()) {
         MOZ_ASSERT(obj->is<js::ProxyObject>());
@@ -178,93 +133,92 @@ JSObject::getProto(JSContext *cx, js::HandleObject obj, js::MutableHandleObject 
     }
 }
 
-/* static */ inline bool
-JSObject::setProto(JSContext *cx, JS::HandleObject obj, JS::HandleObject proto, bool *succeeded)
+inline bool
+js::IsExtensible(ExclusiveContext *cx, HandleObject obj, bool *extensible)
 {
-    /*
-     * If |obj| has a "lazy" [[Prototype]], it is 1) a proxy 2) whose handler's
-     * {get,set}PrototypeOf and setImmutablePrototype methods mediate access to
-     * |obj.[[Prototype]]|.  The Proxy subsystem is responsible for responding
-     * to such attempts.
-     */
-    if (obj->hasLazyPrototype()) {
-        MOZ_ASSERT(obj->is<js::ProxyObject>());
-        return js::Proxy::setPrototypeOf(cx, obj, proto, succeeded);
-    }
-
-    /* Disallow mutation of immutable [[Prototype]]s. */
-    if (obj->nonLazyPrototypeIsImmutable()) {
-        *succeeded = false;
-        return true;
-    }
-
-    /*
-     * Disallow mutating the [[Prototype]] on ArrayBuffer objects, which
-     * due to their complicated delegate-object shenanigans can't easily
-     * have a mutable [[Prototype]].
-     */
-    if (obj->is<js::ArrayBufferObject>()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SETPROTOTYPEOF_FAIL,
-                             "incompatible ArrayBuffer");
-        return false;
-    }
-
-    /*
-     * Disallow mutating the [[Prototype]] on Typed Objects, per the spec.
-     */
-    if (obj->is<js::TypedObject>()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SETPROTOTYPEOF_FAIL,
-                             "incompatible TypedObject");
-        return false;
-    }
-
-    /*
-     * Explicitly disallow mutating the [[Prototype]] of Location objects
-     * for flash-related security reasons.
-     */
-    if (!strcmp(obj->getClass()->name, "Location")) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_SETPROTOTYPEOF_FAIL,
-                             "incompatible Location object");
-        return false;
-    }
-
-    /* ES6 9.1.2 step 5 forbids changing [[Prototype]] if not [[Extensible]]. */
-    bool extensible;
-    if (!JSObject::isExtensible(cx, obj, &extensible))
-        return false;
-    if (!extensible) {
-        *succeeded = false;
-        return true;
-    }
-
-    /* ES6 9.1.2 step 6 forbids generating cyclical prototype chains. */
-    js::RootedObject obj2(cx);
-    for (obj2 = proto; obj2; ) {
-        if (obj2 == obj) {
-            *succeeded = false;
-            return true;
-        }
-
-        if (!JSObject::getProto(cx, obj2, &obj2))
-            return false;
-    }
-
-    JS::Rooted<js::TaggedProto> taggedProto(cx, js::TaggedProto(proto));
-    *succeeded = SetClassAndProto(cx, obj, obj->getClass(), taggedProto);
-    return *succeeded;
-}
-
-/* static */ inline bool
-JSObject::isExtensible(js::ExclusiveContext *cx, js::HandleObject obj, bool *extensible)
-{
-    if (obj->is<js::ProxyObject>()) {
+    if (obj->is<ProxyObject>()) {
         if (!cx->shouldBeJSContext())
             return false;
-        return js::Proxy::isExtensible(cx->asJSContext(), obj, extensible);
+        return Proxy::isExtensible(cx->asJSContext(), obj, extensible);
     }
 
     *extensible = obj->nonProxyIsExtensible();
     return true;
+}
+
+inline bool
+js::HasProperty(JSContext *cx, HandleObject obj, HandleId id, bool *found)
+{
+    RootedObject pobj(cx);
+    RootedShape prop(cx);
+    if (!LookupProperty(cx, obj, id, &pobj, &prop)) {
+        *found = false;  /* initialize to shut GCC up */
+        return false;
+    }
+    *found = !!prop;
+    return true;
+}
+
+inline bool
+js::HasProperty(JSContext *cx, HandleObject obj, PropertyName *name, bool *found)
+{
+    RootedId id(cx, NameToId(name));
+    return HasProperty(cx, obj, id, found);
+}
+
+inline bool
+js::GetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t index,
+               MutableHandleValue vp)
+{
+    if (ElementIdOp op = obj->getOps()->getElement)
+        return op(cx, obj, receiver, index, vp);
+
+    RootedId id(cx);
+    if (!IndexToId(cx, index, &id))
+        return false;
+    return GetProperty(cx, obj, receiver, id, vp);
+}
+
+inline bool
+js::GetElementNoGC(JSContext *cx, JSObject *obj, JSObject *receiver, uint32_t index, Value *vp)
+{
+    if (obj->getOps()->getElement)
+        return false;
+
+    if (index > JSID_INT_MAX)
+        return false;
+    return GetPropertyNoGC(cx, obj, receiver, INT_TO_JSID(index), vp);
+}
+
+inline bool
+js::DeleteProperty(JSContext *cx, HandleObject obj, HandleId id, bool *succeeded)
+{
+    types::MarkTypePropertyNonData(cx, obj, id);
+    if (DeleteGenericOp op = obj->getOps()->deleteGeneric)
+        return op(cx, obj, id, succeeded);
+    return NativeDeleteProperty(cx, obj.as<NativeObject>(), id, succeeded);
+}
+
+inline bool
+js::DeleteElement(JSContext *cx, HandleObject obj, uint32_t index, bool *succeeded)
+{
+    RootedId id(cx);
+    if (!IndexToId(cx, index, &id))
+        return false;
+    return DeleteProperty(cx, obj, id, succeeded);
+}
+
+
+/* * */
+
+inline bool
+js::SetPropertyAttributes(JSContext *cx, HandleObject obj, HandleId id, unsigned *attrsp)
+{
+    types::MarkTypePropertyNonData(cx, obj, id);
+    GenericAttributesOp op = obj->getOps()->setGenericAttributes;
+    if (op)
+        return op(cx, obj, id, attrsp);
+    return NativeSetPropertyAttributes(cx, obj.as<NativeObject>(), id, attrsp);
 }
 
 inline bool
@@ -310,7 +264,8 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
     MOZ_ASSERT_IF(!js::ClassCanHaveFixedData(type->clasp()),
                   js::gc::GetGCKindSlots(kind, type->clasp()) == shape->numFixedSlots());
     MOZ_ASSERT_IF(type->clasp()->flags & JSCLASS_BACKGROUND_FINALIZE, IsBackgroundFinalized(kind));
-    MOZ_ASSERT_IF(type->clasp()->finalize, heap == js::gc::TenuredHeap);
+    MOZ_ASSERT_IF(type->clasp()->finalize, heap == js::gc::TenuredHeap ||
+                                           (type->clasp()->flags & JSCLASS_FINALIZE_FROM_NURSERY));
 
     // Non-native classes cannot have reserved slots or private data, and the
     // objects can't have any fixed slots, for compatibility with
@@ -324,7 +279,7 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
     size_t nDynamicSlots =
         js::NativeObject::dynamicSlotsCount(shape->numFixedSlots(), shape->slotSpan(), clasp);
 
-    JSObject *obj = js::NewGCObject<js::CanGC>(cx, kind, nDynamicSlots, heap);
+    JSObject *obj = js::NewGCObject<js::CanGC>(cx, kind, nDynamicSlots, heap, clasp);
     if (!obj)
         return nullptr;
 
@@ -359,47 +314,6 @@ inline void
 JSObject::setInitialElementsMaybeNonNative(js::HeapSlot *elements)
 {
     static_cast<js::NativeObject *>(this)->elements_ = elements;
-}
-
-/* static */ inline bool
-JSObject::hasProperty(JSContext *cx, js::HandleObject obj,
-                      js::HandleId id, bool *foundp)
-{
-    JS::RootedObject pobj(cx);
-    js::RootedShape prop(cx);
-    if (!lookupGeneric(cx, obj, id, &pobj, &prop)) {
-        *foundp = false;  /* initialize to shut GCC up */
-        return false;
-    }
-    *foundp = !!prop;
-    return true;
-}
-
-/* static */ inline bool
-JSObject::getElement(JSContext *cx, js::HandleObject obj, js::HandleObject receiver,
-                     uint32_t index, js::MutableHandleValue vp)
-{
-    js::ElementIdOp op = obj->getOps()->getElement;
-    if (op)
-        return op(cx, obj, receiver, index, vp);
-
-    JS::RootedId id(cx);
-    if (!js::IndexToId(cx, index, &id))
-        return false;
-    return getGeneric(cx, obj, receiver, id, vp);
-}
-
-/* static */ inline bool
-JSObject::getElementNoGC(JSContext *cx, JSObject *obj, JSObject *receiver,
-                         uint32_t index, js::Value *vp)
-{
-    js::ElementIdOp op = obj->getOps()->getElement;
-    if (op)
-        return false;
-
-    if (index > JSID_INT_MAX)
-        return false;
-    return getGenericNoGC(cx, obj, receiver, INT_TO_JSID(index), vp);
 }
 
 inline js::GlobalObject &
@@ -523,7 +437,7 @@ HasObjectValueOf(JSObject *obj, JSContext *cx)
 }
 
 /* ES5 9.1 ToPrimitive(input). */
-static MOZ_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 ToPrimitive(JSContext *cx, MutableHandleValue vp)
 {
     if (vp.isPrimitive())
@@ -552,18 +466,18 @@ ToPrimitive(JSContext *cx, MutableHandleValue vp)
     }
 
     RootedObject objRoot(cx, obj);
-    return JSObject::defaultValue(cx, objRoot, JSTYPE_VOID, vp);
+    return ToPrimitive(cx, objRoot, JSTYPE_VOID, vp);
 }
 
 /* ES5 9.1 ToPrimitive(input, PreferredType). */
-static MOZ_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 ToPrimitive(JSContext *cx, JSType preferredType, MutableHandleValue vp)
 {
     MOZ_ASSERT(preferredType != JSTYPE_VOID); /* Use the other ToPrimitive! */
     if (vp.isPrimitive())
         return true;
     RootedObject obj(cx, &vp.toObject());
-    return JSObject::defaultValue(cx, obj, preferredType, vp);
+    return ToPrimitive(cx, obj, preferredType, vp);
 }
 
 /*
@@ -612,6 +526,23 @@ NewObjectWithGivenProto(ExclusiveContext *cx, const js::Class *clasp, JSObject *
                         NewObjectKind newKind = GenericObject)
 {
     return NewObjectWithGivenProto(cx, clasp, TaggedProto(proto), parent, newKind);
+}
+
+template <typename T>
+inline T *
+NewObjectWithGivenProto(ExclusiveContext *cx, TaggedProto proto, JSObject *parent,
+                        NewObjectKind newKind = GenericObject)
+{
+    JSObject *obj = NewObjectWithGivenProto(cx, &T::class_, proto, parent, newKind);
+    return obj ? &obj->as<T>() : nullptr;
+}
+
+template <typename T>
+inline T *
+NewObjectWithGivenProto(ExclusiveContext *cx, JSObject *proto, JSObject *parent,
+                        NewObjectKind newKind = GenericObject)
+{
+    return NewObjectWithGivenProto<T>(cx, TaggedProto(proto), parent, newKind);
 }
 
 inline bool
@@ -670,13 +601,19 @@ NewObjectWithClassProto(ExclusiveContext *cx, const js::Class *clasp, JSObject *
 template<typename T>
 inline T *
 NewObjectWithProto(ExclusiveContext *cx, JSObject *proto, JSObject *parent,
+                   gc::AllocKind allocKind, NewObjectKind newKind = GenericObject)
+{
+    JSObject *obj = NewObjectWithClassProto(cx, &T::class_, proto, parent, allocKind, newKind);
+    return obj ? &obj->as<T>() : nullptr;
+}
+
+template<typename T>
+inline T *
+NewObjectWithProto(ExclusiveContext *cx, JSObject *proto, JSObject *parent,
                    NewObjectKind newKind = GenericObject)
 {
     JSObject *obj = NewObjectWithClassProto(cx, &T::class_, proto, parent, newKind);
-    if (!obj)
-        return nullptr;
-
-    return &obj->as<T>();
+    return obj ? &obj->as<T>() : nullptr;
 }
 
 /*
@@ -702,10 +639,7 @@ inline T *
 NewBuiltinClassInstance(ExclusiveContext *cx, NewObjectKind newKind = GenericObject)
 {
     JSObject *obj = NewBuiltinClassInstance(cx, &T::class_, newKind);
-    if (!obj)
-        return nullptr;
-
-    return &obj->as<T>();
+    return obj ? &obj->as<T>() : nullptr;
 }
 
 template<typename T>
@@ -713,10 +647,7 @@ inline T *
 NewBuiltinClassInstance(ExclusiveContext *cx, gc::AllocKind allocKind, NewObjectKind newKind = GenericObject)
 {
     JSObject *obj = NewBuiltinClassInstance(cx, &T::class_, allocKind, newKind);
-    if (!obj)
-        return nullptr;
-
-    return &obj->as<T>();
+    return obj ? &obj->as<T>() : nullptr;
 }
 
 // Used to optimize calls to (new Object())
@@ -724,15 +655,25 @@ bool
 NewObjectScriptedCall(JSContext *cx, MutableHandleObject obj);
 
 JSObject *
-NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent, gc::AllocKind allocKind,
-                  NewObjectKind newKind = GenericObject);
+NewObjectWithTypeCommon(JSContext *cx, HandleTypeObject type, JSObject *parent,
+                        gc::AllocKind allocKind, NewObjectKind newKind);
 
-inline JSObject *
+template <typename T>
+inline T *
+NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent,
+                  gc::AllocKind allocKind, NewObjectKind newKind = GenericObject)
+{
+    JSObject *obj = NewObjectWithTypeCommon(cx, type, parent, allocKind, newKind);
+    return obj ? &obj->as<T>() : nullptr;
+}
+
+template <typename T>
+inline T *
 NewObjectWithType(JSContext *cx, HandleTypeObject type, JSObject *parent,
                   NewObjectKind newKind = GenericObject)
 {
     gc::AllocKind allocKind = gc::GetGCObjectKind(type->clasp());
-    return NewObjectWithType(cx, type, parent, allocKind, newKind);
+    return NewObjectWithType<T>(cx, type, parent, allocKind, newKind);
 }
 
 JSObject *
@@ -768,7 +709,7 @@ ObjectClassIs(HandleObject obj, ESClassValue classValue, JSContext *cx)
         return Proxy::objectClassIs(obj, classValue, cx);
 
     switch (classValue) {
-      case ESClass_Object: return obj->is<JSObject>();
+      case ESClass_Object: return obj->is<PlainObject>();
       case ESClass_Array: return obj->is<ArrayObject>();
       case ESClass_Number: return obj->is<NumberObject>();
       case ESClass_String: return obj->is<StringObject>();
@@ -816,7 +757,8 @@ static MOZ_ALWAYS_INLINE bool
 NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
 {
     // The metadata callback is invoked before each created object, except when
-    // analysis/compilation is active, to avoid recursion.
+    // analysis/compilation is active, to avoid recursion. It is also skipped
+    // when we allocate objects during a bailout, to prevent stack iterations.
     MOZ_ASSERT(!*pmetadata);
     if (JSContext *cx = cxArg->maybeJSContext()) {
         if (MOZ_UNLIKELY((size_t)cx->compartment()->hasObjectMetadataCallback()) &&
@@ -832,26 +774,6 @@ NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
     }
     return true;
 }
-
-namespace baseops {
-
-inline bool
-LookupProperty(ExclusiveContext *cx, HandleNativeObject obj, PropertyName *name,
-               MutableHandleObject objp, MutableHandleShape propp)
-{
-    Rooted<jsid> id(cx, NameToId(name));
-    return LookupProperty<CanGC>(cx, obj, id, objp, propp);
-}
-
-inline bool
-DefineProperty(ExclusiveContext *cx, HandleNativeObject obj, PropertyName *name, HandleValue value,
-               JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs)
-{
-    Rooted<jsid> id(cx, NameToId(name));
-    return DefineGeneric(cx, obj, id, value, getter, setter, attrs);
-}
-
-} /* namespace baseops */
 
 static inline unsigned
 ApplyAttributes(unsigned attrs, bool enumerable, bool writable, bool configurable)

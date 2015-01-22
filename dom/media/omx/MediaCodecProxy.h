@@ -131,6 +131,7 @@ public:
   bool Prepare();
   bool IsWaitingResources();
   bool IsDormantNeeded();
+  void RequestMediaResources();
   void ReleaseMediaResources();
   // This updates mOutputBuffer when receiving INFO_OUTPUT_BUFFERS_CHANGED event.
   bool UpdateOutputBuffers();
@@ -147,9 +148,9 @@ protected:
 
 private:
   // Forbidden
-  MediaCodecProxy() MOZ_DELETE;
-  MediaCodecProxy(const MediaCodecProxy &) MOZ_DELETE;
-  const MediaCodecProxy &operator=(const MediaCodecProxy &) MOZ_DELETE;
+  MediaCodecProxy() = delete;
+  MediaCodecProxy(const MediaCodecProxy &) = delete;
+  const MediaCodecProxy &operator=(const MediaCodecProxy &) = delete;
 
   // Constructor for MediaCodecProxy::CreateByType
   MediaCodecProxy(sp<ALooper> aLooper,

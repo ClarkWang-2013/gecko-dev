@@ -22,13 +22,13 @@
 #include "vm/GlobalObject.h"
 #include "vm/SavedStacks.h"
 
-typedef enum JSTrapStatus {
+enum JSTrapStatus {
     JSTRAP_ERROR,
     JSTRAP_CONTINUE,
     JSTRAP_RETURN,
     JSTRAP_THROW,
     JSTRAP_LIMIT
-} JSTrapStatus;
+};
 
 namespace js {
 
@@ -232,6 +232,10 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
         Observing = 1
     };
 
+    // Return true if the given compartment is a debuggee of this debugger,
+    // false otherwise.
+    bool isDebuggee(const JSCompartment *compartment) const;
+
   private:
     HeapPtrNativeObject object;         /* The Debugger object. Strong reference. */
     GlobalObjectSet debuggees;          /* Debuggee globals. Cross-compartment weak references. */
@@ -299,6 +303,17 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
 
     /* The map from debuggee Envs to Debugger.Environment instances. */
     ObjectWeakMap environments;
+
+    /*
+     * Keep track of tracelogger last drained identifiers to know if there are
+     * lost events.
+     */
+#ifdef NIGHTLY_BUILD
+    uint32_t traceLoggerLastDrainedId;
+    uint32_t traceLoggerLastDrainedIteration;
+#endif
+    uint32_t traceLoggerScriptedCallsLastDrainedId;
+    uint32_t traceLoggerScriptedCallsLastDrainedIteration;
 
     class FrameRange;
     class ScriptQuery;
@@ -398,6 +413,14 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static bool findObjects(JSContext *cx, unsigned argc, Value *vp);
     static bool findAllGlobals(JSContext *cx, unsigned argc, Value *vp);
     static bool makeGlobalObjectReference(JSContext *cx, unsigned argc, Value *vp);
+    static bool setupTraceLoggerScriptCalls(JSContext *cx, unsigned argc, Value *vp);
+    static bool drainTraceLoggerScriptCalls(JSContext *cx, unsigned argc, Value *vp);
+    static bool startTraceLogger(JSContext *cx, unsigned argc, Value *vp);
+    static bool endTraceLogger(JSContext *cx, unsigned argc, Value *vp);
+#ifdef NIGHTLY_BUILD
+    static bool setupTraceLogger(JSContext *cx, unsigned argc, Value *vp);
+    static bool drainTraceLogger(JSContext *cx, unsigned argc, Value *vp);
+#endif
     static bool construct(JSContext *cx, unsigned argc, Value *vp);
     static const JSPropertySpec properties[];
     static const JSFunctionSpec methods[];
@@ -728,8 +751,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     JSObject *wrapSource(JSContext *cx, js::HandleScriptSource source);
 
   private:
-    Debugger(const Debugger &) MOZ_DELETE;
-    Debugger & operator=(const Debugger &) MOZ_DELETE;
+    Debugger(const Debugger &) = delete;
+    Debugger & operator=(const Debugger &) = delete;
 };
 
 class BreakpointSite {
@@ -889,8 +912,8 @@ Debugger::onLogAllocationSite(JSContext *cx, HandleSavedFrame frame, int64_t whe
 
 extern bool
 EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFramePtr frame,
-              mozilla::Range<const char16_t> chars, const char *filename, unsigned lineno,
-              MutableHandleValue rval);
+              jsbytecode *pc, mozilla::Range<const char16_t> chars, const char *filename,
+              unsigned lineno, MutableHandleValue rval);
 
 bool ReportObjectRequired(JSContext *cx);
 

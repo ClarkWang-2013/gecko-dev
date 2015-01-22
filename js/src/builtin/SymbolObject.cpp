@@ -19,12 +19,12 @@ using namespace js;
 const Class SymbolObject::class_ = {
     "Symbol",
     JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) | JSCLASS_HAS_CACHED_PROTO(JSProto_Symbol),
-    JS_PropertyStub,         /* addProperty */
-    JS_DeletePropertyStub,   /* delProperty */
-    JS_PropertyStub,         /* getProperty */
-    JS_StrictPropertyStub,   /* setProperty */
-    JS_EnumerateStub,
-    JS_ResolveStub,
+    nullptr, /* addProperty */
+    nullptr, /* delProperty */
+    nullptr, /* getProperty */
+    nullptr, /* setProperty */
+    nullptr, /* enumerate */
+    nullptr, /* resolve */
     convert
 };
 
@@ -63,7 +63,7 @@ SymbolObject::initClass(JSContext *cx, HandleObject obj)
     // This uses &JSObject::class_ because: "The Symbol prototype object is an
     // ordinary object. It is not a Symbol instance and does not have a
     // [[SymbolData]] internal slot." (ES6 rev 24, 19.4.3)
-    RootedObject proto(cx, global->createBlankPrototype(cx, &JSObject::class_));
+    RootedObject proto(cx, global->createBlankPrototype<PlainObject>(cx));
     if (!proto)
         return nullptr;
 
@@ -79,7 +79,7 @@ SymbolObject::initClass(JSContext *cx, HandleObject obj)
     WellKnownSymbols *wks = cx->runtime()->wellKnownSymbols;
     for (size_t i = 0; i < JS::WellKnownSymbolLimit; i++) {
         value.setSymbol(wks->get(i));
-        if (!DefineNativeProperty(cx, ctor, names[i], value, nullptr, nullptr, attrs))
+        if (!NativeDefineProperty(cx, ctor, names[i], value, nullptr, nullptr, attrs))
             return nullptr;
     }
 

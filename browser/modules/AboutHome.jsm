@@ -27,7 +27,9 @@ const SNIPPETS_URL_PREF = "browser.aboutHomeSnippets.updateUrl";
 const STARTPAGE_VERSION = 4;
 
 this.AboutHomeUtils = {
-  get snippetsVersion() STARTPAGE_VERSION,
+  get snippetsVersion() {
+    return STARTPAGE_VERSION;
+  },
 
   /*
    * showKnowYourRights - Determines if the user should be shown the
@@ -143,7 +145,7 @@ let AboutHome = {
         break;
 
       case "AboutHome:Apps":
-        window.openUILinkIn("https://marketplace.mozilla.org/", "tab");
+        window.BrowserOpenApps();
         break;
 
       case "AboutHome:Addons":

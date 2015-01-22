@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 package org.mozilla.gecko.tests;
 
 
@@ -31,9 +35,7 @@ public class testBookmark extends AboutHomeTest {
 
         isBookmarkDisplayed(BOOKMARK_URL);
         loadBookmark(BOOKMARK_URL);
-        waitForText(StringHelper.ROBOCOP_BLANK_PAGE_01_TITLE);
-        verifyPageTitle(StringHelper.ROBOCOP_BLANK_PAGE_01_TITLE,
-                StringHelper.ROBOCOP_BLANK_PAGE_01_URL);
+        verifyUrlBarTitle(StringHelper.ROBOCOP_BLANK_PAGE_01_URL);
 
         mDatabaseHelper.deleteBookmark(BOOKMARK_URL);
         waitForBookmarked(false);

@@ -9,12 +9,12 @@
 #include <stdint.h>
 
 #include "ExtendedValidation.h"
-#include "nsNSSCertificate.h"
-#include "NSSErrorsService.h"
 #include "OCSPRequestor.h"
 #include "certdb.h"
-#include "mozilla/Telemetry.h"
+#include "nsNSSCertificate.h"
 #include "nss.h"
+#include "NSSErrorsService.h"
+#include "nsServiceManagerUtils.h"
 #include "pk11pub.h"
 #include "pkix/pkix.h"
 #include "pkix/pkixnss.h"
@@ -68,6 +68,8 @@ NSSCertDBTrustDomain::NSSCertDBTrustDomain(SECTrustType certDBTrustType,
   , mMinimumNonECCBits(forEV ? MINIMUM_NON_ECC_BITS_EV : MINIMUM_NON_ECC_BITS_DV)
   , mHostname(hostname)
   , mBuiltChain(builtChain)
+  , mCertBlocklist(do_GetService(NS_CERTBLOCKLIST_CONTRACTID))
+  , mOCSPStaplingStatus(CertVerifier::OCSP_STAPLING_NEVER_CHECKED)
 {
 }
 
@@ -104,6 +106,55 @@ static const uint8_t PERMIT_FRANCE_GOV_NAME_CONSTRAINTS_DATA[] =
                        "\x30\x05\x82\x03" ".nc"
                        "\x30\x05\x82\x03" ".tf";
 
+// If useRoots is true, we only use root certificates in the candidate list.
+// If useRoots is false, we only use non-root certificates in the list.
+static Result
+FindIssuerInner(ScopedCERTCertList& candidates, bool useRoots,
+                Input encodedIssuerName, TrustDomain::IssuerChecker& checker,
+                /*out*/ bool& keepGoing)
+{
+  keepGoing = true;
+  for (CERTCertListNode* n = CERT_LIST_HEAD(candidates);
+       !CERT_LIST_END(n, candidates); n = CERT_LIST_NEXT(n)) {
+    bool candidateIsRoot = !!n->cert->isRoot;
+    if (candidateIsRoot != useRoots) {
+      continue;
+    }
+    Input certDER;
+    Result rv = certDER.Init(n->cert->derCert.data, n->cert->derCert.len);
+    if (rv != Success) {
+      continue; // probably too big
+    }
+
+    Input anssiSubject;
+    rv = anssiSubject.Init(ANSSI_SUBJECT_DATA, sizeof(ANSSI_SUBJECT_DATA) - 1);
+    if (rv != Success) {
+      return Result::FATAL_ERROR_LIBRARY_FAILURE;
+    }
+    // TODO: Use CERT_CompareName or equivalent
+    if (InputsAreEqual(encodedIssuerName, anssiSubject)) {
+      Input anssiNameConstraints;
+      if (anssiNameConstraints.Init(
+              PERMIT_FRANCE_GOV_NAME_CONSTRAINTS_DATA,
+              sizeof(PERMIT_FRANCE_GOV_NAME_CONSTRAINTS_DATA) - 1)
+            != Success) {
+        return Result::FATAL_ERROR_LIBRARY_FAILURE;
+      }
+      rv = checker.Check(certDER, &anssiNameConstraints, keepGoing);
+    } else {
+      rv = checker.Check(certDER, nullptr, keepGoing);
+    }
+    if (rv != Success) {
+      return rv;
+    }
+    if (!keepGoing) {
+      break;
+    }
+  }
+
+  return Success;
+}
+
 Result
 NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
                                  IssuerChecker& checker, Time)
@@ -116,39 +167,18 @@ NSSCertDBTrustDomain::FindIssuer(Input encodedIssuerName,
                                           &encodedIssuerNameSECItem, 0,
                                           false));
   if (candidates) {
-    for (CERTCertListNode* n = CERT_LIST_HEAD(candidates);
-         !CERT_LIST_END(n, candidates); n = CERT_LIST_NEXT(n)) {
-      Input certDER;
-      Result rv = certDER.Init(n->cert->derCert.data, n->cert->derCert.len);
-      if (rv != Success) {
-        continue; // probably too big
-      }
-
-      bool keepGoing;
-      Input anssiSubject;
-      rv = anssiSubject.Init(ANSSI_SUBJECT_DATA,
-                             sizeof(ANSSI_SUBJECT_DATA) - 1);
-      if (rv != Success) {
-        return Result::FATAL_ERROR_LIBRARY_FAILURE;
-      }
-      // TODO: Use CERT_CompareName or equivalent
-      if (InputsAreEqual(encodedIssuerName, anssiSubject)) {
-        Input anssiNameConstraints;
-        if (anssiNameConstraints.Init(
-                PERMIT_FRANCE_GOV_NAME_CONSTRAINTS_DATA,
-                sizeof(PERMIT_FRANCE_GOV_NAME_CONSTRAINTS_DATA) - 1)
-              != Success) {
-          return Result::FATAL_ERROR_LIBRARY_FAILURE;
-        }
-        rv = checker.Check(certDER, &anssiNameConstraints, keepGoing);
-      } else {
-        rv = checker.Check(certDER, nullptr, keepGoing);
-      }
+    // First, try all the root certs; then try all the non-root certs.
+    bool keepGoing;
+    Result rv = FindIssuerInner(candidates, true, encodedIssuerName, checker,
+                                keepGoing);
+    if (rv != Success) {
+      return rv;
+    }
+    if (keepGoing) {
+      rv = FindIssuerInner(candidates, false, encodedIssuerName, checker,
+                           keepGoing);
       if (rv != Success) {
         return rv;
-      }
-      if (!keepGoing) {
-        break;
       }
     }
   }
@@ -230,15 +260,15 @@ Result
 NSSCertDBTrustDomain::VerifySignedData(const SignedDataWithSignature& signedData,
                                        Input subjectPublicKeyInfo)
 {
-  return ::mozilla::pkix::VerifySignedData(signedData, subjectPublicKeyInfo,
-                                           mMinimumNonECCBits, mPinArg);
+  return ::mozilla::pkix::VerifySignedDataNSS(signedData, subjectPublicKeyInfo,
+                                              mMinimumNonECCBits, mPinArg);
 }
 
 Result
 NSSCertDBTrustDomain::DigestBuf(Input item,
                                 /*out*/ uint8_t* digestBuf, size_t digestBufLen)
 {
-  return ::mozilla::pkix::DigestBuf(item, digestBuf, digestBufLen);
+  return ::mozilla::pkix::DigestBufNSS(item, digestBuf, digestBufLen);
 }
 
 
@@ -338,12 +368,37 @@ NSSCertDBTrustDomain::CheckRevocation(EndEntityOrCA endEntityOrCA,
     maxOCSPLifetimeInDays = 365;
   }
 
+  if (!mCertBlocklist) {
+    return Result::FATAL_ERROR_LIBRARY_FAILURE;
+  }
+
+  bool isCertRevoked;
+  nsresult nsrv = mCertBlocklist->IsCertRevoked(
+                    certID.issuer.UnsafeGetData(),
+                    certID.issuer.GetLength(),
+                    certID.serialNumber.UnsafeGetData(),
+                    certID.serialNumber.GetLength(),
+                    &isCertRevoked);
+  if (NS_FAILED(nsrv)) {
+    return Result::FATAL_ERROR_LIBRARY_FAILURE;
+  }
+
+  if (isCertRevoked) {
+    PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
+           ("NSSCertDBTrustDomain: certificate is in blocklist"));
+    return Result::ERROR_REVOKED_CERTIFICATE;
+  }
+
   // If we have a stapled OCSP response then the verification of that response
   // determines the result unless the OCSP response is expired. We make an
   // exception for expired responses because some servers, nginx in particular,
   // are known to serve expired responses due to bugs.
   // We keep track of the result of verifying the stapled response but don't
   // immediately return failure if the response has expired.
+  //
+  // We only set the OCSP stapling status if we're validating the end-entity
+  // certificate. Non-end-entity certificates would always be
+  // OCSP_STAPLING_NONE unless/until we implement multi-stapling.
   Result stapledOCSPResponseResult = Success;
   if (stapledOCSPResponse) {
     PR_ASSERT(endEntityOrCA == EndEntityOrCA::MustBeEndEntity);
@@ -355,7 +410,7 @@ NSSCertDBTrustDomain::CheckRevocation(EndEntityOrCA endEntityOrCA,
                                              ResponseWasStapled, expired);
     if (stapledOCSPResponseResult == Success) {
       // stapled OCSP response present and good
-      Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 1);
+      mOCSPStaplingStatus = CertVerifier::OCSP_STAPLING_GOOD;
       PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
              ("NSSCertDBTrustDomain: stapled OCSP response: good"));
       return Success;
@@ -363,19 +418,19 @@ NSSCertDBTrustDomain::CheckRevocation(EndEntityOrCA endEntityOrCA,
     if (stapledOCSPResponseResult == Result::ERROR_OCSP_OLD_RESPONSE ||
         expired) {
       // stapled OCSP response present but expired
-      Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 3);
+      mOCSPStaplingStatus = CertVerifier::OCSP_STAPLING_EXPIRED;
       PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
              ("NSSCertDBTrustDomain: expired stapled OCSP response"));
     } else {
       // stapled OCSP response present but invalid for some reason
-      Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 4);
+      mOCSPStaplingStatus = CertVerifier::OCSP_STAPLING_INVALID;
       PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
              ("NSSCertDBTrustDomain: stapled OCSP response: failure"));
       return stapledOCSPResponseResult;
     }
-  } else {
+  } else if (endEntityOrCA == EndEntityOrCA::MustBeEndEntity) {
     // no stapled OCSP response
-    Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 2);
+    mOCSPStaplingStatus = CertVerifier::OCSP_STAPLING_NONE;
     PR_LOG(gCertVerifierLog, PR_LOG_DEBUG,
            ("NSSCertDBTrustDomain: no stapled OCSP response"));
   }
@@ -668,8 +723,8 @@ NSSCertDBTrustDomain::IsChainValid(const DERArray& certArray, Time time)
 Result
 NSSCertDBTrustDomain::CheckPublicKey(Input subjectPublicKeyInfo)
 {
-  return ::mozilla::pkix::CheckPublicKey(subjectPublicKeyInfo,
-                                         mMinimumNonECCBits);
+  return ::mozilla::pkix::CheckPublicKeyNSS(subjectPublicKeyInfo,
+                                            mMinimumNonECCBits);
 }
 
 namespace {

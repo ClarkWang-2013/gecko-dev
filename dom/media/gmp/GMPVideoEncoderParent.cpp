@@ -55,7 +55,7 @@ GMPVideoEncoderParent::GMPVideoEncoderParent(GMPParent *aPlugin)
   mShuttingDown(false),
   mPlugin(aPlugin),
   mCallback(nullptr),
-  mVideoHost(MOZ_THIS_IN_INITIALIZER_LIST())
+  mVideoHost(this)
 {
   MOZ_ASSERT(mPlugin);
 
@@ -91,7 +91,7 @@ GMPVideoEncoderParent::Close()
 
   // In case this is the last reference
   nsRefPtr<GMPVideoEncoderParent> kungfudeathgrip(this);
-  NS_RELEASE(kungfudeathgrip);
+  Release();
   Shutdown();
 }
 
@@ -288,7 +288,7 @@ EncodedCallback(GMPVideoEncoderCallbackProxy* aCallback,
 
 bool
 GMPVideoEncoderParent::RecvEncoded(const GMPVideoEncodedFrameData& aEncodedFrame,
-                                   const nsTArray<uint8_t>& aCodecSpecificInfo)
+                                   InfallibleTArray<uint8_t>&& aCodecSpecificInfo)
 {
   if (!mCallback) {
     return false;
@@ -320,7 +320,7 @@ GMPVideoEncoderParent::RecvError(const GMPErr& aError)
 }
 
 bool
-GMPVideoEncoderParent::RecvParentShmemForPool(Shmem& aFrameBuffer)
+GMPVideoEncoderParent::RecvParentShmemForPool(Shmem&& aFrameBuffer)
 {
   if (aFrameBuffer.IsWritable()) {
     mVideoHost.SharedMemMgr()->MgrDeallocShmem(GMPSharedMem::kGMPFrameData,

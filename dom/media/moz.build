@@ -98,13 +98,14 @@ EXPORTS += [
     'Latency.h',
     'MediaCache.h',
     'MediaData.h',
-    'MediaDataDecodedListener.h',
     'MediaDecoder.h',
     'MediaDecoderOwner.h',
     'MediaDecoderReader.h',
     'MediaDecoderStateMachine.h',
+    'MediaDecoderStateMachineScheduler.h',
     'MediaInfo.h',
     'MediaMetadataManager.h',
+    'MediaPromise.h',
     'MediaQueue.h',
     'MediaRecorder.h',
     'MediaResource.h',
@@ -181,6 +182,7 @@ UNIFIED_SOURCES += [
     'MediaDecoderStateMachineScheduler.cpp',
     'MediaDevices.cpp',
     'MediaManager.cpp',
+    'MediaPromise.cpp',
     'MediaRecorder.cpp',
     'MediaResource.cpp',
     'MediaShutdownManager.cpp',
@@ -223,6 +225,11 @@ SOURCES += [
     'DecoderTraits.cpp',
 ]
 
+# Some codec-related code uses multi-character constants, which GCC and clang
+# warn about. Suppress turning this warning into an error.
+if CONFIG['GNU_CC'] or CONFIG['CLANG_CL']:
+  SOURCES['DecoderTraits.cpp'].flags += ['-Wno-error=multichar']
+
 EXTRA_COMPONENTS += [
     'PeerConnection.js',
     'PeerConnection.manifest',
@@ -244,7 +251,7 @@ LOCAL_INCLUDES += [
     '/dom/camera',
     '/layout/generic',
     '/layout/xul',
-    '/netwerk/base/src',
+    '/netwerk/base',
 ]
 
 if CONFIG['MOZ_DIRECTSHOW']:
@@ -270,5 +277,11 @@ CFLAGS += CONFIG['GSTREAMER_CFLAGS']
 CXXFLAGS += CONFIG['GSTREAMER_CFLAGS']
 
 include('/ipc/chromium/chromium-config.mozbuild')
+
+# Suppress some GCC warnings being treated as errors:
+#  - about attributes on forward declarations for types that are already
+#    defined, which complains about an important MOZ_EXPORT for android::AString
+if CONFIG['GNU_CC']:
+  CXXFLAGS += ['-Wno-error=attributes']
 
 FINAL_LIBRARY = 'xul'

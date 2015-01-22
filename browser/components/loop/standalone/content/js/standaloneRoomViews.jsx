@@ -11,7 +11,7 @@ var loop = loop || {};
 loop.standaloneRoomViews = (function(mozL10n) {
   "use strict";
 
-  var FAILURE_REASONS = loop.shared.utils.FAILURE_REASONS;
+  var FAILURE_DETAILS = loop.shared.utils.FAILURE_DETAILS;
   var ROOM_STATES = loop.store.ROOM_STATES;
   var sharedActions = loop.shared.actions;
   var sharedMixins = loop.shared.mixins;
@@ -20,8 +20,10 @@ loop.standaloneRoomViews = (function(mozL10n) {
   var StandaloneRoomInfoArea = React.createClass({
     propTypes: {
       helper: React.PropTypes.instanceOf(loop.shared.utils.Helper).isRequired,
-      activeRoomStore:
-        React.PropTypes.instanceOf(loop.store.ActiveRoomStore).isRequired,
+      activeRoomStore: React.PropTypes.oneOfType([
+        React.PropTypes.instanceOf(loop.store.ActiveRoomStore),
+        React.PropTypes.instanceOf(loop.store.FxOSActiveRoomStore)
+      ]).isRequired,
       feedbackStore:
         React.PropTypes.instanceOf(loop.store.FeedbackStore).isRequired
     },
@@ -57,9 +59,9 @@ loop.standaloneRoomViews = (function(mozL10n) {
      */
     _getFailureString: function() {
       switch(this.props.failureReason) {
-        case FAILURE_REASONS.MEDIA_DENIED:
+        case FAILURE_DETAILS.MEDIA_DENIED:
           return mozL10n.get("rooms_media_denied_message");
-        case FAILURE_REASONS.EXPIRED_OR_INVALID:
+        case FAILURE_DETAILS.EXPIRED_OR_INVALID:
           return mozL10n.get("rooms_unavailable_notification_message");
         default:
           return mozL10n.get("status_error");
@@ -92,6 +94,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
             </div>
           );
         }
+        case ROOM_STATES.JOINING:
         case ROOM_STATES.JOINED:
         case ROOM_STATES.SESSION_CONNECTED: {
           return (
@@ -113,14 +116,20 @@ loop.standaloneRoomViews = (function(mozL10n) {
           );
         }
         case ROOM_STATES.ENDED: {
-          return (
-            <div className="ended-conversation">
-              <sharedViews.FeedbackView
-                feedbackStore={this.props.feedbackStore}
-                onAfterFeedbackReceived={this.onFeedbackSent}
-              />
-            </div>
-          );
+          if (this.props.roomUsed)
+            return (
+              <div className="ended-conversation">
+                <sharedViews.FeedbackView
+                  feedbackStore={this.props.feedbackStore}
+                  onAfterFeedbackReceived={this.onFeedbackSent}
+                />
+              </div>
+            );
+
+          // In case the room was not used (no one was here), we
+          // bypass the feedback form.
+          this.onFeedbackSent();
+          return null;
         }
         case ROOM_STATES.FAILED: {
           return (
@@ -128,6 +137,10 @@ loop.standaloneRoomViews = (function(mozL10n) {
               <p className="failed-room-message">
                 {this._getFailureString()}
               </p>
+              <button className="btn btn-join btn-info"
+                      onClick={this.props.joinRoom}>
+                {mozL10n.get("retry_call_button")}
+              </button>
             </div>
           );
         }
@@ -143,7 +156,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
       return (
         <header>
           <h1>{mozL10n.get("clientShortname2")}</h1>
-          <a target="_blank" href={loop.config.roomsSupportUrl}>
+          <a target="_blank" href={loop.config.generalSupportUrl}>
             <i className="icon icon-help"></i>
           </a>
         </header>
@@ -155,12 +168,12 @@ loop.standaloneRoomViews = (function(mozL10n) {
     _getContent: function() {
       return mozL10n.get("legal_text_and_links", {
         "clientShortname": mozL10n.get("clientShortname2"),
-        "terms_of_use_url": React.renderComponentToStaticMarkup(
+        "terms_of_use_url": React.renderToStaticMarkup(
           <a href={loop.config.legalWebsiteUrl} target="_blank">
             {mozL10n.get("terms_of_use_link_text")}
           </a>
         ),
-        "privacy_notice_url": React.renderComponentToStaticMarkup(
+        "privacy_notice_url": React.renderToStaticMarkup(
           <a href={loop.config.privacyWebsiteUrl} target="_blank">
             {mozL10n.get("privacy_notice_link_text")}
           </a>
@@ -181,12 +194,15 @@ loop.standaloneRoomViews = (function(mozL10n) {
   var StandaloneRoomView = React.createClass({
     mixins: [
       Backbone.Events,
+      sharedMixins.MediaSetupMixin,
       sharedMixins.RoomsAudioMixin
     ],
 
     propTypes: {
-      activeRoomStore:
-        React.PropTypes.instanceOf(loop.store.ActiveRoomStore).isRequired,
+      activeRoomStore: React.PropTypes.oneOfType([
+        React.PropTypes.instanceOf(loop.store.ActiveRoomStore),
+        React.PropTypes.instanceOf(loop.store.FxOSActiveRoomStore)
+      ]).isRequired,
       feedbackStore:
         React.PropTypes.instanceOf(loop.store.FeedbackStore).isRequired,
       dispatcher: React.PropTypes.instanceOf(loop.Dispatcher).isRequired,
@@ -216,61 +232,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
       this.setState(this.props.activeRoomStore.getStoreState());
     },
 
-    /**
-     * Returns either the required DOMNode
-     *
-     * @param {String} className The name of the class to get the element for.
-     */
-    _getElement: function(className) {
-      return this.getDOMNode().querySelector(className);
-    },
-
-     /**
-     * Returns the required configuration for publishing video on the sdk.
-     */
-    _getPublisherConfig: function() {
-      // height set to 100%" to fix video layout on Google Chrome
-      // @see https://bugzilla.mozilla.org/show_bug.cgi?id=1020445
-      return {
-        insertMode: "append",
-        width: "100%",
-        height: "100%",
-        publishVideo: true,
-        style: {
-          audioLevelDisplayMode: "off",
-          bugDisplayMode: "off",
-          buttonDisplayMode: "off",
-          nameDisplayMode: "off",
-          videoDisabledDisplayMode: "off"
-        }
-      };
-    },
-
-    /**
-     * Used to update the video container whenever the orientation or size of the
-     * display area changes.
-     */
-    updateVideoContainer: function() {
-      var localStreamParent = this._getElement('.local .OT_publisher');
-      var remoteStreamParent = this._getElement('.remote .OT_subscriber');
-      if (localStreamParent) {
-        localStreamParent.style.width = "100%";
-      }
-      if (remoteStreamParent) {
-        remoteStreamParent.style.height = "100%";
-      }
-    },
-
     componentDidMount: function() {
-      /**
-       * OT inserts inline styles into the markup. Using a listener for
-       * resize events helps us trigger a full width/height on the element
-       * so that they update to the correct dimensions.
-       * XXX: this should be factored as a mixin, bug 1104930
-       */
-      window.addEventListener('orientationchange', this.updateVideoContainer);
-      window.addEventListener('resize', this.updateVideoContainer);
-
       // Adding a class to the document body element from here to ease styling it.
       document.body.classList.add("is-standalone-room");
     },
@@ -280,7 +242,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
     },
 
     /**
-     * Watches for when we transition to JOINED room state, so we can request
+     * Watches for when we transition to MEDIA_WAIT room state, so we can request
      * user media access.
      *
      * @param  {Object} nextProps (Unused)
@@ -290,7 +252,7 @@ loop.standaloneRoomViews = (function(mozL10n) {
       if (this.state.roomState !== ROOM_STATES.MEDIA_WAIT &&
           nextState.roomState === ROOM_STATES.MEDIA_WAIT) {
         this.props.dispatcher.dispatch(new sharedActions.SetupStreamElements({
-          publisherConfig: this._getPublisherConfig(),
+          publisherConfig: this.getDefaultPublisherConfig({publishVideo: true}),
           getLocalElementFunc: this._getElement.bind(this, ".local"),
           getRemoteElementFunc: this._getElement.bind(this, ".remote")
         }));
@@ -347,17 +309,22 @@ loop.standaloneRoomViews = (function(mozL10n) {
 
       return (
         <div className="room-conversation-wrapper">
+          <div className="beta-logo" />
           <StandaloneRoomHeader />
           <StandaloneRoomInfoArea roomState={this.state.roomState}
                                   failureReason={this.state.failureReason}
                                   joinRoom={this.joinRoom}
                                   helper={this.props.helper}
                                   activeRoomStore={this.props.activeRoomStore}
-                                  feedbackStore={this.props.feedbackStore} />
+                                  feedbackStore={this.props.feedbackStore}
+                                  roomUsed={this.state.used} />
           <div className="video-layout-wrapper">
             <div className="conversation room-conversation">
               <h2 className="room-name">{this.state.roomName}</h2>
               <div className="media nested">
+                <span className="self-view-hidden-message">
+                  {mozL10n.get("self_view_hidden_message")}
+                </span>
                 <div className="video_wrapper remote_wrapper">
                   <div className="video_inner remote"></div>
                 </div>
@@ -374,6 +341,9 @@ loop.standaloneRoomViews = (function(mozL10n) {
                 enableHangup={this._roomIsActive()} />
             </div>
           </div>
+          <loop.fxOSMarketplaceViews.FxOSHiddenMarketplaceView
+            marketplaceSrc={this.state.marketplaceSrc}
+            onMarketplaceMessage={this.state.onMarketplaceMessage} />
           <StandaloneRoomFooter />
         </div>
       );

@@ -57,10 +57,11 @@ MediaOmxCommonDecoder::CheckDecoderCanOffloadAudio()
 }
 
 void
-MediaOmxCommonDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo)
+MediaOmxCommonDecoder::FirstFrameLoaded(nsAutoPtr<MediaInfo> aInfo,
+                                        bool aRestoredFromDromant)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  MediaDecoder::FirstFrameLoaded(aInfo);
+  MediaDecoder::FirstFrameLoaded(aInfo, aRestoredFromDromant);
 
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   if (!CheckDecoderCanOffloadAudio()) {
@@ -265,7 +266,7 @@ MediaOmxCommonDecoder::CreateStateMachine()
   if (mReader != nullptr) {
     mReader->SetAudioChannel(GetAudioChannel());
   }
-  return CreateStateMachine(mReader);
+  return CreateStateMachineFromReader(mReader);
 }
 
 } // namespace mozilla

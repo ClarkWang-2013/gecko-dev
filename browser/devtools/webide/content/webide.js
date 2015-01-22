@@ -94,8 +94,6 @@ let UI = {
     Services.prefs.setBoolPref("devtools.webide.autoinstallADBHelper", false);
     Services.prefs.setBoolPref("devtools.webide.autoinstallFxdtAdapters", false);
 
-    this.lastConnectedRuntime = Services.prefs.getCharPref("devtools.webide.lastConnectedRuntime");
-
     if (Services.prefs.getBoolPref("devtools.webide.widget.autoinstall") &&
         !Services.prefs.getBoolPref("devtools.webide.widget.enabled")) {
       Services.prefs.setBoolPref("devtools.webide.widget.enabled", true);
@@ -120,7 +118,7 @@ let UI = {
     this._telemetry.toolClosed("webide");
   },
 
-  canWindowClose: function() {
+  canCloseProject: function() {
     if (this.projecteditor) {
       return this.projecteditor.confirmUnsaved();
     }
@@ -156,6 +154,11 @@ let UI = {
         this.updateRuntimeButton();
         this.updateCommands();
         this.updateConnectionTelemetry();
+        break;
+      case "before-project":
+        if (!this.canCloseProject())  {
+          details.cancel();
+        }
         break;
       case "project":
         this._updatePromise = Task.spawn(function() {
@@ -289,7 +292,7 @@ let UI = {
       this.unbusy();
     }, (e) => {
       let message;
-      if (e.error && e.message) {
+      if (e && e.error && e.message) {
         // Some errors come from fronts that are not based on protocol.js.
         // Errors are not translated to strings.
         message = operationDescription + " (" + e.error + "): " + e.message;
@@ -300,7 +303,9 @@ let UI = {
       let operationCanceled = e && e.canceled;
       if (!operationCanceled) {
         UI.reportError("error_operationFail", message);
-        console.error(e);
+        if (e) {
+          console.error(e);
+        }
       }
       this.unbusy();
     });
@@ -393,10 +398,20 @@ let UI = {
     }
   },
 
+  get lastConnectedRuntime() {
+    return Services.prefs.getCharPref("devtools.webide.lastConnectedRuntime");
+  },
+
+  set lastConnectedRuntime(runtime) {
+    Services.prefs.setCharPref("devtools.webide.lastConnectedRuntime", runtime);
+  },
+
   autoConnectRuntime: function () {
     // Automatically reconnect to the previously selected runtime,
-    // if available and has an ID
-    if (AppManager.selectedRuntime || !this.lastConnectedRuntime) {
+    // if available and has an ID and feature is enabled
+    if (AppManager.selectedRuntime ||
+        !Services.prefs.getBoolPref("devtools.webide.autoConnectRuntime") ||
+        !this.lastConnectedRuntime) {
       return;
     }
     let [_, type, id] = this.lastConnectedRuntime.match(/^(\w+):(.+)$/);
@@ -415,6 +430,8 @@ let UI = {
         // Some runtimes do not expose an id and don't support autoconnect (like
         // remote connection)
         if (runtime.id == id) {
+          // Only want one auto-connect attempt, so clear last runtime value
+          this.lastConnectedRuntime = "";
           this.connectToRuntime(runtime);
         }
       }
@@ -424,8 +441,13 @@ let UI = {
   connectToRuntime: function(runtime) {
     let name = runtime.name;
     let promise = AppManager.connectToRuntime(runtime);
-    promise.then(() => this.initConnectionTelemetry());
-    return this.busyUntil(promise, "connecting to runtime " + name);
+    promise.then(() => this.initConnectionTelemetry())
+           .catch(() => {
+             // Empty rejection handler to silence uncaught rejection warnings
+             // |busyUntil| will listen for rejections.
+             // Bug 1121100 may find a better way to silence these.
+           });
+    return this.busyUntil(promise, "Connecting to " + name);
   },
 
   updateRuntimeButton: function() {
@@ -446,8 +468,6 @@ let UI = {
     } else {
       this.lastConnectedRuntime = "";
     }
-    Services.prefs.setCharPref("devtools.webide.lastConnectedRuntime",
-                               this.lastConnectedRuntime);
   },
 
   _actionsToLog: new Set(),
@@ -963,7 +983,7 @@ let UI = {
 
 let Cmds = {
   quit: function() {
-    if (UI.canWindowClose()) {
+    if (UI.canCloseProject()) {
       window.close();
     }
   },

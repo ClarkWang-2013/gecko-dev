@@ -185,6 +185,24 @@ caption {
 }
 
 /**
+ * Privacy Pane
+ */
+
+html|a.inline-link {
+  color: -moz-nativehyperlinktext;
+  text-decoration: none;
+}
+
+html|a.inline-link:hover {
+  text-decoration: underline;
+}
+
+html|a.inline-link:-moz-focusring {
+  outline-width: 0;
+  box-shadow: @focusRingShadow@;
+}
+
+/**
  * Update Preferences
  */
 #autoInstallOptions {
@@ -230,6 +248,27 @@ caption {
 
 #noFxaAccount > label:first-child {
   margin-bottom: 0.6em;
+}
+
+/**
+ * Sync migration
+ */
+#sync-migration {
+  border: 1px solid rgba(0, 0, 0, 0.32);
+  background-color: InfoBackground;
+  color: InfoText;
+  text-shadow: none;
+  margin: 5px 0 0 0;
+  animation: fadein 3000ms;
+}
+
+#sync-migration description {
+  margin: 8px;
+}
+
+@keyframes fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 %endif

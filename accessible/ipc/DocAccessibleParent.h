@@ -26,7 +26,7 @@ class DocAccessibleParent : public ProxyAccessible,
 {
 public:
   DocAccessibleParent() :
-    mParentDoc(nullptr)
+    ProxyAccessible(this), mParentDoc(nullptr), mShutdown(false)
   { MOZ_COUNT_CTOR_INHERITED(DocAccessibleParent, ProxyAccessible); }
   ~DocAccessibleParent()
   {
@@ -45,12 +45,11 @@ public:
   virtual bool RecvShowEvent(const ShowEventData& aData) MOZ_OVERRIDE;
   virtual bool RecvHideEvent(const uint64_t& aRootID) MOZ_OVERRIDE;
 
+  void Destroy();
   virtual void ActorDestroy(ActorDestroyReason aWhy) MOZ_OVERRIDE
   {
-    MOZ_ASSERT(mChildDocs.IsEmpty(),
-               "why wheren't the child docs destroyed already?");
-    mParentDoc ? mParentDoc->RemoveChildDoc(this)
-      : GetAccService()->RemoteDocShutdown(this);
+    if (!mShutdown)
+      Destroy();
   }
 
   /*
@@ -63,18 +62,7 @@ public:
    * Called when a document in a content process notifies the main process of a
    * new child document.
    */
-  bool AddChildDoc(DocAccessibleParent* aChildDoc, uint64_t aParentID)
-  {
-    ProxyAccessible* outerDoc = mAccessibles.GetEntry(aParentID)->mProxy;
-    if (!outerDoc)
-      return false;
-
-    aChildDoc->mParent = outerDoc;
-    outerDoc->SetChildDoc(aChildDoc);
-    mChildDocs.AppendElement(aChildDoc);
-    aChildDoc->mParentDoc = this;
-    return true;
-  }
+  bool AddChildDoc(DocAccessibleParent* aChildDoc, uint64_t aParentID);
 
   /*
    * Called when the document in the content process this object represents
@@ -122,6 +110,7 @@ private:
   uint32_t AddSubtree(ProxyAccessible* aParent,
                       const nsTArray<AccessibleData>& aNewTree, uint32_t aIdx,
                       uint32_t aIdxInParent);
+  static PLDHashOperator ShutdownAccessibles(ProxyEntry* entry, void* unused);
 
   nsTArray<DocAccessibleParent*> mChildDocs;
   DocAccessibleParent* mParentDoc;
@@ -131,6 +120,7 @@ private:
    * proxy object so we can't use a real map.
    */
   nsTHashtable<ProxyEntry> mAccessibles;
+  bool mShutdown;
 };
 
 }

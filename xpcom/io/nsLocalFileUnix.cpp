@@ -11,7 +11,6 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 
-#include <sys/mount.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -27,6 +26,7 @@
 
 #if defined(HAVE_SYS_QUOTA_H) && defined(HAVE_LINUX_QUOTA_H)
 #define USE_LINUX_QUOTACTL
+#include <sys/mount.h>
 #include <sys/quota.h>
 #endif
 
@@ -2058,9 +2058,13 @@ nsLocalFile::Launch()
   }
 
   nsAutoCString fileUri = NS_LITERAL_CSTRING("file://") + mPath;
-  return widget::android::GeckoAppShell::OpenUriExternal(
+  return widget::GeckoAppShell::OpenUriExternal(
     NS_ConvertUTF8toUTF16(fileUri),
-    NS_ConvertUTF8toUTF16(type)) ? NS_OK : NS_ERROR_FAILURE;
+    NS_ConvertUTF8toUTF16(type),
+    EmptyString(),
+    EmptyString(),
+    EmptyString(),
+    EmptyString()) ? NS_OK : NS_ERROR_FAILURE;
 #elif defined(MOZ_WIDGET_COCOA)
   CFURLRef url;
   if (NS_SUCCEEDED(GetCFURL(&url))) {

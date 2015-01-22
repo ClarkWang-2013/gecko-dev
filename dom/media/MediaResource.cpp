@@ -22,7 +22,7 @@
 #include "nsIRequestObserver.h"
 #include "nsIStreamListener.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsCrossSiteListenerProxy.h"
+#include "nsCORSListenerProxy.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "nsError.h"
 #include "nsICachingChannel.h"
@@ -80,7 +80,7 @@ ChannelMediaResource::ChannelMediaResource(MediaDecoder* aDecoder,
   : BaseMediaResource(aDecoder, aChannel, aURI, aContentType),
     mOffset(0), mSuspendCount(0),
     mReopenOnError(false), mIgnoreClose(false),
-    mCacheStream(MOZ_THIS_IN_INITIALIZER_LIST()),
+    mCacheStream(this),
     mLock("ChannelMediaResource.mLock"),
     mIgnoreResume(false),
     mIsTransportSeekable(true)
@@ -367,9 +367,8 @@ ChannelMediaResource::OnStartRequest(nsIRequest* aRequest)
     mIgnoreResume = false;
   }
 
-  // Fires an initial progress event and sets up the stall counter so stall events
-  // fire if no download occurs within the required time frame.
-  mDecoder->Progress(false);
+  // Fires an initial progress event.
+  owner->DownloadProgressed();
 
   return NS_OK;
 }
@@ -919,10 +918,19 @@ ChannelMediaResource::RecreateChannel()
   nsCOMPtr<nsILoadGroup> loadGroup = element->GetDocumentLoadGroup();
   NS_ENSURE_TRUE(loadGroup, NS_ERROR_NULL_POINTER);
 
+  nsSecurityFlags securityFlags = nsILoadInfo::SEC_NORMAL;
+  if (nsContentUtils::ChannelShouldInheritPrincipal(element->NodePrincipal(),
+                                                    mURI,
+                                                    false, // aInheritForAboutBlank
+                                                    false // aForceInherit
+                                                    )) {
+    securityFlags = nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
+  }
+
   nsresult rv = NS_NewChannel(getter_AddRefs(mChannel),
                               mURI,
                               element,
-                              nsILoadInfo::SEC_NORMAL,
+                              securityFlags,
                               nsIContentPolicy::TYPE_MEDIA,
                               loadGroup,
                               nullptr,  // aCallbacks
@@ -1010,6 +1018,13 @@ ChannelMediaResource::CacheClientNotifyPrincipalChanged()
   mDecoder->NotifyPrincipalChanged();
 }
 
+void
+ChannelMediaResource::CacheClientNotifySuspendedStatusChanged()
+{
+  NS_ASSERTION(NS_IsMainThread(), "Don't call on non-main thread");
+  mDecoder->NotifySuspendedStatusChanged();
+}
+
 nsresult
 ChannelMediaResource::CacheClientSeek(int64_t aOffset, bool aResume)
 {
@@ -1068,8 +1083,6 @@ nsresult
 ChannelMediaResource::CacheClientSuspend()
 {
   Suspend(false);
-
-  mDecoder->NotifySuspendedStatusChanged();
   return NS_OK;
 }
 
@@ -1077,8 +1090,6 @@ nsresult
 ChannelMediaResource::CacheClientResume()
 {
   Resume();
-
-  mDecoder->NotifySuspendedStatusChanged();
   return NS_OK;
 }
 
@@ -1197,60 +1208,60 @@ public:
   }
 
   // Main thread
-  virtual nsresult Open(nsIStreamListener** aStreamListener);
-  virtual nsresult Close();
-  virtual void     Suspend(bool aCloseImmediately) {}
-  virtual void     Resume() {}
-  virtual already_AddRefed<nsIPrincipal> GetCurrentPrincipal();
-  virtual bool     CanClone();
-  virtual already_AddRefed<MediaResource> CloneData(MediaDecoder* aDecoder);
-  virtual nsresult ReadFromCache(char* aBuffer, int64_t aOffset, uint32_t aCount);
+  virtual nsresult Open(nsIStreamListener** aStreamListener) MOZ_OVERRIDE;
+  virtual nsresult Close() MOZ_OVERRIDE;
+  virtual void     Suspend(bool aCloseImmediately) MOZ_OVERRIDE {}
+  virtual void     Resume() MOZ_OVERRIDE {}
+  virtual already_AddRefed<nsIPrincipal> GetCurrentPrincipal() MOZ_OVERRIDE;
+  virtual bool     CanClone() MOZ_OVERRIDE;
+  virtual already_AddRefed<MediaResource> CloneData(MediaDecoder* aDecoder) MOZ_OVERRIDE;
+  virtual nsresult ReadFromCache(char* aBuffer, int64_t aOffset, uint32_t aCount) MOZ_OVERRIDE;
 
   // These methods are called off the main thread.
 
   // Other thread
-  virtual void     SetReadMode(MediaCacheStream::ReadMode aMode) {}
-  virtual void     SetPlaybackRate(uint32_t aBytesPerSecond) {}
-  virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes);
+  virtual void     SetReadMode(MediaCacheStream::ReadMode aMode) MOZ_OVERRIDE {}
+  virtual void     SetPlaybackRate(uint32_t aBytesPerSecond) MOZ_OVERRIDE {}
+  virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes) MOZ_OVERRIDE;
   virtual nsresult ReadAt(int64_t aOffset, char* aBuffer,
-                          uint32_t aCount, uint32_t* aBytes);
-  virtual nsresult Seek(int32_t aWhence, int64_t aOffset);
-  virtual int64_t  Tell();
+                          uint32_t aCount, uint32_t* aBytes) MOZ_OVERRIDE;
+  virtual nsresult Seek(int32_t aWhence, int64_t aOffset) MOZ_OVERRIDE;
+  virtual int64_t  Tell() MOZ_OVERRIDE;
 
   // Any thread
-  virtual void    Pin() {}
-  virtual void    Unpin() {}
-  virtual double  GetDownloadRate(bool* aIsReliable)
+  virtual void    Pin() MOZ_OVERRIDE {}
+  virtual void    Unpin() MOZ_OVERRIDE {}
+  virtual double  GetDownloadRate(bool* aIsReliable) MOZ_OVERRIDE
   {
     // The data's all already here
     *aIsReliable = true;
     return 100*1024*1024; // arbitray, use 100MB/s
   }
-  virtual int64_t GetLength() {
+  virtual int64_t GetLength() MOZ_OVERRIDE {
     MutexAutoLock lock(mLock);
 
     EnsureSizeInitialized();
     return mSizeInitialized ? mSize : 0;
   }
-  virtual int64_t GetNextCachedData(int64_t aOffset)
+  virtual int64_t GetNextCachedData(int64_t aOffset) MOZ_OVERRIDE
   {
     MutexAutoLock lock(mLock);
 
     EnsureSizeInitialized();
     return (aOffset < mSize) ? aOffset : -1;
   }
-  virtual int64_t GetCachedDataEnd(int64_t aOffset) {
+  virtual int64_t GetCachedDataEnd(int64_t aOffset) MOZ_OVERRIDE {
     MutexAutoLock lock(mLock);
 
     EnsureSizeInitialized();
     return std::max(aOffset, mSize);
   }
-  virtual bool    IsDataCachedToEndOfResource(int64_t aOffset) { return true; }
-  virtual bool    IsSuspendedByCache() { return true; }
-  virtual bool    IsSuspended() { return true; }
+  virtual bool    IsDataCachedToEndOfResource(int64_t aOffset) MOZ_OVERRIDE { return true; }
+  virtual bool    IsSuspendedByCache() MOZ_OVERRIDE { return true; }
+  virtual bool    IsSuspended() MOZ_OVERRIDE { return true; }
   virtual bool    IsTransportSeekable() MOZ_OVERRIDE { return true; }
 
-  nsresult GetCachedRanges(nsTArray<MediaByteRange>& aRanges);
+  nsresult GetCachedRanges(nsTArray<MediaByteRange>& aRanges) MOZ_OVERRIDE;
 
   virtual size_t SizeOfExcludingThis(
                         MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE
@@ -1434,12 +1445,21 @@ already_AddRefed<MediaResource> FileMediaResource::CloneData(MediaDecoder* aDeco
   nsCOMPtr<nsILoadGroup> loadGroup = element->GetDocumentLoadGroup();
   NS_ENSURE_TRUE(loadGroup, nullptr);
 
+  nsSecurityFlags securityFlags = nsILoadInfo::SEC_NORMAL;
+  if (nsContentUtils::ChannelShouldInheritPrincipal(element->NodePrincipal(),
+                                                    mURI,
+                                                    false, // aInheritForAboutBlank
+                                                    false // aForceInherit
+                                                    )) {
+    securityFlags = nsILoadInfo::SEC_FORCE_INHERIT_PRINCIPAL;
+  }
+
   nsCOMPtr<nsIChannel> channel;
   nsresult rv =
     NS_NewChannel(getter_AddRefs(channel),
                   mURI,
                   element,
-                  nsILoadInfo::SEC_NORMAL,
+                  securityFlags,
                   nsIContentPolicy::TYPE_MEDIA,
                   loadGroup);
 
@@ -1578,9 +1598,11 @@ MediaResource::Create(MediaDecoder* aDecoder, nsIChannel* aChannel)
   return resource.forget();
 }
 
-void BaseMediaResource::MoveLoadsToBackground() {
-  NS_ASSERTION(!mLoadInBackground, "Why are you calling this more than once?");
-  mLoadInBackground = true;
+void BaseMediaResource::SetLoadInBackground(bool aLoadInBackground) {
+  if (aLoadInBackground == mLoadInBackground) {
+    return;
+  }
+  mLoadInBackground = aLoadInBackground;
   if (!mChannel) {
     // No channel, resource is probably already loaded.
     return;
@@ -1588,12 +1610,12 @@ void BaseMediaResource::MoveLoadsToBackground() {
 
   MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
   if (!owner) {
-    NS_WARNING("Null owner in MediaResource::MoveLoadsToBackground()");
+    NS_WARNING("Null owner in MediaResource::SetLoadInBackground()");
     return;
   }
   dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
-    NS_WARNING("Null element in MediaResource::MoveLoadsToBackground()");
+    NS_WARNING("Null element in MediaResource::SetLoadInBackground()");
     return;
   }
 
@@ -1604,7 +1626,11 @@ void BaseMediaResource::MoveLoadsToBackground() {
     DebugOnly<nsresult> rv = mChannel->GetLoadFlags(&loadFlags);
     NS_ASSERTION(NS_SUCCEEDED(rv), "GetLoadFlags() failed!");
 
-    loadFlags |= nsIRequest::LOAD_BACKGROUND;
+    if (aLoadInBackground) {
+      loadFlags |= nsIRequest::LOAD_BACKGROUND;
+    } else {
+      loadFlags &= ~nsIRequest::LOAD_BACKGROUND;
+    }
     ModifyLoadFlags(loadFlags);
   }
 }

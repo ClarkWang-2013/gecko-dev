@@ -237,6 +237,7 @@ static MOZ_CONSTEXPR_VAR FloatRegister f31 = { FloatRegisters::f31 };
 // four-byte-aligned, sp register should be eight-byte-aligned.
 static const uint32_t ABIStackAlignment = 8;
 static const uint32_t CodeAlignment = 4;
+static const uint32_t JitStackAlignment = 8;
 
 // This boolean indicates whether we support SIMD instructions flavoured for
 // this architecture or not. Rather than a method in the LIRGenerator, it is
@@ -245,9 +246,10 @@ static const uint32_t CodeAlignment = 4;
 static const bool SupportsSimd = false;
 // TODO this is just a filler to prevent a build failure. The MIPS SIMD
 // alignment requirements still need to be explored.
-static const uint32_t SimdStackAlignment = 8;
+// TODO Copy the static_asserts from x64/x86 assembler files.
+static const uint32_t SimdMemoryAlignment = 8;
 
-static const uint32_t AsmJSStackAlignment = SimdStackAlignment;
+static const uint32_t AsmJSStackAlignment = SimdMemoryAlignment;
 
 static const Scale ScalePointer = TimesFour;
 
@@ -876,7 +878,7 @@ class Assembler : public AssemblerShared
     void copyDataRelocationTable(uint8_t *dest);
     void copyPreBarrierTable(uint8_t *dest);
 
-    bool addCodeLabel(CodeLabel label);
+    void addCodeLabel(CodeLabel label);
     size_t numCodeLabels() const {
         return codeLabels_.length();
     }

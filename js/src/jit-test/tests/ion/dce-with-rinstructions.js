@@ -374,6 +374,14 @@ function rfloor_object(i) {
     return i;
 }
 
+var uceFault_ceil_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_ceil_number'));
+function rceil_number(i){
+    var x = Math.ceil(-i - 0.12010799100);
+    if (uceFault_ceil_number(i) ||uceFault_ceil_number(i))
+        assertEq(x, - i);
+    return i;
+}
+
 var uceFault_round_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_round'));
 function rround_number(i) {
     var x = Math.round(i + 1.4);
@@ -1069,6 +1077,25 @@ function rsin_object(i) {
     return i;
 }
 
+var uceFault_log_number = eval(uneval(uceFault).replace('uceFault', 'uceFault_log_number'));
+function rlog_number(i) {
+    var x = Math.log(i);
+    if (uceFault_log_number(i) || uceFault_log_number(i))
+        assertEq(x, Math.log(99) /* log(99) */);
+    return i;
+}
+
+var uceFault_log_object = eval(uneval(uceFault).replace('uceFault', 'uceFault_log_object'));
+function rlog_object(i) {
+    var t = i;
+    var o = { valueOf: function() { return t; } };
+    var x = Math.log(o); /* Evaluated with t == i, not t == 1000 */
+    t = 1000;
+    if (uceFault_log_object(i) || uceFault_log_object(i))
+        assertEq(x, Math.log(99) /* log(99) */);
+    return i;
+}
+
 for (i = 0; i < 100; i++) {
     rbitnot_number(i);
     rbitnot_object(i);
@@ -1109,6 +1136,7 @@ for (i = 0; i < 100; i++) {
     rinline_arguments_length_3(i, 0, 1);
     rfloor_number(i);
     rfloor_object(i);
+    rceil_number(i);
     rround_number(i);
     rround_double(i);
     rcharCodeAt(i);
@@ -1171,6 +1199,8 @@ for (i = 0; i < 100; i++) {
     rhypot_object(i);
     rsin_number(i);
     rsin_object(i);
+    rlog_number(i);
+    rlog_object(i);
 }
 
 // Test that we can refer multiple time to the same recover instruction, as well

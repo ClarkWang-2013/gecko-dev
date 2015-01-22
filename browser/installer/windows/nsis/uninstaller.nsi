@@ -487,6 +487,11 @@ Section "Uninstall"
   Call un.UninstallServiceIfNotUsed
 !endif
 
+  ${un.IsFirewallSvcRunning}
+  Pop $0
+  ${If} "$0" == "true"
+    liteFirewallW::RemoveRule "$INSTDIR\${FileMainEXE}" "${BrandShortName} ($INSTDIR)"
+  ${EndIf}
 SectionEnd
 
 ################################################################################

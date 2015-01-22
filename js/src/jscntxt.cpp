@@ -301,12 +301,17 @@ ReportError(JSContext *cx, const char *message, JSErrorReport *reportp,
         reportp->flags |= JSREPORT_EXCEPTION;
     }
 
+    if (cx->options().autoJSAPIOwnsErrorReporting() || JS_IsRunning(cx)) {
+        if (js_ErrorToException(cx, message, reportp, callback, userRef)) {
+            return;
+        }
+    }
+
     /*
      * Call the error reporter only if an exception wasn't raised.
      */
-    if (!JS_IsRunning(cx) || !js_ErrorToException(cx, message, reportp, callback, userRef)) {
-        if (message)
-            CallErrorReporter(cx, message, reportp);
+    if (message) {
+        CallErrorReporter(cx, message, reportp);
     }
 }
 
@@ -340,7 +345,7 @@ PopulateReportBlame(JSContext *cx, JSErrorReport *report)
  * not occur, so GC must be avoided or suppressed.
  */
 void
-js_ReportOutOfMemory(ThreadSafeContext *cxArg)
+js_ReportOutOfMemory(ExclusiveContext *cxArg)
 {
 #ifdef JS_MORE_DETERMINISTIC
     /*
@@ -350,11 +355,6 @@ js_ReportOutOfMemory(ThreadSafeContext *cxArg)
      */
     fprintf(stderr, "js_ReportOutOfMemory called\n");
 #endif
-
-    if (cxArg->isForkJoinContext()) {
-        cxArg->asForkJoinContext()->setPendingAbortFatal(ParallelBailoutOutOfMemory);
-        return;
-    }
 
     if (!cxArg->isJSContext())
         return;
@@ -423,24 +423,19 @@ js_ReportOverRecursed(JSContext *maybecx)
 }
 
 void
-js_ReportOverRecursed(ThreadSafeContext *cx)
+js_ReportOverRecursed(ExclusiveContext *cx)
 {
     if (cx->isJSContext())
         js_ReportOverRecursed(cx->asJSContext());
-    else if (cx->isExclusiveContext())
-        cx->asExclusiveContext()->addPendingOverRecursed();
+    else
+        cx->addPendingOverRecursed();
 }
 
 void
-js_ReportAllocationOverflow(ThreadSafeContext *cxArg)
+js_ReportAllocationOverflow(ExclusiveContext *cxArg)
 {
     if (!cxArg)
         return;
-
-    if (cxArg->isForkJoinContext()) {
-        cxArg->asForkJoinContext()->setPendingAbortFatal(ParallelBailoutOutOfMemory);
-        return;
-    }
 
     if (!cxArg->isJSContext())
         return;
@@ -523,16 +518,16 @@ js::ReportUsageError(JSContext *cx, HandleObject callee, const char *msg)
     const char *usageStr = "usage";
     PropertyName *usageAtom = Atomize(cx, usageStr, strlen(usageStr))->asPropertyName();
     RootedId id(cx, NameToId(usageAtom));
-    DebugOnly<Shape *> shape = static_cast<Shape *>(callee->as<NativeObject>().lookup(cx, id));
+    DebugOnly<Shape *> shape = static_cast<Shape *>(callee->as<JSFunction>().lookup(cx, id));
     MOZ_ASSERT(!shape->configurable());
     MOZ_ASSERT(!shape->writable());
     MOZ_ASSERT(shape->hasDefaultGetter());
 
     RootedValue usage(cx);
-    if (!JS_LookupProperty(cx, callee, "usage", &usage))
+    if (!JS_GetProperty(cx, callee, "usage", &usage))
         return;
 
-    if (usage.isUndefined()) {
+    if (!usage.isString()) {
         JS_ReportError(cx, "%s", msg);
     } else {
         JSString *str = usage.toString();
@@ -973,37 +968,24 @@ js_GetErrorMessage(void *userRef, const unsigned errorNumber)
     return nullptr;
 }
 
-ThreadSafeContext::ThreadSafeContext(JSRuntime *rt, PerThreadData *pt, ContextKind kind)
+ExclusiveContext::ExclusiveContext(JSRuntime *rt, PerThreadData *pt, ContextKind kind)
   : ContextFriendFields(rt),
+    helperThread_(nullptr),
     contextKind_(kind),
     perThreadData(pt),
-    allocator_(nullptr)
+    arenas_(nullptr),
+    enterCompartmentDepth_(0)
 {
-}
-
-bool
-ThreadSafeContext::isForkJoinContext() const
-{
-    return contextKind_ == Context_ForkJoin;
-}
-
-ForkJoinContext *
-ThreadSafeContext::asForkJoinContext()
-{
-    MOZ_ASSERT(isForkJoinContext());
-    return reinterpret_cast<ForkJoinContext *>(this);
 }
 
 void
-ThreadSafeContext::recoverFromOutOfMemory()
+ExclusiveContext::recoverFromOutOfMemory()
 {
     // If this is not a JSContext, there's nothing to do.
     if (JSContext *maybecx = maybeJSContext()) {
         if (maybecx->isExceptionPending()) {
             MOZ_ASSERT(maybecx->isThrowingOutOfMemory());
             maybecx->clearPendingException();
-        } else {
-            MOZ_ASSERT(maybecx->runtime()->hadOutOfMemory);
         }
     }
 }
@@ -1020,14 +1002,11 @@ JSContext::JSContext(JSRuntime *rt)
     resolvingList(nullptr),
     generatingError(false),
     savedFrameChains_(),
-    cycleDetectorSet(MOZ_THIS_IN_INITIALIZER_LIST()),
+    cycleDetectorSet(this),
     data(nullptr),
     data2(nullptr),
     outstandingRequests(0),
     jitIsBroken(false)
-#ifdef MOZ_TRACE_JSCALLS
-  , functionCallback(nullptr)
-#endif
 {
     MOZ_ASSERT(static_cast<ContextFriendFields*>(this) ==
                ContextFriendFields::get(this));
@@ -1202,10 +1181,13 @@ JSContext::mark(JSTracer *trc)
         MarkValueRoot(trc, &unwrappedException_, "unwrapped exception");
 
     TraceCycleDetectionSet(trc, cycleDetectorSet);
+
+    if (compartment_)
+        compartment_->mark();
 }
 
 void *
-ThreadSafeContext::stackLimitAddressForJitCode(StackKind kind)
+ExclusiveContext::stackLimitAddressForJitCode(StackKind kind)
 {
 #if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     return runtime_->mainThread.addressOfSimulatorStackLimit();
@@ -1236,7 +1218,7 @@ JS::AutoCheckRequestDepth::AutoCheckRequestDepth(JSContext *cx)
 }
 
 JS::AutoCheckRequestDepth::AutoCheckRequestDepth(ContextFriendFields *cxArg)
-    : cx(static_cast<ThreadSafeContext *>(cxArg)->maybeJSContext())
+    : cx(static_cast<ExclusiveContext *>(cxArg)->maybeJSContext())
 {
     if (cx) {
         MOZ_ASSERT(cx->runtime()->requestDepth || cx->runtime()->isHeapBusy());

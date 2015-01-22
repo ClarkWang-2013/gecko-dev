@@ -158,15 +158,23 @@ gbjar.sources += [
     'db/FormHistoryProvider.java',
     'db/HomeProvider.java',
     'db/LocalBrowserDB.java',
+    'db/LocalSearches.java',
+    'db/LocalTabsAccessor.java',
+    'db/LocalURLMetadata.java',
     'db/PasswordsProvider.java',
     'db/PerProfileDatabaseProvider.java',
     'db/PerProfileDatabases.java',
     'db/ReadingListProvider.java',
+    'db/RemoteClient.java',
+    'db/RemoteTab.java',
+    'db/Searches.java',
     'db/SearchHistoryProvider.java',
     'db/SharedBrowserDatabaseProvider.java',
     'db/SQLiteBridgeContentProvider.java',
+    'db/StubBrowserDB.java',
     'db/SuggestedSites.java',
     'db/Table.java',
+    'db/TabsAccessor.java',
     'db/TabsProvider.java',
     'db/TopSitesCursorWrapper.java',
     'db/URLMetadata.java',
@@ -326,10 +334,10 @@ gbjar.sources += [
     'InputMethods.java',
     'IntentHelper.java',
     'JavaAddonManager.java',
-    'LightweightTheme.java',
-    'LightweightThemeDrawable.java',
-    'LocaleAware.java',
     'LocaleManager.java',
+    'Locales.java',
+    'lwt/LightweightTheme.java',
+    'lwt/LightweightThemeDrawable.java',
     'MediaCastingBar.java',
     'MemoryMonitor.java',
     'menu/GeckoMenu.java',
@@ -410,12 +418,12 @@ gbjar.sources += [
     'tabs/TabHistoryFragment.java',
     'tabs/TabHistoryItemRow.java',
     'tabs/TabHistoryPage.java',
+    'tabs/TabPanelBackButton.java',
     'tabs/TabsGridLayout.java',
     'tabs/TabsLayoutAdapter.java',
     'tabs/TabsLayoutItemView.java',
     'tabs/TabsListLayout.java',
     'tabs/TabsPanel.java',
-    'TabsAccessor.java',
     'Telemetry.java',
     'TelemetryContract.java',
     'TextSelection.java',
@@ -473,6 +481,8 @@ gbjar.sources += [
     'widget/Divider.java',
     'widget/DoorHanger.java',
     'widget/EllipsisTextView.java',
+    'widget/FadedMultiColorTextView.java',
+    'widget/FadedSingleColorTextView.java',
     'widget/FadedTextView.java',
     'widget/FaviconView.java',
     'widget/FloatingHintEditText.java',
@@ -540,6 +550,8 @@ if (CONFIG['MOZ_ANDROID_MAX_SDK_VERSION']):
 else:
     max_sdk_version = 999
 
+# Only bother to include new tablet code if we're building for tablet-capable
+# OS releases.
 if CONFIG['MOZ_ANDROID_NEW_TABLET_UI'] and max_sdk_version >= 11:
     gbjar.sources += [
         'tabs/TabStrip.java',
@@ -547,7 +559,6 @@ if CONFIG['MOZ_ANDROID_NEW_TABLET_UI'] and max_sdk_version >= 11:
         'tabs/TabStripItemView.java',
         'tabs/TabStripView.java'
     ]
-    ANDROID_RES_DIRS += [ SRCDIR + '/newtablet/res' ]
 
 gbjar.sources += sync_java_files
 gbjar.extra_jars += [

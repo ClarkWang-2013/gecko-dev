@@ -23,7 +23,7 @@ class GMPStorageChild;
 class GMPRecordImpl : public GMPRecord
 {
 public:
-  NS_INLINE_DECL_REFCOUNTING(GMPRecordImpl)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPRecordImpl)
 
   GMPRecordImpl(GMPStorageChild* aOwner,
                 const nsCString& aName,
@@ -52,7 +52,7 @@ private:
 class GMPStorageChild : public PGMPStorageChild
 {
 public:
-  NS_INLINE_DECL_REFCOUNTING(GMPStorageChild)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPStorageChild)
 
   explicit GMPStorageChild(GMPChild* aPlugin);
 
@@ -85,10 +85,10 @@ protected:
                                 const GMPErr& aStatus) MOZ_OVERRIDE;
   virtual bool RecvReadComplete(const nsCString& aRecordName,
                                 const GMPErr& aStatus,
-                                const InfallibleTArray<uint8_t>& aBytes) MOZ_OVERRIDE;
+                                InfallibleTArray<uint8_t>&& aBytes) MOZ_OVERRIDE;
   virtual bool RecvWriteComplete(const nsCString& aRecordName,
                                  const GMPErr& aStatus) MOZ_OVERRIDE;
-  virtual bool RecvRecordNames(const InfallibleTArray<nsCString>& aRecordNames,
+  virtual bool RecvRecordNames(InfallibleTArray<nsCString>&& aRecordNames,
                                const GMPErr& aStatus) MOZ_OVERRIDE;
   virtual bool RecvShutdown() MOZ_OVERRIDE;
 

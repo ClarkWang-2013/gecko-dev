@@ -190,8 +190,12 @@ WrapperAnswer::RecvDefineProperty(const ObjectId &objId, const JSIDVariant &idVa
                                // accessors: they have either JSFunctions or
                                // JSPropertyOps.
                                desc.attributes() | JSPROP_PROPOP_ACCESSORS,
-                               JS_PROPERTYOP_GETTER(desc.getter()),
-                               JS_PROPERTYOP_SETTER(desc.setter())))
+                               JS_PROPERTYOP_GETTER(desc.getter()
+                                                    ? desc.getter()
+                                                    : JS_PropertyStub),
+                               JS_PROPERTYOP_SETTER(desc.setter()
+                                                    ? desc.setter()
+                                                    : JS_StrictPropertyStub)))
     {
         return fail(cx, rs);
     }
@@ -383,7 +387,7 @@ WrapperAnswer::RecvIsExtensible(const ObjectId &objId, ReturnStatus *rs, bool *r
 
 bool
 WrapperAnswer::RecvCallOrConstruct(const ObjectId &objId,
-                                   const nsTArray<JSParam> &argv,
+                                   InfallibleTArray<JSParam> &&argv,
                                    const bool &construct,
                                    ReturnStatus *rs,
                                    JSVariant *result,

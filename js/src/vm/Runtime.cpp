@@ -75,6 +75,7 @@ PerThreadData::PerThreadData(JSRuntime *runtime)
     runtime_(runtime),
     jitTop(nullptr),
     jitJSContext(nullptr),
+    jitActivation(nullptr),
     jitStackLimit_(0xbad),
 #ifdef JS_TRACE_LOGGING
     traceLogger(nullptr),
@@ -130,15 +131,10 @@ ReturnZeroSize(const void *p)
 }
 
 JSRuntime::JSRuntime(JSRuntime *parentRuntime)
-  : JS::shadow::Runtime(
-#ifdef JSGC_GENERATIONAL
-        &gc.storeBuffer
-#endif
-    ),
-    mainThread(this),
+  : mainThread(this),
     parentRuntime(parentRuntime),
     interrupt_(false),
-    interruptPar_(false),
+    telemetryCallback(nullptr),
     handlingSignal(false),
     interruptCallback(nullptr),
     exclusiveAccessLock(nullptr),
@@ -187,6 +183,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     suppressProfilerSampling(false),
     hadOutOfMemory(false),
     haveCreatedContext(false),
+    allowRelazificationForTesting(false),
     data(nullptr),
     signalHandlersInstalled_(false),
     canUseSignalHandlers_(false),
@@ -196,7 +193,6 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     DOMcallbacks(nullptr),
     destroyPrincipals(nullptr),
     structuredCloneCallbacks(nullptr),
-    telemetryCallback(nullptr),
     errorReporter(nullptr),
     linkedAsmJSModules(nullptr),
     propertyRemovals(0),
@@ -221,10 +217,8 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     jitSupportsFloatingPoint(false),
     jitSupportsSimd(false),
     ionPcScriptCache(nullptr),
-    threadPool(this),
     defaultJSContextCallback(nullptr),
     ctypesActivityCallback(nullptr),
-    forkJoinWarmup(0),
     offthreadIonCompilationEnabled_(true),
     parallelParsingEnabled_(true),
 #ifdef DEBUG
@@ -234,6 +228,8 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime)
     oomCallback(nullptr),
     debuggerMallocSizeOf(ReturnZeroSize)
 {
+    setGCStoreBufferPtr(&gc.storeBuffer);
+
     liveRuntimesCount++;
 
     /* Initialize infallibly first, so we can goto bad and JS_DestroyRuntime. */
@@ -280,8 +276,8 @@ JSRuntime::init(uint32_t maxbytes, uint32_t maxNurseryBytes)
 
     js::TlsPerThreadData.set(&mainThread);
 
-    if (!threadPool.init())
-        return false;
+    if (CanUseExtraThreads())
+        EnsureHelperThreadsInitialized();
 
     if (!gc.init(maxbytes, maxNurseryBytes))
         return false;
@@ -438,10 +434,8 @@ JSRuntime::~JSRuntime()
 
     js_delete(ionPcScriptCache);
 
-#ifdef JSGC_GENERATIONAL
     gc.storeBuffer.disable();
     gc.nursery.disable();
-#endif
 
 #if defined(JS_ARM_SIMULATOR) || defined(JS_MIPS_SIMULATOR)
     js::jit::DestroySimulatorRuntime(simulatorRuntime_);
@@ -459,9 +453,21 @@ JSRuntime::~JSRuntime()
 }
 
 void
+JSRuntime::addTelemetry(int id, uint32_t sample, const char *key)
+{
+    if (telemetryCallback)
+        (*telemetryCallback)(id, sample, key);
+}
+
+void
+JSRuntime::setTelemetryCallback(JSRuntime *rt, JSAccumulateTelemetryDataCallback callback)
+{
+    rt->telemetryCallback = callback;
+}
+
+void
 NewObjectCache::clearNurseryObjects(JSRuntime *rt)
 {
-#ifdef JSGC_GENERATIONAL
     for (unsigned i = 0; i < mozilla::ArrayLength(entries); ++i) {
         Entry &e = entries[i];
         NativeObject *obj = reinterpret_cast<NativeObject *>(&e.templateObject);
@@ -472,7 +478,6 @@ NewObjectCache::clearNurseryObjects(JSRuntime *rt)
             PodZero(&e);
         }
     }
-#endif
 }
 
 void
@@ -517,12 +522,10 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
         jitRuntime()->ionAlloc(this)->addSizeOfCode(&rtSizes->code);
 
     rtSizes->gc.marker += gc.marker.sizeOfExcludingThis(mallocSizeOf);
-#ifdef JSGC_GENERATIONAL
     rtSizes->gc.nurseryCommitted += gc.nursery.sizeOfHeapCommitted();
     rtSizes->gc.nurseryDecommitted += gc.nursery.sizeOfHeapDecommitted();
     rtSizes->gc.nurseryHugeSlots += gc.nursery.sizeOfHugeSlots(mallocSizeOf);
     gc.storeBuffer.addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
-#endif
 }
 
 static bool
@@ -607,16 +610,9 @@ PerThreadData::initJitStackLimit()
 }
 
 void
-PerThreadData::initJitStackLimitPar(uintptr_t limit)
-{
-    jitStackLimit_ = limit;
-}
-
-void
 JSRuntime::requestInterrupt(InterruptMode mode)
 {
     interrupt_ = true;
-    interruptPar_ = true;
     mainThread.jitStackLimit_ = UINTPTR_MAX;
 
     if (mode == JSRuntime::RequestInterruptUrgent)
@@ -629,7 +625,6 @@ JSRuntime::handleInterrupt(JSContext *cx)
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
     if (interrupt_ || mainThread.jitStackLimit_ == UINTPTR_MAX) {
         interrupt_ = false;
-        interruptPar_ = false;
         mainThread.resetJitStackLimit();
         return InvokeInterruptCallback(cx);
     }
@@ -808,7 +803,7 @@ JSRuntime::clearUsedByExclusiveThread(Zone *zone)
 bool
 js::CurrentThreadCanAccessRuntime(JSRuntime *rt)
 {
-    return rt->ownerThread_ == PR_GetCurrentThread() && !InParallelSection();
+    return rt->ownerThread_ == PR_GetCurrentThread();
 }
 
 bool
@@ -816,15 +811,10 @@ js::CurrentThreadCanAccessZone(Zone *zone)
 {
     if (CurrentThreadCanAccessRuntime(zone->runtime_))
         return true;
-    if (InParallelSection()) {
-        DebugOnly<PerThreadData *> pt = js::TlsPerThreadData.get();
-        MOZ_ASSERT(pt && pt->associatedWith(zone->runtime_));
-        return true;
-    }
 
-    // Only zones in use by an exclusive thread can be used off the main thread
-    // or outside of PJS. We don't keep track of which thread owns such zones
-    // though, so this check is imperfect.
+    // Only zones in use by an exclusive thread can be used off the main thread.
+    // We don't keep track of which thread owns such zones though, so this check
+    // is imperfect.
     return zone->usedByExclusiveThread;
 }
 

@@ -37,8 +37,16 @@ specialpowers.specialPowersObserver.init();
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 
+function isMulet() {
+  let isMulet = false;
+  try {
+   isMulet = Services.prefs.getBoolPref("b2g.is_mulet");
+  } catch (ex) { }
+  return isMulet;
+}
+
 Services.prefs.setBoolPref("marionette.contentListener", false);
-let appName = Services.appinfo.name;
+let appName = isMulet() ? "B2G" : Services.appinfo.name;
 
 let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let DevToolsUtils = devtools.require("devtools/toolkit/DevToolsUtils.js");
@@ -155,6 +163,7 @@ function MarionetteServerConnection(aPrefix, aTransport, aServer)
   this.currentFrameElement = null;
   this.testName = null;
   this.mozBrowserClose = null;
+  this.sandbox = null;
   this.oopFrameId = null; // frame ID of current remote frame, used for mozbrowserclose events
   this.sessionCapabilities = {
     // Mandated capabilities
@@ -166,6 +175,7 @@ function MarionetteServerConnection(aPrefix, aTransport, aServer)
     // Supported features
     "handlesAlerts": false,
     "nativeEvents": false,
+    "raisesAccessibilityExceptions": false,
     "rotatable": appName == "B2G",
     "secureSsl": false,
     "takesElementScreenshot": true,
@@ -603,6 +613,16 @@ MarionetteServerConnection.prototype = {
         win.addEventListener("load", listener, true);
       }
       else {
+        let clickToStart;
+        try {
+          clickToStart = Services.prefs.getBoolPref('marionette.debugging.clicktostart');
+          Services.prefs.setBoolPref('marionette.debugging.clicktostart', false);
+        } catch (e) { }
+        if (clickToStart && (appName != "B2G")) {
+          let pService = Cc["@mozilla.org/embedcomp/prompt-service;1"]
+                           .getService(Ci.nsIPromptService);
+          pService.alert(win, "", "Click to start execution of marionette tests");
+        }
         this.startBrowser(win, true);
       }
     }
@@ -665,27 +685,29 @@ MarionetteServerConnection.prototype = {
 
   /**
    * Update the sessionCapabilities object with the keys that have been
-   * passed in when a new session is created
-   * This part of the WebDriver spec is currently in flux see
+   * passed in when a new session is created.
+   *
+   * This part of the WebDriver spec is currently in flux, see
    * http://lists.w3.org/Archives/Public/public-browser-tools-testing/2014OctDec/0000.html
    *
-   * This is not a public API, only available when a new Session is created
+   * This is not a public API, only available when a new session is
+   * created.
    *
-   * @param Object capabilities holds all the keys for capabilities
-   *
+   * @param Object newCaps key/value dictionary to overwrite
+   *   session's current capabilities
    */
-  setSessionCapabilities: function MDA_setSessionCapabilities (capabilities) {
-    this.command_id = this.getCommandId();
-    var tempCapabilities = {};
-    for (var caps in this.sessionCapabilities) {
-      tempCapabilities[caps] = this.sessionCapabilities[caps];
-    }
+  setSessionCapabilities: function(newCaps) {
+    const copy = (from, to={}) => {
+      for (let key in from) {
+        to[key] = from[key];
+      }
+      return to;
+    };
 
-    for (var caps in capabilities) {
-      tempCapabilities[caps] = capabilities[caps];
-    }
-
-    this.sessionCapabilities = tempCapabilities;
+    // Clone, overwrite, and set.
+    let caps = copy(this.sessionCapabilities);
+    caps = copy(newCaps, caps);
+    this.sessionCapabilities = caps;
   },
 
   /**
@@ -747,19 +769,10 @@ MarionetteServerConnection.prototype = {
    * @return Sandbox
    *        Returns the sandbox
    */
-  createExecuteSandbox: function MDA_createExecuteSandbox(aWindow, marionette, args, specialPowers, command_id) {
-    try {
-      args = this.curBrowser.elementManager.convertWrappedArguments(args, aWindow);
-    }
-    catch(e) {
-      this.sendError(e.message, e.code, e.stack, command_id);
-      return;
-    }
-
+  createExecuteSandbox: function MDA_createExecuteSandbox(aWindow, marionette, specialPowers, command_id) {
     let _chromeSandbox = new Cu.Sandbox(aWindow,
        { sandboxPrototype: aWindow, wantXrays: false, sandboxName: ''});
-    _chromeSandbox.__namedArgs = this.curBrowser.elementManager.applyNamedArgs(args);
-    _chromeSandbox.__marionetteParams = args;
+    _chromeSandbox.global = _chromeSandbox;
     _chromeSandbox.testUtils = utils;
 
     marionette.exports.forEach(function(fn) {
@@ -784,6 +797,20 @@ MarionetteServerConnection.prototype = {
     }
 
     return _chromeSandbox;
+  },
+
+  /**
+   * Apply arguments sent from the client to the current (possibly reused) execution
+   * sandbox.
+   */
+  applyArgumentsToSandbox: function MDA_applyArgumentsToSandbox(win, sandbox, args, command_id) {
+    try {
+      sandbox.__marionetteParams = this.curBrowser.elementManager.convertWrappedArguments(args, win);
+    }
+    catch(e) {
+      this.sendError(e.message, e.code, e.stack, command_id);
+    }
+    sandbox.__namedArgs = this.curBrowser.elementManager.applyNamedArgs(args);
   },
 
   /**
@@ -848,17 +875,18 @@ MarionetteServerConnection.prototype = {
     let timeout = aRequest.parameters.scriptTimeout ? aRequest.parameters.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     let script;
-    if (aRequest.parameters.newSandbox == undefined) {
+    let newSandbox = aRequest.parameters.newSandbox;
+    if (newSandbox == undefined) {
       //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
-      aRequest.parameters.newSandbox = true;
+      newSandbox = true;
     }
     if (this.context == "content") {
       this.sendAsync("executeScript",
                      {
                        script: aRequest.parameters.script,
                        args: aRequest.parameters.args,
-                       newSandbox: aRequest.parameters.newSandbox,
+                       newSandbox: newSandbox,
                        timeout: timeout,
                        specialPowers: aRequest.parameters.specialPowers,
                        filename: aRequest.parameters.filename,
@@ -881,7 +909,7 @@ MarionetteServerConnection.prototype = {
       if (that.inactivityTimer != null) {
        that.inactivityTimer.initWithCallback(function() {
         inactivityTimeoutHandler("timed out due to inactivity", 28);
-       }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+       }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
       }
      }
      setTimer();
@@ -891,24 +919,28 @@ MarionetteServerConnection.prototype = {
      }
     }
 
+
     let curWindow = this.getCurrentWindow();
-    let marionette = new Marionette(this, curWindow, "chrome",
-                                    this.marionetteLog,
-                                    timeout, this.heartbeatCallback, this.testName);
-    let _chromeSandbox = this.createExecuteSandbox(curWindow,
-                                                   marionette,
-                                                   aRequest.parameters.args,
-                                                   aRequest.parameters.specialPowers,
-                                                   command_id);
-    if (!_chromeSandbox)
-      return;
+    if (!this.sandbox || newSandbox) {
+      let marionette = new Marionette(this, curWindow, "chrome",
+                                      this.marionetteLog,
+                                      timeout, this.heartbeatCallback, this.testName);
+      this.sandbox = this.createExecuteSandbox(curWindow,
+                                               marionette,
+                                               aRequest.parameters.specialPowers,
+                                               command_id);
+      if (!this.sandbox)
+        return;
+    }
+    this.applyArgumentsToSandbox(curWindow, this.sandbox, aRequest.parameters.args,
+                                 command_id)
 
     try {
-      _chromeSandbox.finish = function chromeSandbox_finish() {
+      this.sandbox.finish = function chromeSandbox_finish() {
         if (that.inactivityTimer != null) {
           that.inactivityTimer.cancel();
         }
-        return marionette.generate_results();
+        return that.sandbox.generate_results();
       };
 
       if (directInject) {
@@ -920,7 +952,7 @@ MarionetteServerConnection.prototype = {
                      "};" +
                      "func.apply(null, __marionetteParams);";
       }
-      this.executeScriptInSandbox(_chromeSandbox, script, directInject,
+      this.executeScriptInSandbox(this.sandbox, script, directInject,
                                   false, command_id, timeout);
     }
     catch (e) {
@@ -1014,10 +1046,11 @@ MarionetteServerConnection.prototype = {
     let timeout = aRequest.parameters.scriptTimeout ? aRequest.parameters.scriptTimeout : this.scriptTimeout;
     let command_id = this.command_id = this.getCommandId();
     let script;
-    if (aRequest.parameters.newSandbox == undefined) {
+    let newSandbox = aRequest.parameters.newSandbox;
+    if (newSandbox == undefined) {
       //if client does not send a value in newSandbox,
       //then they expect the same behaviour as webdriver
-      aRequest.parameters.newSandbox = true;
+      newSandbox = true;
     }
 
     if (this.context == "content") {
@@ -1026,7 +1059,7 @@ MarionetteServerConnection.prototype = {
                        script: aRequest.parameters.script,
                        args: aRequest.parameters.args,
                        id: this.command_id,
-                       newSandbox: aRequest.parameters.newSandbox,
+                       newSandbox: newSandbox,
                        timeout: timeout,
                        inactivityTimeout: inactivityTimeout,
                        specialPowers: aRequest.parameters.specialPowers,
@@ -1044,7 +1077,7 @@ MarionetteServerConnection.prototype = {
      if (this.inactivityTimer != null) {
       this.inactivityTimer.initWithCallback(function() {
        chromeAsyncReturnFunc("timed out due to inactivity", 28);
-      }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+      }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
      }
      this.heartbeatCallback = function resetInactivityTimer() {
       that.inactivityTimer.cancel();
@@ -1052,7 +1085,7 @@ MarionetteServerConnection.prototype = {
       if (that.inactivityTimer != null) {
        that.inactivityTimer.initWithCallback(function() {
         chromeAsyncReturnFunc("timed out due to inactivity", 28);
-       }, inactivityTimeout, Ci.nsITimer.TYPE_ONESHOT);
+       }, inactivityTimeout, Ci.nsITimer.TYPE_ONE_SHOT);
       }
      }
     }
@@ -1060,10 +1093,6 @@ MarionetteServerConnection.prototype = {
     let curWindow = this.getCurrentWindow();
     let original_onerror = curWindow.onerror;
     that.timeout = timeout;
-    let marionette = new Marionette(this, curWindow, "chrome",
-                                    this.marionetteLog,
-                                    timeout, this.heartbeatCallback, this.testName);
-    marionette.command_id = this.command_id;
 
     function chromeAsyncReturnFunc(value, status, stacktrace) {
       if (that._emu_cbs && Object.keys(that._emu_cbs).length) {
@@ -1074,7 +1103,8 @@ MarionetteServerConnection.prototype = {
 
       if (value == undefined)
         value = null;
-      if (that.command_id == marionette.command_id) {
+
+      if (command_id == that.command_id) {
         if (that.timer != null) {
           that.timer.cancel();
           that.timer = null;
@@ -1084,14 +1114,15 @@ MarionetteServerConnection.prototype = {
 
         if (status == 0 || status == undefined) {
           that.sendToClient({from: that.actorID, value: that.curBrowser.elementManager.wrapValue(value), status: status},
-                            marionette.command_id);
+                            that.command_id);
         }
         else {
           let error_msg = {message: value, status: status, stacktrace: stacktrace};
           that.sendToClient({from: that.actorID, error: error_msg},
-                            marionette.command_id);
+                            that.command_id);
         }
       }
+
       if (that.inactivityTimer != null) {
         that.inactivityTimer.cancel();
       }
@@ -1103,16 +1134,22 @@ MarionetteServerConnection.prototype = {
     };
 
     function chromeAsyncFinish() {
-      chromeAsyncReturnFunc(marionette.generate_results(), 0);
+      chromeAsyncReturnFunc(that.sandbox.generate_results(), 0);
     }
 
-    let _chromeSandbox = this.createExecuteSandbox(curWindow,
-                                                   marionette,
-                                                   aRequest.parameters.args,
-                                                   aRequest.parameters.specialPowers,
-                                                   command_id);
-    if (!_chromeSandbox)
-      return;
+    if (!this.sandbox || newSandbox) {
+      let marionette = new Marionette(this, curWindow, "chrome",
+                                      this.marionetteLog,
+                                      timeout, this.heartbeatCallback, this.testName);
+      this.sandbox = this.createExecuteSandbox(curWindow,
+                                               marionette,
+                                               aRequest.parameters.specialPowers,
+                                               command_id);
+      if (!this.sandbox)
+        return;
+    }
+    this.applyArgumentsToSandbox(curWindow, this.sandbox, aRequest.parameters.args,
+                                 command_id)
 
     try {
 
@@ -1120,11 +1157,11 @@ MarionetteServerConnection.prototype = {
       if (this.timer != null) {
         this.timer.initWithCallback(function() {
           chromeAsyncReturnFunc("timed out", 28);
-        }, that.timeout, Ci.nsITimer.TYPE_ONESHOT);
+        }, that.timeout, Ci.nsITimer.TYPE_ONE_SHOT);
       }
 
-      _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
-      _chromeSandbox.finish = chromeAsyncFinish;
+      this.sandbox.returnFunc = chromeAsyncReturnFunc;
+      this.sandbox.finish = chromeAsyncFinish;
 
       if (directInject) {
         script = aRequest.parameters.script;
@@ -1136,7 +1173,7 @@ MarionetteServerConnection.prototype = {
                 + '__marionetteFunc.apply(null, __marionetteParams);';
       }
 
-      this.executeScriptInSandbox(_chromeSandbox, script, directInject,
+      this.executeScriptInSandbox(this.sandbox, script, directInject,
                                   true, command_id, timeout);
     } catch (e) {
       let error = createStackMessage(e,
@@ -1313,7 +1350,8 @@ MarionetteServerConnection.prototype = {
   },
 
   /**
-   * Get the current window's handle.
+   * Get the current window's handle. On desktop this typically corresponds to
+   * the currently selected tab.
    *
    * Return an opaque server-assigned identifier to this window that
    * uniquely identifies it within this Marionette instance.  This can
@@ -1322,6 +1360,71 @@ MarionetteServerConnection.prototype = {
    * @return unique window handle (string)
    */
   getWindowHandle: function MDA_getWindowHandle() {
+    this.command_id = this.getCommandId();
+    // curFrameId always holds the current tab.
+    if (this.curBrowser.curFrameId && appName != 'B2G') {
+      this.sendResponse(this.curBrowser.curFrameId, this.command_id);
+      return;
+    }
+    for (let i in this.browsers) {
+      if (this.curBrowser == this.browsers[i]) {
+        this.sendResponse(i, this.command_id);
+        return;
+      }
+    }
+  },
+
+
+  /**
+   * Get a list of top-level browsing contexts. On desktop this typically
+   * corresponds to the set of open tabs.
+   *
+   * Each window handle is assigned by the server and is guaranteed unique,
+   * however the return array does not have a specified ordering.
+   *
+   * @return array of unique window handles as strings
+   */
+  getWindowHandles: function MDA_getWindowHandles() {
+    this.command_id = this.getCommandId();
+    let res = [];
+    let winEn = this.getWinEnumerator();
+    while (winEn.hasMoreElements()) {
+      let win = winEn.getNext();
+      if (win.gBrowser && appName != 'B2G') {
+        let tabbrowser = win.gBrowser;
+        for (let i = 0; i < tabbrowser.browsers.length; ++i) {
+          let contentWindow = tabbrowser.getBrowserAtIndex(i).contentWindowAsCPOW;
+          if (contentWindow !== null) {
+            let winId = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                     .getInterface(Ci.nsIDOMWindowUtils)
+                                     .outerWindowID;
+            winId += (appName == "B2G") ? "-b2g" : "";
+            res.push(winId);
+          }
+        }
+      } else {
+        // XUL Windows, at least, do not have gBrowser.
+        let winId = win.QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDOMWindowUtils)
+                       .outerWindowID;
+        winId += (appName == "B2G") ? "-b2g" : "";
+        res.push(winId);
+      }
+    }
+    this.sendResponse(res, this.command_id);
+  },
+
+  /**
+   * Get the current window's handle. This corresponds to a window that
+   * may itself contain tabs.
+   *
+   * Return an opaque server-assigned identifier to this window that
+   * uniquely identifies it within this Marionette instance.  This can
+   * be used to switch to this window at a later point.
+   *
+   * @return unique window handle (string)
+   */
+  getChromeWindowHandle: function MDA_getChromeWindowHandle() {
     this.command_id = this.getCommandId();
     for (let i in this.browsers) {
       if (this.curBrowser == this.browsers[i]) {
@@ -1332,26 +1435,20 @@ MarionetteServerConnection.prototype = {
   },
 
   /**
-   * Get list of windows in the current context.
+   * Returns identifiers for each open chrome window for tests interested in
+   * managing a set of chrome windows and tabs separately.
    *
-   * If called in the content context it will return a list of
-   * references to all available browser windows.  Called in the
-   * chrome context, it will list all available windows, not just
-   * browser windows (e.g. not just navigator.browser).
-   *
-   * Each window handle is assigned by the server, and the array of
-   * strings returned does not have a guaranteed ordering.
-   *
-   * @return unordered array of unique window handles as strings
+   * @return array of unique window handles as strings
    */
-  getWindowHandles: function MDA_getWindowHandles() {
+  getChromeWindowHandles: function MDA_getChromeWindowHandles() {
     this.command_id = this.getCommandId();
     let res = [];
     let winEn = this.getWinEnumerator();
     while (winEn.hasMoreElements()) {
       let foundWin = winEn.getNext();
       let winId = foundWin.QueryInterface(Ci.nsIInterfaceRequestor)
-            .getInterface(Ci.nsIDOMWindowUtils).outerWindowID;
+                          .getInterface(Ci.nsIDOMWindowUtils)
+                          .outerWindowID;
       winId = winId + ((appName == "B2G") ? "-b2g" : "");
       res.push(winId);
     }
@@ -1406,24 +1503,58 @@ MarionetteServerConnection.prototype = {
    */
   switchToWindow: function MDA_switchToWindow(aRequest) {
     let command_id = this.command_id = this.getCommandId();
-    let winEn = this.getWinEnumerator();
-    while(winEn.hasMoreElements()) {
-      let foundWin = winEn.getNext();
-      let winId = foundWin.QueryInterface(Ci.nsIInterfaceRequestor)
-                          .getInterface(Ci.nsIDOMWindowUtils)
-                          .outerWindowID;
-      winId = winId + ((appName == "B2G") ? '-b2g' : '');
-      if (aRequest.parameters.name == foundWin.name || aRequest.parameters.name == winId) {
-        if (this.browsers[winId] == undefined) {
+
+    let checkWindow = function (win, outerId, contentWindowId, ind) {
+      if (aRequest.parameters.name == win.name ||
+          aRequest.parameters.name == contentWindowId ||
+          aRequest.parameters.name == outerId) {
+        // As in content, switching to a new window invalidates a sandbox for reuse.
+        this.sandbox = null;
+        if (this.browsers[outerId] === undefined) {
           //enable Marionette in that browser window
-          this.startBrowser(foundWin, false);
-        }
-        else {
-          utils.window = foundWin;
-          this.curBrowser = this.browsers[winId];
+          this.startBrowser(win, false);
+        } else {
+          utils.window = win;
+          this.curBrowser = this.browsers[outerId];
+          if (contentWindowId) {
+            // The updated id corresponds to switching to a new tab.
+            this.curBrowser.curFrameId = contentWindowId;
+            win.gBrowser.selectTabAtIndex(ind);
+          }
           this.sendOk(command_id);
         }
-        return;
+        return true;
+      }
+      return false;
+    }
+
+    let winEn = this.getWinEnumerator();
+    while (winEn.hasMoreElements()) {
+      let win = winEn.getNext();
+      let outerId = win.QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDOMWindowUtils)
+                       .outerWindowID;
+      outerId += (appName == "B2G") ? "-b2g" : "";
+      if (win.gBrowser && appName != 'B2G') {
+        let tabbrowser = win.gBrowser;
+        for (let i = 0; i < tabbrowser.browsers.length; ++i) {
+          let contentWindow = tabbrowser.getBrowserAtIndex(i).contentWindowAsCPOW;
+          if (contentWindow) {
+            let contentWindowId = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                               .getInterface(Ci.nsIDOMWindowUtils)
+                                               .outerWindowID;
+            contentWindowId += (appName == "B2G") ? "-b2g" : "";
+            if (checkWindow.call(this, win, outerId, contentWindowId, i)) {
+              return;
+            }
+          }
+        }
+      } else {
+        // A chrome window is always a valid target for switching in the case
+        // a handle was obtained by getChromeWindowHandles.
+        if (checkWindow.call(this, win, outerId)) {
+          return;
+        }
       }
     }
     this.sendError("Unable to locate window " + aRequest.parameters.name, 23, null,
@@ -1488,7 +1619,7 @@ MarionetteServerConnection.prototype = {
         if (this.curBrowser.elementManager.seenItems[aRequest.parameters.element]) {
           let wantedFrame = this.curBrowser.elementManager.getKnownElement(aRequest.parameters.element, curWindow); //HTMLIFrameElement
           // Deal with an embedded xul:browser case
-          if (wantedFrame.tagName == "xul:browser") {
+          if (wantedFrame.tagName == "xul:browser" || wantedFrame.tagName == "browser") {
             curWindow = wantedFrame.contentWindow;
             this.curFrame = curWindow;
             if (aRequest.parameters.focus) {
@@ -1997,28 +2128,20 @@ MarionetteServerConnection.prototype = {
    *        'id' member holds the reference id to
    *        the element that will be checked
    */
-  isElementEnabled: function MDA_isElementEnabled(aRequest) {
+  isElementEnabled: function(aRequest) {
     let command_id = this.command_id = this.getCommandId();
+    let id = aRequest.parameters.id;
     if (this.context == "chrome") {
       try {
-        //Selenium atom doesn't quite work here
-        let el = this.curBrowser.elementManager.getKnownElement(
-            aRequest.parameters.id, this.getCurrentWindow());
-        if (el.disabled != undefined) {
-          this.sendResponse(!!!el.disabled, command_id);
-        }
-        else {
-        this.sendResponse(true, command_id);
-        }
-      }
-      catch (e) {
+        // Selenium atom doesn't quite work here
+        let win = this.getCurrentWindow();
+        let el = this.curBrowser.elementManager.getKnownElement(id, win);
+        this.sendResponse(!!!el.disabled, command_id);
+      } catch (e) {
         this.sendError(e.message, e.code, e.stack, command_id);
       }
-    }
-    else {
-      this.sendAsync("isElementEnabled",
-                     { id:aRequest.parameters.id },
-                     command_id);
+    } else {
+      this.sendAsync("isElementEnabled", {id: id}, command_id);
     }
   },
 
@@ -2236,6 +2359,64 @@ MarionetteServerConnection.prototype = {
    * On B2G this method is a noop and will return immediately.
    */
   close: function MDA_close() {
+    let command_id = this.command_id = this.getCommandId();
+    if (appName == "B2G") {
+      // We can't close windows so just return
+      this.sendOk(command_id);
+    }
+    else {
+      // Get the total number of windows
+      let numOpenWindows = 0;
+      let winEnum = this.getWinEnumerator();
+      while (winEnum.hasMoreElements()) {
+        let win = winEnum.getNext();
+        // Return windows and tabs.
+        if (win.gBrowser) {
+          numOpenWindows += win.gBrowser.browsers.length;
+        } else {
+          numOpenWindows += 1;
+        }
+      }
+
+      // if there is only 1 window left, delete the session
+      if (numOpenWindows === 1) {
+        try {
+          this.sessionTearDown();
+        }
+        catch (e) {
+          this.sendError("Could not clear session", 500,
+                         e.name + ": " + e.message, command_id);
+          return;
+        }
+        this.sendOk(command_id);
+        return;
+      }
+
+      try {
+        if (this.messageManager != this.globalMessageManager) {
+          this.messageManager.removeDelayedFrameScript(FRAME_SCRIPT);
+        }
+        if (this.curBrowser.tab) {
+          this.curBrowser.closeTab();
+        } else {
+          this.getCurrentWindow().close();
+        }
+        this.sendOk(command_id);
+      }
+      catch (e) {
+        this.sendError("Could not close window: " + e.message, 13, e.stack,
+                       command_id);
+      }
+    }
+  },
+
+  /**
+   * Close the currently selected chrome window, ending the session if it's the last
+   * window currently open.
+   *
+   * On B2G this method is a noop and will return immediately.
+   */
+  closeChromeWindow: function MDA_closeChromeWindow() {
     let command_id = this.command_id = this.getCommandId();
     if (appName == "B2G") {
       // We can't close windows so just return
@@ -2751,8 +2932,10 @@ MarionetteServerConnection.prototype = {
         // This code processes the content listener's registration information
         // and either accepts the listener, or ignores it
         let nullPrevious = (this.curBrowser.curFrameId == null);
-        let listenerWindow =
-                            Services.wm.getOuterWindowWithId(message.json.value);
+        let listenerWindow = null;
+        try {
+          listenerWindow = Services.wm.getOuterWindowWithId(message.json.value);
+        } catch (ex) { }
 
         //go in here if we're already in a remote frame.
         if (this.curBrowser.frameManager.currentRemoteFrame !== null &&
@@ -2794,8 +2977,10 @@ MarionetteServerConnection.prototype = {
         this.curBrowser.elementManager.seenItems[reg.id] = Cu.getWeakReference(listenerWindow);
         if (nullPrevious && (this.curBrowser.curFrameId != null)) {
           if (!this.sendAsync("newSession",
-                              { B2G: (appName == "B2G") },
-                              this.newSessionCommandId)) {
+              { B2G: (appName == "B2G"),
+                raisesAccessibilityExceptions:
+                  this.sessionCapabilities.raisesAccessibilityExceptions },
+              this.newSessionCommandId)) {
             return;
           }
           if (this.curBrowser.newSession) {
@@ -2873,8 +3058,11 @@ MarionetteServerConnection.prototype.requestTypes = {
   "refresh":  MarionetteServerConnection.prototype.refresh,
   "getWindowHandle": MarionetteServerConnection.prototype.getWindowHandle,
   "getCurrentWindowHandle":  MarionetteServerConnection.prototype.getWindowHandle,  // Selenium 2 compat
+  "getChromeWindowHandle": MarionetteServerConnection.prototype.getChromeWindowHandle,
+  "getCurrentChromeWindowHandle": MarionetteServerConnection.prototype.getChromeWindowHandle,
   "getWindow":  MarionetteServerConnection.prototype.getWindowHandle,  // deprecated
   "getWindowHandles": MarionetteServerConnection.prototype.getWindowHandles,
+  "getChromeWindowHandles": MarionetteServerConnection.prototype.getChromeWindowHandles,
   "getCurrentWindowHandles": MarionetteServerConnection.prototype.getWindowHandles,  // Selenium 2 compat
   "getWindows":  MarionetteServerConnection.prototype.getWindowHandles,  // deprecated
   "getWindowPosition": MarionetteServerConnection.prototype.getWindowPosition,
@@ -2889,6 +3077,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "getAppCacheStatus": MarionetteServerConnection.prototype.getAppCacheStatus,
   "close": MarionetteServerConnection.prototype.close,
   "closeWindow": MarionetteServerConnection.prototype.close,  // deprecated
+  "closeChromeWindow": MarionetteServerConnection.prototype.closeChromeWindow,
   "setTestName": MarionetteServerConnection.prototype.setTestName,
   "takeScreenshot": MarionetteServerConnection.prototype.takeScreenshot,
   "screenShot": MarionetteServerConnection.prototype.takeScreenshot,  // deprecated
@@ -2918,7 +3107,6 @@ function BrowserObj(win, server) {
   this.DESKTOP = "desktop";
   this.B2G = "B2G";
   this.browser;
-  this.tab = null; //Holds a reference to the created tab, if any
   this.window = win;
   this.knownFrames = [];
   this.curFrameId = null;
@@ -2934,6 +3122,11 @@ function BrowserObj(win, server) {
 }
 
 BrowserObj.prototype = {
+  get tab () {
+    // A reference to the currently selected tab, if any
+    return this.browser ? this.browser.selectedTab : null;
+  },
+
   /**
    * Set the browser if the application is not B2G
    *
@@ -2943,10 +3136,9 @@ BrowserObj.prototype = {
   setBrowser: function BO_setBrowser(win) {
     switch (appName) {
       case "Firefox":
-        if (this.window.location.href.indexOf("chrome://b2g") == -1) {
+        if (!isMulet()) {
           this.browser = win.gBrowser;
-        }
-        else {
+        } else {
           // this is Mulet
           appName = "B2G";
         }
@@ -2960,12 +3152,6 @@ BrowserObj.prototype = {
    * Called when we start a session with this browser.
    */
   startSession: function BO_startSession(newSession, win, callback) {
-    if (appName == "Firefox") {
-      //set this.tab to the currently focused tab
-      if (this.browser != undefined && this.browser.selectedTab != undefined) {
-        this.tab = this.browser.selectedTab;
-      }
-    }
     callback(win, newSession);
   },
 
@@ -2977,7 +3163,6 @@ BrowserObj.prototype = {
         this.browser.removeTab &&
         this.tab != null && (appName != "B2G")) {
       this.browser.removeTab(this.tab);
-      this.tab = null;
     }
   },
 

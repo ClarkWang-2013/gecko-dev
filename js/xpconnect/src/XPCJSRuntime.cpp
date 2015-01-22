@@ -40,6 +40,7 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/ProcessHangMonitor.h"
 #include "AccessCheck.h"
 #include "nsGlobalWindow.h"
 #include "nsAboutProtocolUtils.h"
@@ -652,7 +653,7 @@ XPCJSRuntime::SuspectWrappedNative(XPCWrappedNative *wrapper,
     // Only record objects that might be part of a cycle as roots, unless
     // the callback wants all traces (a debug feature).
     JSObject* obj = wrapper->GetFlatJSObjectPreserveColor();
-    if (xpc_IsGrayGCThing(obj) || cb.WantAllTraces())
+    if (JS::ObjectIsMarkedGray(obj) || cb.WantAllTraces())
         cb.NoteJSRoot(obj);
 }
 
@@ -665,8 +666,8 @@ XPCJSRuntime::TraverseAdditionalNativeRoots(nsCycleCollectionNoteRootCallback &c
         XPCTraceableVariant* v = static_cast<XPCTraceableVariant*>(e);
         if (nsCCUncollectableMarker::InGeneration(cb,
                                                   v->CCGeneration())) {
-           jsval val = v->GetJSValPreserveColor();
-           if (val.isObject() && !xpc_IsGrayGCThing(&val.toObject()))
+           JS::Value val = v->GetJSValPreserveColor();
+           if (val.isObject() && !JS::ObjectIsMarkedGray(&val.toObject()))
                continue;
         }
         cb.NoteXPCOMRoot(v);
@@ -1112,6 +1113,7 @@ class Watchdog
 #include "ipc/Nuwa.h"
 #endif
 
+#define PREF_MAX_SCRIPT_RUN_TIME_CHILD "dom.max_child_script_run_time"
 #define PREF_MAX_SCRIPT_RUN_TIME_CONTENT "dom.max_script_run_time"
 #define PREF_MAX_SCRIPT_RUN_TIME_CHROME "dom.max_chrome_script_run_time"
 
@@ -1134,6 +1136,7 @@ class WatchdogManager : public nsIObserver
         mozilla::Preferences::AddStrongObserver(this, "dom.use_watchdog");
         mozilla::Preferences::AddStrongObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CONTENT);
         mozilla::Preferences::AddStrongObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CHROME);
+        mozilla::Preferences::AddStrongObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CHILD);
     }
 
   protected:
@@ -1147,6 +1150,7 @@ class WatchdogManager : public nsIObserver
         mozilla::Preferences::RemoveObserver(this, "dom.use_watchdog");
         mozilla::Preferences::RemoveObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CONTENT);
         mozilla::Preferences::RemoveObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CHROME);
+        mozilla::Preferences::RemoveObserver(this, PREF_MAX_SCRIPT_RUN_TIME_CHILD);
     }
 
   public:
@@ -1224,7 +1228,10 @@ class WatchdogManager : public nsIObserver
             int32_t chromeTime = Preferences::GetInt(PREF_MAX_SCRIPT_RUN_TIME_CHROME, 20);
             if (chromeTime <= 0)
                 chromeTime = INT32_MAX;
-            mWatchdog->SetMinScriptRunTimeSeconds(std::min(contentTime, chromeTime));
+            int32_t childTime = Preferences::GetInt(PREF_MAX_SCRIPT_RUN_TIME_CHILD, 3);
+            if (childTime <= 0)
+                childTime = INT32_MAX;
+            mWatchdog->SetMinScriptRunTimeSeconds(std::min(std::min(contentTime, chromeTime), childTime));
         }
     }
 
@@ -1269,8 +1276,6 @@ WatchdogMain(void *arg)
 
 #ifdef MOZ_NUWA_PROCESS
     if (IsNuwaProcess()) {
-        NS_ASSERTION(NuwaMarkCurrentThread != nullptr,
-                     "NuwaMarkCurrentThread is undefined!");
         NuwaMarkCurrentThread(nullptr, nullptr);
         NuwaFreezeCurrentThread();
     }
@@ -1343,6 +1348,10 @@ XPCJSRuntime::DefaultJSContextCallback(JSRuntime *rt)
 void
 XPCJSRuntime::ActivityCallback(void *arg, bool active)
 {
+    if (!active) {
+        ProcessHangMonitor::ClearHang();
+    }
+
     XPCJSRuntime* self = static_cast<XPCJSRuntime*>(arg);
     self->mWatchdogManager->RecordRuntimeActivity(active);
 }
@@ -1381,13 +1390,16 @@ XPCJSRuntime::InterruptCallback(JSContext *cx)
     if (!nsContentUtils::IsInitialized())
         return true;
 
+    bool contentProcess = XRE_GetProcessType() == GeckoProcessType_Content;
+
     // This is at least the second interrupt callback we've received since
     // returning to the event loop. See how long it's been, and what the limit
     // is.
     TimeDuration duration = TimeStamp::NowLoRes() - self->mSlowScriptCheckpoint;
     bool chrome = nsContentUtils::IsCallerChrome();
-    const char *prefName = chrome ? PREF_MAX_SCRIPT_RUN_TIME_CHROME
-                                  : PREF_MAX_SCRIPT_RUN_TIME_CONTENT;
+    const char *prefName = contentProcess ? PREF_MAX_SCRIPT_RUN_TIME_CHILD
+                                 : chrome ? PREF_MAX_SCRIPT_RUN_TIME_CHROME
+                                          : PREF_MAX_SCRIPT_RUN_TIME_CONTENT;
     int32_t limit = Preferences::GetInt(prefName, chrome ? 20 : 10);
 
     // If there's no limit, or we're within the limit, let it go.
@@ -1425,7 +1437,9 @@ XPCJSRuntime::InterruptCallback(JSContext *cx)
 
     // The user chose to continue the script. Reset the timer, and disable this
     // machinery with a pref of the user opted out of future slow-script dialogs.
-    self->mSlowScriptCheckpoint = TimeStamp::NowLoRes();
+    if (response != nsGlobalWindow::ContinueSlowScriptAndKeepNotifying)
+        self->mSlowScriptCheckpoint = TimeStamp::NowLoRes();
+
     if (response == nsGlobalWindow::AlwaysContinueSlowScript)
         Preferences::SetInt(prefName, 0);
 
@@ -2963,7 +2977,7 @@ DiagnosticMemoryCallback(void *ptr, size_t size)
 #endif
 
 static void
-AccumulateTelemetryCallback(int id, uint32_t sample)
+AccumulateTelemetryCallback(int id, uint32_t sample, const char *key)
 {
     switch (id) {
       case JS_TELEMETRY_GC_REASON:
@@ -3014,6 +3028,9 @@ AccumulateTelemetryCallback(int id, uint32_t sample)
       case JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT:
         MOZ_ASSERT(sample <= 5);
         Telemetry::Accumulate(Telemetry::JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT, sample);
+        break;
+      case JS_TELEMETRY_ADDON_EXCEPTIONS:
+        Telemetry::Accumulate(Telemetry::JS_TELEMETRY_ADDON_EXCEPTIONS, nsDependentCString(key), sample);
         break;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected JS_TELEMETRY id");
@@ -3155,7 +3172,7 @@ static const JSWrapObjectCallbacks WrapObjectCallbacks = {
 
 XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    : CycleCollectedJSRuntime(nullptr, JS::DefaultHeapMaxBytes, JS::DefaultNurseryBytes),
-   mJSContextStack(new XPCJSContextStack(MOZ_THIS_IN_INITIALIZER_LIST())),
+   mJSContextStack(new XPCJSContextStack(this)),
    mCallContext(nullptr),
    mAutoRoots(nullptr),
    mResolveName(JSID_VOID),
@@ -3176,10 +3193,10 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    mVariantRoots(nullptr),
    mWrappedJSRoots(nullptr),
    mObjectHolderRoots(nullptr),
-   mWatchdogManager(new WatchdogManager(MOZ_THIS_IN_INITIALIZER_LIST())),
-   mUnprivilegedJunkScope(MOZ_THIS_IN_INITIALIZER_LIST()->Runtime(), nullptr),
-   mPrivilegedJunkScope(MOZ_THIS_IN_INITIALIZER_LIST()->Runtime(), nullptr),
-   mCompilationScope(MOZ_THIS_IN_INITIALIZER_LIST()->Runtime(), nullptr),
+   mWatchdogManager(new WatchdogManager(this)),
+   mUnprivilegedJunkScope(this->Runtime(), nullptr),
+   mPrivilegedJunkScope(this->Runtime(), nullptr),
+   mCompilationScope(this->Runtime(), nullptr),
    mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite())
 {
     // these jsids filled in later when we have a JSContext to work with.

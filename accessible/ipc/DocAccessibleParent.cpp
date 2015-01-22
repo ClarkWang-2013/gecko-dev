@@ -7,6 +7,7 @@
 #include "DocAccessibleParent.h"
 #include "nsAutoPtr.h"
 #include "mozilla/a11y/Platform.h"
+#include "ProxyAccessible.h"
 
 namespace mozilla {
 namespace a11y {
@@ -74,7 +75,7 @@ DocAccessibleParent::AddSubtree(ProxyAccessible* aParent,
     new ProxyAccessible(newChild.ID(), aParent, this, role);
   aParent->AddChildAt(aIdxInParent, newProxy);
   mAccessibles.PutEntry(newChild.ID())->mProxy = newProxy;
-  ProxyCreated(newProxy);
+  ProxyCreated(newProxy, newChild.Interfaces());
 
   uint32_t accessibles = 1;
   uint32_t kids = newChild.ChildrenCount();
@@ -129,6 +130,42 @@ DocAccessibleParent::RecvEvent(const uint64_t& aID, const uint32_t& aEventType)
 
   ProxyEvent(e->mProxy, aEventType);
   return true;
+}
+bool
+DocAccessibleParent::AddChildDoc(DocAccessibleParent* aChildDoc,
+                                 uint64_t aParentID)
+{
+  ProxyAccessible* outerDoc = mAccessibles.GetEntry(aParentID)->mProxy;
+  if (!outerDoc)
+    return false;
+
+  aChildDoc->mParent = outerDoc;
+  outerDoc->SetChildDoc(aChildDoc);
+  mChildDocs.AppendElement(aChildDoc);
+  aChildDoc->mParentDoc = this;
+  ProxyCreated(aChildDoc, 0);
+  return true;
+}
+
+PLDHashOperator
+DocAccessibleParent::ShutdownAccessibles(ProxyEntry* entry, void*)
+{
+  ProxyDestroyed(entry->mProxy);
+  return PL_DHASH_NEXT;
+}
+
+void
+DocAccessibleParent::Destroy()
+{
+  MOZ_ASSERT(mChildDocs.IsEmpty(),
+      "why wheren't the child docs destroyed already?");
+  MOZ_ASSERT(!mShutdown);
+  mShutdown = true;
+
+  mAccessibles.EnumerateEntries(ShutdownAccessibles, nullptr);
+  ProxyDestroyed(this);
+  mParentDoc ? mParentDoc->RemoveChildDoc(this)
+    : GetAccService()->RemoteDocShutdown(this);
 }
 }
 }

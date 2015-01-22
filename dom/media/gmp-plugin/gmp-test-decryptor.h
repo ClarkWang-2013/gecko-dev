@@ -14,13 +14,14 @@
 class FakeDecryptor : public GMPDecryptor {
 public:
 
-  FakeDecryptor(GMPDecryptorHost* aHost);
+  explicit FakeDecryptor(GMPDecryptorHost* aHost);
 
   virtual void Init(GMPDecryptorCallback* aCallback) MOZ_OVERRIDE {
     mCallback = aCallback;
   }
 
-  virtual void CreateSession(uint32_t aPromiseId,
+  virtual void CreateSession(uint32_t aCreateSessionToken,
+                             uint32_t aPromiseId,
                              const char* aInitDataType,
                              uint32_t aInitDataTypeSize,
                              const uint8_t* aInitData,

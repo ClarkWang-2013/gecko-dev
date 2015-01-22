@@ -14,6 +14,7 @@
 #include "mozilla/PodOperations.h"
 
 #include "builtin/SymbolObject.h"
+#include "jit/BaselineJIT.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
 #include "vm/NumberObject.h"
@@ -23,8 +24,6 @@
 #include "vm/TypedArrayObject.h"
 
 #include "jscntxtinlines.h"
-
-#include "jit/ExecutionMode-inl.h"
 
 namespace js {
 namespace types {
@@ -40,7 +39,7 @@ CompilerOutput::ion() const
     // (i.e. after IonBuilder but before CodeGenerator::link) then a valid
     // CompilerOutput may not yet have an associated IonScript.
     MOZ_ASSERT(isValid());
-    jit::IonScript *ion = jit::GetIonScript(script(), mode());
+    jit::IonScript *ion = script()->maybeIonScript();
     MOZ_ASSERT(ion != ION_COMPILING_SCRIPT);
     return ion;
 }
@@ -311,7 +310,7 @@ GetClassForProtoKey(JSProtoKey key)
 {
     switch (key) {
       case JSProto_Object:
-        return &JSObject::class_;
+        return &PlainObject::class_;
       case JSProto_Array:
         return &ArrayObject::class_;
 
@@ -509,20 +508,11 @@ MarkTypeObjectFlags(ExclusiveContext *cx, JSObject *obj, TypeObjectFlags flags)
         obj->type()->setFlags(cx, flags);
 }
 
-/*
- * Mark all properties of a type object as unknown. If markSetsUnknown is set,
- * scan the entire compartment and mark all type sets containing it as having
- * an unknown object. This is needed for correctness in dealing with mutable
- * __proto__, which can change the type of an object dynamically.
- */
 inline void
-MarkTypeObjectUnknownProperties(JSContext *cx, TypeObject *obj,
-                                bool markSetsUnknown = false)
+MarkTypeObjectUnknownProperties(JSContext *cx, TypeObject *obj)
 {
     if (!obj->unknownProperties())
         obj->markUnknown(cx);
-    if (markSetsUnknown && !(obj->flags() & OBJECT_FLAG_SETS_MARKED_UNKNOWN))
-        cx->compartment()->types.markSetsUnknown(cx, obj);
 }
 
 inline void
@@ -573,7 +563,7 @@ FixArrayType(ExclusiveContext *cx, ArrayObject *obj)
 }
 
 inline void
-FixObjectType(ExclusiveContext *cx, NativeObject *obj)
+FixObjectType(ExclusiveContext *cx, PlainObject *obj)
 {
     cx->compartment()->types.fixObjectType(cx, obj);
 }
@@ -1208,7 +1198,7 @@ inline TypeObject::TypeObject(const Class *clasp, TaggedProto proto, TypeObjectF
 inline void
 TypeObject::finalize(FreeOp *fop)
 {
-    fop->delete_(newScript_.get());
+    fop->delete_(newScriptDontCheckGeneration());
 }
 
 inline uint32_t
@@ -1303,14 +1293,12 @@ TypeObject::getProperty(unsigned i)
 inline void
 TypeNewScript::writeBarrierPre(TypeNewScript *newScript)
 {
-#ifdef JSGC_INCREMENTAL
-    if (!newScript || !newScript->fun->runtimeFromAnyThread()->needsIncrementalBarrier())
+    if (!newScript->fun->runtimeFromAnyThread()->needsIncrementalBarrier())
         return;
 
     JS::Zone *zone = newScript->fun->zoneFromAnyThread();
     if (zone->needsIncrementalBarrier())
         newScript->trace(zone->barrierTracer());
-#endif
 }
 
 } } /* namespace js::types */

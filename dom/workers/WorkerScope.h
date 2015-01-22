@@ -19,6 +19,12 @@ class Function;
 class Promise;
 class RequestOrUSVString;
 
+namespace indexedDB {
+
+class IDBFactory;
+
+} // namespace indexedDB
+
 } // namespace dom
 } // namespace mozilla
 
@@ -33,10 +39,13 @@ class Performance;
 class WorkerGlobalScope : public DOMEventTargetHelper,
                           public nsIGlobalObject
 {
+  typedef mozilla::dom::indexedDB::IDBFactory IDBFactory;
+
   nsRefPtr<Console> mConsole;
   nsRefPtr<WorkerLocation> mLocation;
   nsRefPtr<WorkerNavigator> mNavigator;
   nsRefPtr<Performance> mPerformance;
+  nsRefPtr<IDBFactory> mIndexedDB;
 
 protected:
   WorkerPrivate* mWorkerPrivate;
@@ -48,8 +57,8 @@ public:
   virtual JSObject*
   WrapObject(JSContext* aCx) MOZ_OVERRIDE;
 
-  virtual JSObject*
-  WrapGlobalObject(JSContext* aCx) = 0;
+  virtual bool
+  WrapGlobalObject(JSContext* aCx, JS::MutableHandle<JSObject*> aReflector) = 0;
 
   virtual JSObject*
   GetGlobalJSObject(void) MOZ_OVERRIDE
@@ -127,6 +136,9 @@ public:
 
   already_AddRefed<Promise>
   Fetch(const RequestOrUSVString& aInput, const RequestInit& aInit, ErrorResult& aRv);
+
+  already_AddRefed<IDBFactory>
+  GetIndexedDB(ErrorResult& aErrorResult);
 };
 
 class DedicatedWorkerGlobalScope MOZ_FINAL : public WorkerGlobalScope
@@ -136,8 +148,9 @@ class DedicatedWorkerGlobalScope MOZ_FINAL : public WorkerGlobalScope
 public:
   explicit DedicatedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate);
 
-  virtual JSObject*
-  WrapGlobalObject(JSContext* aCx) MOZ_OVERRIDE;
+  virtual bool
+  WrapGlobalObject(JSContext* aCx,
+                   JS::MutableHandle<JSObject*> aReflector) MOZ_OVERRIDE;
 
   void
   PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
@@ -157,8 +170,9 @@ public:
   SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
                           const nsCString& aName);
 
-  virtual JSObject*
-  WrapGlobalObject(JSContext* aCx) MOZ_OVERRIDE;
+  virtual bool
+  WrapGlobalObject(JSContext* aCx,
+                   JS::MutableHandle<JSObject*> aReflector) MOZ_OVERRIDE;
 
   void GetName(DOMString& aName) const
   {
@@ -182,8 +196,9 @@ public:
 
   ServiceWorkerGlobalScope(WorkerPrivate* aWorkerPrivate, const nsACString& aScope);
 
-  virtual JSObject*
-  WrapGlobalObject(JSContext* aCx) MOZ_OVERRIDE;
+  virtual bool
+  WrapGlobalObject(JSContext* aCx,
+                   JS::MutableHandle<JSObject*> aReflector) MOZ_OVERRIDE;
 
   void
   GetScope(DOMString& aScope) const
@@ -198,10 +213,7 @@ public:
   }
 
   void
-  Update()
-  {
-    // FIXME(nsm): Bug 982728
-  }
+  Update();
 
   already_AddRefed<Promise>
   Unregister(ErrorResult& aRv);

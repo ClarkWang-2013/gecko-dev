@@ -66,7 +66,7 @@ do {                             \
   return NS_ERROR_ILLEGAL_VALUE; \
   } while (0)
 
-Http2Session::Http2Session(nsISocketTransport *aSocketTransport)
+Http2Session::Http2Session(nsISocketTransport *aSocketTransport, uint32_t version)
   : mSocketTransport(aSocketTransport)
   , mSegmentReader(nullptr)
   , mSegmentWriter(nullptr)
@@ -103,6 +103,8 @@ Http2Session::Http2Session(nsISocketTransport *aSocketTransport)
   , mPreviousUsed(false)
   , mWaitingForSettingsAck(false)
   , mGoAwayOnPush(false)
+  , mUseH2Deps(false)
+  , mVersion(version)
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
@@ -125,7 +127,7 @@ Http2Session::Http2Session(nsISocketTransport *aSocketTransport)
 
   mPingThreshold = gHttpHandler->SpdyPingThreshold();
 
-  mNegotiatedToken.AssignLiteral(NS_HTTP2_DRAFT_TOKEN);
+  mNegotiatedToken.AssignLiteral(HTTP2_DRAFT_LATEST_TOKEN);
 }
 
 // Copy the 32 bit number into the destination, using network byte order
@@ -436,13 +438,15 @@ Http2Session::AddStream(nsAHttpTransaction *aHttpTransaction,
 
   mStreamTransactionHash.Put(aHttpTransaction, stream);
 
-  if (RoomForMoreConcurrent()) {
-    LOG3(("Http2Session::AddStream %p stream %p activated immediately.",
-          this, stream));
-    ActivateStream(stream);
-  } else {
-    LOG3(("Http2Session::AddStream %p stream %p queued.", this, stream));
-    mQueuedStreams.Push(stream);
+  mReadyForWrite.Push(stream);
+  SetWriteCallbacks();
+
+  // Kick off the SYN transmit without waiting for the poll loop
+  // This won't work for the first stream because there is no segment reader
+  // yet.
+  if (mSegmentReader) {
+    uint32_t countRead;
+    ReadSegments(nullptr, kDefaultBufferSize, &countRead);
   }
 
   if (!(aHttpTransaction->Caps() & NS_HTTP_ALLOW_KEEPALIVE) &&
@@ -456,32 +460,26 @@ Http2Session::AddStream(nsAHttpTransaction *aHttpTransaction,
 }
 
 void
-Http2Session::ActivateStream(Http2Stream *stream)
+Http2Session::QueueStream(Http2Stream *stream)
 {
+  // will be removed via processpending or a shutdown path
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
-  MOZ_ASSERT(!stream->StreamID() || (stream->StreamID() & 1),
-             "Do not activate pushed streams");
-
   MOZ_ASSERT(!stream->CountAsActive());
-  stream->SetCountAsActive(true);
-  ++mConcurrent;
+  MOZ_ASSERT(!stream->Queued());
 
-  if (mConcurrent > mConcurrentHighWater)
-    mConcurrentHighWater = mConcurrent;
-  LOG3(("Http2Session::AddStream %p activating stream %p Currently %d "
-        "streams in session, high water mark is %d",
-        this, stream, mConcurrent, mConcurrentHighWater));
+  LOG3(("Http2Session::QueueStream %p stream %p queued.", this, stream));
 
-  mReadyForWrite.Push(stream);
-  SetWriteCallbacks();
-
-  // Kick off the headers transmit without waiting for the poll loop
-  // This won't work for stream id=1 because there is no segment reader
-  // yet.
-  if (mSegmentReader) {
-    uint32_t countRead;
-    ReadSegments(nullptr, kDefaultBufferSize, &countRead);
+#ifdef DEBUG
+  int32_t qsize = mQueuedStreams.GetSize();
+  for (int32_t i = 0; i < qsize; i++) {
+    Http2Stream *qStream = static_cast<Http2Stream *>(mQueuedStreams.ObjectAt(i));
+    MOZ_ASSERT(qStream != stream);
+    MOZ_ASSERT(qStream->Queued());
   }
+#endif
+
+  stream->SetQueued(true);
+  mQueuedStreams.Push(stream);
 }
 
 void
@@ -489,13 +487,17 @@ Http2Session::ProcessPending()
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
-  while (RoomForMoreConcurrent()) {
-    Http2Stream *stream = static_cast<Http2Stream *>(mQueuedStreams.PopFront());
-    if (!stream)
-      return;
-    LOG3(("Http2Session::ProcessPending %p stream %p activated from queue.",
+  Http2Stream*stream;
+  while (RoomForMoreConcurrent() &&
+         (stream = static_cast<Http2Stream *>(mQueuedStreams.PopFront()))) {
+
+    LOG3(("Http2Session::ProcessPending %p stream %p woken from queue.",
           this, stream));
-    ActivateStream(stream);
+    MOZ_ASSERT(!stream->CountAsActive());
+    MOZ_ASSERT(stream->Queued());
+    stream->SetQueued(false);
+    mReadyForWrite.Push(stream);
+    SetWriteCallbacks();
   }
 }
 
@@ -614,6 +616,51 @@ Http2Session::ResetDownstreamState()
   mInputFrameDataStream = nullptr;
 }
 
+// return true if activated (and counted against max)
+// otherwise return false and queue
+bool
+Http2Session::TryToActivate(Http2Stream *aStream)
+{
+  if (aStream->Queued()) {
+    LOG3(("Http2Session::TryToActivate %p stream=%p already queued.\n", this, aStream));
+    return false;
+  }
+
+  if (!RoomForMoreConcurrent()) {
+    LOG3(("Http2Session::TryToActivate %p stream=%p no room for more concurrent "
+          "streams %d\n", this, aStream));
+    QueueStream(aStream);
+    return false;
+  }
+
+  LOG3(("Http2Session::TryToActivate %p stream=%p\n", this, aStream));
+  IncrementConcurrent(aStream);
+  return true;
+}
+
+void
+Http2Session::IncrementConcurrent(Http2Stream *stream)
+{
+  MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
+  MOZ_ASSERT(!stream->StreamID() || (stream->StreamID() & 1),
+             "Do not activate pushed streams");
+
+  nsAHttpTransaction *trans = stream->Transaction();
+  if (!trans || !trans->IsNullTransaction() || trans->QuerySpdyConnectTransaction()) {
+
+    MOZ_ASSERT(!stream->CountAsActive());
+    stream->SetCountAsActive(true);
+    ++mConcurrent;
+
+    if (mConcurrent > mConcurrentHighWater) {
+      mConcurrentHighWater = mConcurrent;
+    }
+    LOG3(("Http2Session::IncrementCounter %p counting stream %p Currently %d "
+          "streams in session, high water mark is %d\n",
+          this, stream, mConcurrent, mConcurrentHighWater));
+  }
+}
+
 // call with data length (i.e. 0 for 0 data bytes - ignore 9 byte header)
 // dest must have 9 bytes of allocated space
 template<typename charType> void
@@ -654,6 +701,7 @@ Http2Session::CreateFrameHeader(uint8_t *dest, uint16_t frameLength,
 void
 Http2Session::MaybeDecrementConcurrent(Http2Stream *aStream)
 {
+  MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
   LOG3(("MaybeDecrementConcurrent %p id=0x%X concurrent=%d active=%d\n",
         this, aStream->StreamID(), mConcurrent, aStream->CountAsActive()));
 
@@ -789,20 +837,26 @@ Http2Session::GenerateGoAway(uint32_t aStatusCode)
   FlushOutputQueue();
 }
 
-// The Hello is comprised of 24 octets of magic, which are designed to
-// flush out silent but broken intermediaries, followed by a settings
-// frame which sets a small flow control window for pushes and a
-// window update frame which creates a large session flow control window
+// The Hello is comprised of
+// 1] 24 octets of magic, which are designed to
+// flush out silent but broken intermediaries
+// 2] a settings frame which sets a small flow control window for pushes
+// 3] a window update frame which creates a large session flow control window
+// 4] 5 priority frames for streams which will never be opened with headers
+//    these streams (3, 5, 7, 9, b) build a dependency tree that all other
+//    streams will be direct leaves of.
 void
 Http2Session::SendHello()
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
   LOG3(("Http2Session::SendHello %p\n", this));
 
-  // sized for magic + 4 settings and a session window update to follow
-  // 24 magic, 33 for settings (9 header + 4 settings @6), 13 for window update
+  // sized for magic + 4 settings and a session window update and 5 priority frames
+  // 24 magic, 33 for settings (9 header + 4 settings @6), 13 for window update,
+  // 5 priority frames at 14 (9 + 5) each
   static const uint32_t maxSettings = 4;
-  static const uint32_t maxDataLen = 24 + kFrameHeaderBytes + maxSettings * 6 + 13;
+  static const uint32_t prioritySize = 5 * (kFrameHeaderBytes + 5);
+  static const uint32_t maxDataLen = 24 + kFrameHeaderBytes + maxSettings * 6 + 13 + prioritySize;
   char *packet = EnsureOutputBuffer(maxDataLen);
   memcpy(packet, kMagicHello, 24);
   mOutputQueueUsed += 24;
@@ -855,23 +909,59 @@ Http2Session::SendHello()
 
   // now bump the local session window from 64KB
   uint32_t sessionWindowBump = ASpdySession::kInitialRwin - kDefaultRwin;
-  if (kDefaultRwin >= ASpdySession::kInitialRwin)
-    goto sendHello_complete;
+  if (kDefaultRwin < ASpdySession::kInitialRwin) {
+    // send a window update for the session (Stream 0) for something large
+    mLocalSessionWindow = ASpdySession::kInitialRwin;
 
-  // send a window update for the session (Stream 0) for something large
-  mLocalSessionWindow = ASpdySession::kInitialRwin;
+    packet = mOutputQueueBuffer.get() + mOutputQueueUsed;
+    CreateFrameHeader(packet, 4, FRAME_TYPE_WINDOW_UPDATE, 0, 0);
+    mOutputQueueUsed += kFrameHeaderBytes + 4;
+    CopyAsNetwork32(packet + kFrameHeaderBytes, sessionWindowBump);
 
-  packet = mOutputQueueBuffer.get() + mOutputQueueUsed;
-  CreateFrameHeader(packet, 4, FRAME_TYPE_WINDOW_UPDATE, 0, 0);
-  mOutputQueueUsed += kFrameHeaderBytes + 4;
-  CopyAsNetwork32(packet + kFrameHeaderBytes, sessionWindowBump);
+    LOG3(("Session Window increase at start of session %p %u\n",
+          this, sessionWindowBump));
+    LogIO(this, nullptr, "Session Window Bump ", packet, kFrameHeaderBytes + 4);
+  }
 
-  LOG3(("Session Window increase at start of session %p %u\n",
-        this, sessionWindowBump));
-  LogIO(this, nullptr, "Session Window Bump ", packet, kFrameHeaderBytes + 4);
+  // draft-14 and draft-15 are the only versions we support that do not
+  // allow our priority scheme. Blacklist them here - they are aliased
+  // as draft-15
+  if ((mVersion != HTTP_VERSION_2_DRAFT_15) &&
+      gHttpHandler->UseH2Deps() && gHttpHandler->CriticalRequestPrioritization()) {
+    mUseH2Deps = true;
+    MOZ_ASSERT(mNextStreamID == kLeaderGroupID);
+    CreatePriorityNode(kLeaderGroupID, 0, 200, "leader");
+    mNextStreamID += 2;
+    MOZ_ASSERT(mNextStreamID == kOtherGroupID);
+    CreatePriorityNode(kOtherGroupID, 0, 100, "other");
+    mNextStreamID += 2;
+    MOZ_ASSERT(mNextStreamID == kBackgroundGroupID);
+    CreatePriorityNode(kBackgroundGroupID, 0, 0, "background");
+    mNextStreamID += 2;
+    MOZ_ASSERT(mNextStreamID == kSpeculativeGroupID);
+    CreatePriorityNode(kSpeculativeGroupID, kBackgroundGroupID, 0, "speculative");
+    mNextStreamID += 2;
+    MOZ_ASSERT(mNextStreamID == kFollowerGroupID);
+    CreatePriorityNode(kFollowerGroupID, kLeaderGroupID, 0, "follower");
+    mNextStreamID += 2;
+  }
 
-sendHello_complete:
   FlushOutputQueue();
+}
+
+void
+Http2Session::CreatePriorityNode(uint32_t streamID, uint32_t dependsOn, uint8_t weight,
+                                 const char *label)
+{
+  char *packet = mOutputQueueBuffer.get() + mOutputQueueUsed;
+  CreateFrameHeader(packet, 5, FRAME_TYPE_PRIORITY, 0, streamID);
+  mOutputQueueUsed += kFrameHeaderBytes + 5;
+  CopyAsNetwork32(packet + kFrameHeaderBytes, dependsOn); // depends on
+  packet[kFrameHeaderBytes + 4] = weight; // weight
+
+  LOG3(("Http2Session %p generate Priority Frame 0x%X depends on 0x%X "
+        "weight %d for %s class\n", this, streamID, dependsOn, weight, label));
+  LogIO(this, nullptr, "Priority dep node", packet, kFrameHeaderBytes + 5);
 }
 
 // perform a bunch of integrity checks on the stream.
@@ -1406,6 +1496,7 @@ Http2Session::RecvSettings(Http2Session *self)
     case SETTINGS_TYPE_MAX_CONCURRENT:
       self->mMaxConcurrent = value;
       Telemetry::Accumulate(Telemetry::SPDY_SETTINGS_MAX_STREAMS, value);
+      self->ProcessPending();
       break;
 
     case SETTINGS_TYPE_INITIAL_WINDOW:
@@ -1766,6 +1857,8 @@ Http2Session::RecvGoAway(Http2Session *self)
   for (uint32_t count = 0; count < size; ++count) {
     Http2Stream *stream =
       static_cast<Http2Stream *>(self->mQueuedStreams.PopFront());
+    MOZ_ASSERT(stream->Queued());
+    stream->SetQueued(false);
     if (statusCode == HTTP_1_1_REQUIRED) {
       stream->Transaction()->DisableSpdy();
     }
@@ -2132,7 +2225,7 @@ Http2Session::RecvAltSvc(Http2Session *self)
 
 void
 Http2Session::OnTransportStatus(nsITransport* aTransport,
-                                nsresult aStatus, uint64_t aProgress)
+                                nsresult aStatus, int64_t aProgress)
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
@@ -2638,8 +2731,8 @@ Http2Session::WriteSegments(nsAHttpSegmentWriter *writer,
             "needscleanup=%p. cleanup stream based on "
             "stream->writeSegments returning code %x\n",
             this, streamID, mNeedsCleanup, rv));
-      CleanupStream(streamID, NS_OK, CANCEL_ERROR);
       MOZ_ASSERT(!mNeedsCleanup || mNeedsCleanup->StreamID() == streamID);
+      CleanupStream(streamID, NS_OK, CANCEL_ERROR);
       mNeedsCleanup = nullptr;
       return NS_OK;
     }
@@ -3239,6 +3332,11 @@ Http2Session::BufferOutput(const char *buf,
 bool // static
 Http2Session::ALPNCallback(nsISupports *securityInfo)
 {
+  if (!gHttpHandler->IsH2MandatorySuiteEnabled()) {
+    LOG3(("Http2Session::ALPNCallback Mandatory Cipher Suite Unavailable\n"));
+    return false;
+  }
+
   nsCOMPtr<nsISSLSocketControl> ssl = do_QueryInterface(securityInfo);
   LOG3(("Http2Session::ALPNCallback sslsocketcontrol=%p\n", ssl.get()));
   if (ssl) {
@@ -3322,7 +3420,7 @@ Http2Session::ConfirmTLSProfile()
     // Fallback to showing the draft version, just in case
     LOG3(("Http2Session::ConfirmTLSProfile %p could not get negotiated token. "
           "Falling back to draft token.", this));
-    mNegotiatedToken.AssignLiteral(NS_HTTP2_DRAFT_TOKEN);
+    mNegotiatedToken.AssignLiteral(HTTP2_DRAFT_LATEST_TOKEN);
   }
 
   mTLSProfileConfirmed = true;

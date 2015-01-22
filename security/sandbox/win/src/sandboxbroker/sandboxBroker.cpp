@@ -94,7 +94,7 @@ SandboxBroker::SetSecurityLevelForContentProcess(bool aMoreStrict)
     ret = ret && (sandbox::SBOX_ALL_OK == result);
   } else {
     result = mPolicy->SetJobLevel(sandbox::JOB_NONE, 0);
-    bool ret = (sandbox::SBOX_ALL_OK == result);
+    ret = (sandbox::SBOX_ALL_OK == result);
 
     result = mPolicy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
                                     sandbox::USER_NON_ADMIN);
@@ -169,6 +169,20 @@ SandboxBroker::SetSecurityLevelForGMPlugin()
 
   result =
     mPolicy->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_UNTRUSTED);
+  ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  sandbox::MitigationFlags mitigations =
+    sandbox::MITIGATION_HEAP_TERMINATE |
+    sandbox::MITIGATION_SEHOP |
+    sandbox::MITIGATION_DEP;
+
+  result = mPolicy->SetProcessMitigations(mitigations);
+  ret = ret && (sandbox::SBOX_ALL_OK == result);
+
+  mitigations =
+    sandbox::MITIGATION_DLL_SEARCH_ORDER;
+
+  result = mPolicy->SetDelayedProcessMitigations(mitigations);
   ret = ret && (sandbox::SBOX_ALL_OK == result);
 
   // Add the policy for the client side of a pipe. It is just a file

@@ -40,6 +40,8 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const FONT_PREVIEW_TEXT = "Abc";
 const FONT_PREVIEW_FONT_SIZE = 40;
 const FONT_PREVIEW_FILLSTYLE = "black";
+const NORMAL_FONT_WEIGHT = 400;
+const BOLD_FONT_WEIGHT = 700;
 
 // Predeclare the domnode actor type for use in requests.
 types.addActorType("domnode");
@@ -127,6 +129,23 @@ var PageStyleActor = protocol.ActorClass({
   },
 
   get conn() this.inspector.conn,
+
+  form: function(detail) {
+    if (detail === "actorid") {
+      return this.actorID;
+    }
+
+    return {
+      actor: this.actorID,
+      traits: {
+        // Whether the actor has had bug 1103993 fixed, which means that the
+        // getApplied method calls cssLogic.highlight(node) to recreate the
+        // style cache. Clients requesting getApplied from actors that have not
+        // been fixed must make sure cssLogic.highlight(node) was called before.
+        getAppliedCreatesStyleCache: true
+      }
+    };
+  },
 
   /**
    * Return or create a StyleRuleActor for the given item.
@@ -220,9 +239,41 @@ var PageStyleActor = protocol.ActorClass({
   }),
 
   /**
+   * Get all the fonts from a page.
+   *
+   * @param object options
+   *   `includePreviews`: Whether to also return image previews of the fonts.
+   *   `previewText`: The text to display in the previews.
+   *   `previewFontSize`: The font size of the text in the previews.
+   *
+   * @returns object
+   *   object with 'fontFaces', a list of fonts that apply to this node.
+   */
+  getAllUsedFontFaces: method(function(options) {
+    let windows = this.inspector.tabActor.windows;
+    let fontsList = [];
+    for(let win of windows){
+      fontsList = [...fontsList,
+                   ...this.getUsedFontFaces(win.document.body, options)];
+    }
+    return fontsList;
+  },
+  {
+    request: {
+      includePreviews: Option(0, "boolean"),
+      previewText: Option(0, "string"),
+      previewFontSize: Option(0, "string"),
+      previewFillStyle: Option(0, "string")
+    },
+    response: {
+      fontFaces: RetVal("array:fontface")
+    }
+  }),
+
+  /**
    * Get the font faces used in an element.
    *
-   * @param NodeActor node
+   * @param NodeActor node / actual DOM node
    *    The node to get fonts from.
    * @param object options
    *   `includePreviews`: Whether to also return image previews of the fonts.
@@ -233,11 +284,12 @@ var PageStyleActor = protocol.ActorClass({
    *   object with 'fontFaces', a list of fonts that apply to this node.
    */
   getUsedFontFaces: method(function(node, options) {
-    let contentDocument = node.rawNode.ownerDocument;
-
+    // node.rawNode is defined for NodeActor objects
+    let actualNode = node.rawNode || node;
+    let contentDocument = actualNode.ownerDocument;
     // We don't get fonts for a node, but for a range
     let rng = contentDocument.createRange();
-    rng.selectNodeContents(node.rawNode);
+    rng.selectNodeContents(actualNode);
     let fonts = DOMUtils.getUsedFontFaces(rng);
     let fontsArray = [];
 
@@ -259,10 +311,26 @@ var PageStyleActor = protocol.ActorClass({
         fontFace.ruleText = font.rule.cssText;
       }
 
+      // Get the weight and style of this font for the preview and sort order
+      let weight = NORMAL_FONT_WEIGHT, style = "";
+      if (font.rule) {
+        weight = font.rule.style.getPropertyValue("font-weight")
+                 || NORMAL_FONT_WEIGHT;
+        if (weight == "bold") {
+          weight = BOLD_FONT_WEIGHT;
+        } else if (weight == "normal") {
+          weight = NORMAL_FONT_WEIGHT;
+        }
+        style = font.rule.style.getPropertyValue("font-style") || "";
+      }
+      fontFace.weight = weight;
+      fontFace.style = style;
+
       if (options.includePreviews) {
         let opts = {
           previewText: options.previewText,
           previewFontSize: options.previewFontSize,
+          fontStyle: weight + " " + style,
           fillStyle: options.previewFillStyle
         }
         let { dataURL, size } = getFontPreviewData(font.CSSFamilyName,
@@ -276,6 +344,9 @@ var PageStyleActor = protocol.ActorClass({
     }
 
     // @font-face fonts at the top, then alphabetically, then by weight
+    fontsArray.sort(function(a, b) {
+      return a.weight > b.weight ? 1 : -1;
+    });
     fontsArray.sort(function(a, b) {
       if (a.CSSFamilyName == b.CSSFamilyName) {
         return 0;
@@ -416,6 +487,7 @@ var PageStyleActor = protocol.ActorClass({
    *     caused this rule to match its node.
    */
   getApplied: method(function(node, options) {
+    this.cssLogic.highlight(node.rawNode);
     let entries = [];
     entries = entries.concat(this._getAllElementRules(node, undefined, options));
     return this.getAppliedProps(node, entries, options);
@@ -675,8 +747,8 @@ var PageStyleActor = protocol.ActorClass({
     // the size of the element.
 
     let clientRect = node.rawNode.getBoundingClientRect();
-    layout.width = Math.round(clientRect.width);
-    layout.height = Math.round(clientRect.height);
+    layout.width = Math.ceil(clientRect.width);
+    layout.height = Math.ceil(clientRect.height);
 
     // We compute and update the values of margins & co.
     let style = CssLogic.getComputedStyle(node.rawNode);
@@ -803,6 +875,14 @@ var PageStyleFront = protocol.FrontClass(PageStyleActor, {
     this.inspector = this.parent();
   },
 
+  form: function(form, detail) {
+    if (detail === "actorid") {
+      this.actorID = form;
+      return;
+    }
+    this._form = form;
+  },
+
   destroy: function() {
     protocol.Front.prototype.destroy.call(this);
   },
@@ -819,11 +899,17 @@ var PageStyleFront = protocol.FrontClass(PageStyleActor, {
     impl: "_getMatchedSelectors"
   }),
 
-  getApplied: protocol.custom(function(node, options={}) {
-    return this._getApplied(node, options).then(ret => {
-      return ret.entries;
-    });
-  }, {
+  getApplied: protocol.custom(Task.async(function*(node, options={}) {
+    // If the getApplied method doesn't recreate the style cache itself, this
+    // means a call to cssLogic.highlight is required before trying to access
+    // the applied rules. Issue a request to getLayout if this is the case.
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1103993#c16.
+    if (!this._form.traits || !this._form.traits.getAppliedCreatesStyleCache) {
+      yield this.getLayout(node);
+    }
+    let ret = yield this._getApplied(node, options);
+    return ret.entries;
+  }), {
     impl: "_getApplied"
   }),
 

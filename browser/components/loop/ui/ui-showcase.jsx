@@ -18,7 +18,7 @@
   // 1.1 Panel
   var PanelView = loop.panel.PanelView;
   // 1.2. Conversation Window
-  var IncomingCallView = loop.conversation.IncomingCallView;
+  var IncomingCallView = loop.conversationViews.IncomingCallView;
   var DesktopPendingConversationView = loop.conversationViews.PendingConversationView;
   var CallFailedView = loop.conversationViews.CallFailedView;
   var DesktopRoomConversationView = loop.roomViews.DesktopRoomConversationView;
@@ -74,8 +74,15 @@
   var feedbackStore = new loop.store.FeedbackStore(dispatcher, {
     feedbackClient: stageFeedbackApiClient
   });
+  var conversationStore = new loop.store.ConversationStore(dispatcher, {
+    client: {},
+    mozLoop: navigator.mozLoop,
+    sdkDriver: {}
+  });
 
   // Local mocks
+
+  var mockMozLoopRooms = _.extend({}, navigator.mozLoop);
 
   var mockContact = {
     name: ["Mr Smith"],
@@ -85,7 +92,6 @@
   };
 
   var mockClient = {
-    requestCallUrl: noop,
     requestCallUrlInfo: noop
   };
 
@@ -212,47 +218,50 @@
             <p className="note">
               <strong>Note:</strong> 332px wide.
             </p>
-            <Example summary="Call URL retrieved" dashed="true" style={{width: "332px"}}>
-              <PanelView client={mockClient} notifications={notifications}
-                         callUrl="http://invalid.example.url/"
-                         dispatcher={dispatcher}
-                         roomStore={roomStore} />
-            </Example>
-            <Example summary="Call URL retrieved - authenticated" dashed="true" style={{width: "332px"}}>
-              <PanelView client={mockClient} notifications={notifications}
-                         callUrl="http://invalid.example.url/"
-                         userProfile={{email: "test@example.com"}}
-                         dispatcher={dispatcher}
-                         roomStore={roomStore} />
-            </Example>
-            <Example summary="Pending call url retrieval" dashed="true" style={{width: "332px"}}>
-              <PanelView client={mockClient} notifications={notifications}
-                         dispatcher={dispatcher}
-                         roomStore={roomStore} />
-            </Example>
-            <Example summary="Pending call url retrieval - authenticated" dashed="true" style={{width: "332px"}}>
+            <Example summary="Room list tab" dashed="true" style={{width: "332px"}}>
               <PanelView client={mockClient} notifications={notifications}
                          userProfile={{email: "test@example.com"}}
+                         mozLoop={mockMozLoopRooms}
                          dispatcher={dispatcher}
-                         roomStore={roomStore} />
+                         roomStore={roomStore}
+                         selectedTab="rooms" />
+            </Example>
+            <Example summary="Contact list tab" dashed="true" style={{width: "332px"}}>
+              <PanelView client={mockClient} notifications={notifications}
+                         userProfile={{email: "test@example.com"}}
+                         mozLoop={mockMozLoopRooms}
+                         dispatcher={dispatcher}
+                         roomStore={roomStore}
+                         selectedTab="contacts" />
             </Example>
             <Example summary="Error Notification" dashed="true" style={{width: "332px"}}>
               <PanelView client={mockClient} notifications={errNotifications}
+                         mozLoop={navigator.mozLoop}
                          dispatcher={dispatcher}
                          roomStore={roomStore} />
             </Example>
             <Example summary="Error Notification - authenticated" dashed="true" style={{width: "332px"}}>
               <PanelView client={mockClient} notifications={errNotifications}
                          userProfile={{email: "test@example.com"}}
+                         mozLoop={navigator.mozLoop}
                          dispatcher={dispatcher}
                          roomStore={roomStore} />
             </Example>
-            <Example summary="Room list tab" dashed="true" style={{width: "332px"}}>
-              <PanelView client={mockClient} notifications={notifications}
+            <Example summary="Contact import success" dashed="true" style={{width: "332px"}}>
+              <PanelView notifications={new loop.shared.models.NotificationCollection([{level: "success", message: "Import success"}])}
                          userProfile={{email: "test@example.com"}}
+                         mozLoop={mockMozLoopRooms}
                          dispatcher={dispatcher}
                          roomStore={roomStore}
-                         selectedTab="rooms" />
+                         selectedTab="contacts" />
+            </Example>
+            <Example summary="Contact import error" dashed="true" style={{width: "332px"}}>
+              <PanelView notifications={new loop.shared.models.NotificationCollection([{level: "error", message: "Import error"}])}
+                         userProfile={{email: "test@example.com"}}
+                         mozLoop={mockMozLoopRooms}
+                         dispatcher={dispatcher}
+                         roomStore={roomStore}
+                         selectedTab="contacts" />
             </Example>
           </Section>
 
@@ -366,13 +375,14 @@
             <Example summary="Call Failed" dashed="true"
                      style={{width: "260px", height: "265px"}}>
               <div className="fx-embedded">
-                <CallFailedView dispatcher={dispatcher} />
+                <CallFailedView dispatcher={dispatcher} store={conversationStore} />
               </div>
             </Example>
             <Example summary="Call Failed — with call URL error" dashed="true"
                      style={{width: "260px", height: "265px"}}>
               <div className="fx-embedded">
-                <CallFailedView dispatcher={dispatcher} emailLinkError={true} />
+                <CallFailedView dispatcher={dispatcher} emailLinkError={true}
+                                store={conversationStore} />
               </div>
             </Example>
           </Section>
@@ -535,7 +545,7 @@
           <Section name="UnsupportedBrowserView">
             <Example summary="Standalone Unsupported Browser">
               <div className="standalone">
-                <UnsupportedBrowserView />
+                <UnsupportedBrowserView helper={{isFirefox: returnFalse}}/>
               </div>
             </Example>
           </Section>
@@ -621,6 +631,17 @@
               </div>
             </Example>
 
+            <Example summary="Standalone room conversation (feedback)">
+              <div className="standalone">
+                <StandaloneRoomView
+                  dispatcher={dispatcher}
+                  activeRoomStore={activeRoomStore}
+                  feedbackStore={feedbackStore}
+                  roomState={ROOM_STATES.ENDED}
+                  helper={{isFirefox: returnFalse}} />
+              </div>
+            </Example>
+
             <Example summary="Standalone room conversation (failed)">
               <div className="standalone">
                 <StandaloneRoomView
@@ -683,7 +704,11 @@
   }
 
   window.addEventListener("DOMContentLoaded", function() {
-    React.renderComponent(<App />, document.body);
+    try {
+      React.render(<App />, document.body);
+    } catch(err) {
+      console.log(err);
+    }
 
     _renderComponentsInIframes();
 

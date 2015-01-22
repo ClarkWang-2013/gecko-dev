@@ -50,6 +50,7 @@
 #include "nsPluginStreamListenerPeer.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/plugins/PluginAsyncSurrogate.h"
 #include "mozilla/plugins/PluginBridge.h"
 #include "mozilla/plugins/PluginTypes.h"
 #include "mozilla/Preferences.h"
@@ -110,6 +111,7 @@
 using namespace mozilla;
 using mozilla::TimeStamp;
 using mozilla::plugins::PluginTag;
+using mozilla::plugins::PluginAsyncSurrogate;
 
 // Null out a strong ref to a linked list iteratively to avoid
 // exhausting the stack (bug 486349).
@@ -578,8 +580,7 @@ nsresult nsPluginHost::PostURL(nsISupports* pluginInst,
     }
   }
 
-  // if we don't have a target, just create a stream.  This does
-  // NS_OpenURI()!
+  // if we don't have a target, just create a stream.
   if (streamListener)
     rv = NewPluginURLStream(NS_ConvertUTF8toUTF16(url), instance,
                             streamListener,
@@ -830,6 +831,7 @@ nsPluginHost::InstantiatePluginInstance(const char *aMimeType, nsIURI* aURL,
   if (NS_FAILED(rv)) {
     return NS_ERROR_FAILURE;
   }
+  const bool isAsyncInit = (rv == NS_PLUGIN_INIT_PENDING);
 
   nsRefPtr<nsNPAPIPluginInstance> instance;
   rv = instanceOwner->GetInstance(getter_AddRefs(instance));
@@ -837,11 +839,9 @@ nsPluginHost::InstantiatePluginInstance(const char *aMimeType, nsIURI* aURL,
     return rv;
   }
 
-  if (instance) {
-    instanceOwner->CreateWidget();
-
-    // If we've got a native window, the let the plugin know about it.
-    instanceOwner->CallSetWindow();
+  // Async init plugins will initiate their own widget creation.
+  if (!isAsyncInit && instance) {
+    CreateWidget(instanceOwner);
   }
 
   // At this point we consider instantiation to be successful. Do not return an error.
@@ -1556,6 +1556,10 @@ nsPluginHost::ClearSiteData(nsIPluginTag* plugin, const nsACString& domain,
   }
 
   nsPluginTag* tag = static_cast<nsPluginTag*>(plugin);
+
+  if (!tag->IsEnabled()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
   // We only ensure support for clearing Flash site data for now.
   // We will also attempt to clear data for any plugin that happens
@@ -3327,6 +3331,14 @@ nsresult nsPluginHost::NewPluginStreamListener(nsIURI* aURI,
   return NS_OK;
 }
 
+void nsPluginHost::CreateWidget(nsPluginInstanceOwner* aOwner)
+{
+  aOwner->CreateWidget();
+
+  // If we've got a native window, the let the plugin know about it.
+  aOwner->CallSetWindow();
+}
+
 NS_IMETHODIMP nsPluginHost::Observe(nsISupports *aSubject,
                                     const char *aTopic,
                                     const char16_t *someData)
@@ -3952,6 +3964,12 @@ PluginDestructionGuard::PluginDestructionGuard(nsNPAPIPluginInstance *aInstance)
   : mInstance(aInstance)
 {
   Init();
+}
+
+PluginDestructionGuard::PluginDestructionGuard(PluginAsyncSurrogate *aSurrogate)
+  : mInstance(static_cast<nsNPAPIPluginInstance*>(aSurrogate->GetNPP()->ndata))
+{
+  InitAsync();
 }
 
 PluginDestructionGuard::PluginDestructionGuard(NPP npp)

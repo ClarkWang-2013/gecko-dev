@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.util.Log;
 import android.util.Xml;
 
+import org.mozilla.gecko.util.StringUtils;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -219,14 +220,6 @@ public class SearchEngine {
     }
 
     /**
-     * Determine whether a particular url belongs to this search engine. If not,
-     * the url will be sent to Fennec.
-     */
-    public boolean isSearchResultsPage(String url) {
-        return getResultsUri().getAuthority().equalsIgnoreCase(Uri.parse(url).getAuthority());
-    }
-
-    /**
      * Finds the search query encoded in a given results URL.
      *
      * @param url Current results URL.
@@ -234,7 +227,7 @@ public class SearchEngine {
      */
     public String queryForResultsUrl(String url) {
         final Uri resultsUri = getResultsUri();
-        final Set<String> names = resultsUri.getQueryParameterNames();
+        final Set<String> names = StringUtils.getQueryParameterNames(resultsUri);
         for (String name : names) {
             if (resultsUri.getQueryParameter(name).matches(OS_PARAM_USER_DEFINED)) {
                 return Uri.parse(url).getQueryParameter(name);

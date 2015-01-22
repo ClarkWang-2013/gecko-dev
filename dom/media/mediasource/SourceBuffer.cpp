@@ -49,6 +49,10 @@ SourceBuffer::SetMode(SourceBufferAppendMode aMode, ErrorResult& aRv)
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
+  if (aMode == SourceBufferAppendMode::Sequence) {
+    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    return;
+  }
   MOZ_ASSERT(mMediaSource->ReadyState() != MediaSourceReadyState::Closed);
   if (mMediaSource->ReadyState() == MediaSourceReadyState::Ended) {
     mMediaSource->SetReadyState(MediaSourceReadyState::Open);
@@ -229,7 +233,7 @@ SourceBuffer::Ended()
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(IsAttached());
   MSE_DEBUG("SourceBuffer(%p)::Ended", this);
-  mTrackBuffer->DiscardDecoder();
+  mTrackBuffer->EndCurrentDecoder();
 }
 
 SourceBuffer::SourceBuffer(MediaSource* aMediaSource, const nsACString& aType)
@@ -323,6 +327,16 @@ SourceBuffer::AbortUpdating()
 }
 
 void
+SourceBuffer::CheckEndTime()
+{
+  // Check if we need to update mMediaSource duration
+  double endTime = GetBufferedEnd();
+  if (endTime > mMediaSource->Duration()) {
+    mMediaSource->SetDuration(endTime, MSRangeRemovalAction::SKIP);
+  }
+}
+
+void
 SourceBuffer::AppendData(const uint8_t* aData, uint32_t aLength, ErrorResult& aRv)
 {
   MSE_DEBUG("SourceBuffer(%p)::AppendData(aLength=%u)", this, aLength);
@@ -331,16 +345,20 @@ SourceBuffer::AppendData(const uint8_t* aData, uint32_t aLength, ErrorResult& aR
   }
   StartUpdating();
 
-  if (!mTrackBuffer->AppendData(aData, aLength)) {
-    Optional<MediaSourceEndOfStreamError> decodeError(MediaSourceEndOfStreamError::Decode);
-    ErrorResult dummy;
-    mMediaSource->EndOfStream(decodeError, dummy);
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
-  }
+  MOZ_ASSERT(mAppendMode == SourceBufferAppendMode::Segments,
+             "We don't handle timestampOffset for sequence mode yet");
+  if (aLength) {
+    if (!mTrackBuffer->AppendData(aData, aLength, mTimestampOffset * USECS_PER_S)) {
+      nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethodWithArg<bool>(this, &SourceBuffer::AppendError, true);
+      NS_DispatchToMainThread(event);
+      return;
+    }
 
-  if (mTrackBuffer->HasInitSegment()) {
-    mMediaSource->QueueInitializationEvent();
+    if (mTrackBuffer->HasInitSegment()) {
+      mMediaSource->QueueInitializationEvent();
+    }
+
+    CheckEndTime();
   }
 
   // Run the final step of the buffer append algorithm asynchronously to
@@ -348,6 +366,29 @@ SourceBuffer::AppendData(const uint8_t* aData, uint32_t aLength, ErrorResult& aR
   // by the spec.
   nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethod(this, &SourceBuffer::StopUpdating);
   NS_DispatchToMainThread(event);
+}
+
+void
+SourceBuffer::AppendError(bool aDecoderError)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  if (!mUpdating) {
+    // The buffer append algorithm has been interrupted by abort().
+    return;
+  }
+  mTrackBuffer->ResetParserState();
+
+  mUpdating = false;
+
+  QueueAsyncSimpleEvent("error");
+  QueueAsyncSimpleEvent("updateend");
+
+  if (aDecoderError) {
+    Optional<MediaSourceEndOfStreamError> decodeError(
+      MediaSourceEndOfStreamError::Decode);
+    ErrorResult dummy;
+    mMediaSource->EndOfStream(decodeError, dummy);
+  }
 }
 
 bool
@@ -369,14 +410,17 @@ SourceBuffer::PrepareAppend(ErrorResult& aRv)
   // TODO: Make the eviction threshold smaller for audio-only streams.
   // TODO: Drive evictions off memory pressure notifications.
   // TODO: Consider a global eviction threshold  rather than per TrackBuffer.
-  bool evicted = mTrackBuffer->EvictData(mEvictionThreshold);
+  double newBufferStartTime = 0.0;
+  bool evicted =
+    mTrackBuffer->EvictData(mMediaSource->GetDecoder()->GetCurrentTime(),
+                            mEvictionThreshold, &newBufferStartTime);
   if (evicted) {
     MSE_DEBUG("SourceBuffer(%p)::AppendData Evict; current buffered start=%f",
               this, GetBufferedStart());
 
     // We notify that we've evicted from the time range 0 through to
     // the current start point.
-    mMediaSource->NotifyEvicted(0.0, GetBufferedStart());
+    mMediaSource->NotifyEvicted(0.0, newBufferStartTime);
   }
 
   // TODO: Test buffer full flag.

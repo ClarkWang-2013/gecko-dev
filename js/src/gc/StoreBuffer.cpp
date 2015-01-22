@@ -4,15 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef JSGC_GENERATIONAL
-
 #include "gc/StoreBuffer.h"
 
 #include "mozilla/Assertions.h"
 
 #include "gc/Statistics.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/ForkJoin.h"
 
 #include "jsgcinlines.h"
 
@@ -189,12 +186,6 @@ StoreBuffer::setAboutToOverflow()
     runtime_->gc.requestMinorGC(JS::gcreason::FULL_STORE_BUFFER);
 }
 
-bool
-StoreBuffer::inParallelSection() const
-{
-    return InParallelSection();
-}
-
 void
 StoreBuffer::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::GCSizes
 *sizes)
@@ -256,5 +247,3 @@ template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::ValueEdge>;
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::CellPtrEdge>;
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::SlotsEdge>;
 template struct StoreBuffer::MonoTypeBuffer<StoreBuffer::WholeCellEdges>;
-
-#endif /* JSGC_GENERATIONAL */

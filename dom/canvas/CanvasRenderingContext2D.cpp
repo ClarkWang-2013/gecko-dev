@@ -164,7 +164,7 @@ public:
   NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize)
+                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE
   {
     return MOZ_COLLECT_REPORT(
       "canvas-2d-pixels", KIND_OTHER, UNITS_BYTES,
@@ -578,7 +578,7 @@ public:
     return mTarget;
   }
 
-  DrawTarget* operator->()
+  DrawTarget* operator->() MOZ_NO_ADDREF_RELEASE_ON_RETURN
   {
     return mTarget;
   }
@@ -695,7 +695,7 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(CanvasPattern, mContext)
 class CanvasDrawObserver
 {
 public:
-  CanvasDrawObserver(CanvasRenderingContext2D* aCanvasContext);
+  explicit CanvasDrawObserver(CanvasRenderingContext2D* aCanvasContext);
 
   // Only enumerate draw calls that could affect the heuristic
   enum DrawCallType {
@@ -2310,10 +2310,12 @@ class CanvasUserSpaceMetrics : public UserSpaceMetricsWithSize
 {
 public:
   CanvasUserSpaceMetrics(const gfx::IntSize& aSize, const nsFont& aFont,
-                         nsIAtom* aFontLanguage, nsPresContext* aPresContext)
+                         nsIAtom* aFontLanguage, bool aExplicitLanguage,
+                         nsPresContext* aPresContext)
     : mSize(aSize)
     , mFont(aFont)
     , mFontLanguage(aFontLanguage)
+    , mExplicitLanguage(aExplicitLanguage)
     , mPresContext(aPresContext)
   {
   }
@@ -2329,8 +2331,8 @@ public:
     gfxTextPerfMetrics* tp = mPresContext->GetTextPerfMetrics();
     nsRefPtr<nsFontMetrics> fontMetrics;
     nsDeviceContext* dc = mPresContext->DeviceContext();
-    dc->GetMetricsFor(mFont, mFontLanguage, gfxFont::eHorizontal,
-                      nullptr, tp,
+    dc->GetMetricsFor(mFont, mFontLanguage, mExplicitLanguage,
+                      gfxFont::eHorizontal, nullptr, tp,
                       *getter_AddRefs(fontMetrics));
     return NSAppUnitsToFloatPixels(fontMetrics->XHeight(),
                                    nsPresContext::AppUnitsPerCSSPixel());
@@ -2343,6 +2345,7 @@ private:
   gfx::IntSize mSize;
   const nsFont& mFont;
   nsIAtom* mFontLanguage;
+  bool mExplicitLanguage;
   nsPresContext* mPresContext;
 };
 
@@ -2360,6 +2363,7 @@ CanvasRenderingContext2D::UpdateFilter()
       CanvasUserSpaceMetrics(IntSize(mWidth, mHeight),
                              CurrentState().fontFont,
                              CurrentState().fontLanguage,
+                             CurrentState().fontExplicitLanguage,
                              presShell->GetPresContext()),
       gfxRect(0, 0, mWidth, mHeight),
       CurrentState().filterAdditionalImages);
@@ -2991,7 +2995,7 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
 
   const nsStyleFont* fontStyle = sc->StyleFont();
 
-  nsIAtom* language = sc->StyleFont()->mLanguage;
+  nsIAtom* language = fontStyle->mLanguage;
   if (!language) {
     language = presShell->GetPresContext()->GetLanguageFromCharset();
   }
@@ -3013,6 +3017,7 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
                      fontStyle->mFont.stretch,
                      NSAppUnitsToFloatPixels(fontStyle->mSize, float(aupcp)),
                      language,
+                     fontStyle->mExplicitLanguage,
                      fontStyle->mFont.sizeAdjust,
                      fontStyle->mFont.systemFont,
                      printerFont,
@@ -3033,6 +3038,7 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
   CurrentState().fontFont = fontStyle->mFont;
   CurrentState().fontFont.size = fontStyle->mSize;
   CurrentState().fontLanguage = fontStyle->mLanguage;
+  CurrentState().fontExplicitLanguage = fontStyle->mExplicitLanguage;
 }
 
 void
@@ -3224,6 +3230,12 @@ CanvasRenderingContext2D::RemoveHitRegion(const nsAString& id)
   }
 }
 
+void
+CanvasRenderingContext2D::ClearHitRegions()
+{
+  mHitRegionsOptions.Clear();
+}
+
 bool
 CanvasRenderingContext2D::GetHitRegionRect(Element* aElement, nsRect& aRect)
 {
@@ -3246,6 +3258,22 @@ CanvasRenderingContext2D::GetHitRegionRect(Element* aElement, nsRect& aRect)
  */
 struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcessor
 {
+  CanvasBidiProcessor()
+    : nsBidiPresUtils::BidiProcessor()
+  {
+    if (Preferences::GetBool(GFX_MISSING_FONTS_NOTIFY_PREF)) {
+      mMissingFonts = new gfxMissingFontRecorder();
+    }
+  }
+
+  ~CanvasBidiProcessor()
+  {
+    // notify front-end code if we encountered missing glyphs in any script
+    if (mMissingFonts) {
+      mMissingFonts->Flush();
+    }
+  }
+
   typedef CanvasRenderingContext2D::ContextState ContextState;
 
   virtual void SetText(const char16_t* text, int32_t length, nsBidiDirection direction)
@@ -3262,7 +3290,8 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
                                      length,
                                      mThebes,
                                      mAppUnitsPerDevPixel,
-                                     flags);
+                                     flags,
+                                     mMissingFonts);
   }
 
   virtual nscoord GetWidth()
@@ -3420,7 +3449,7 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
 
         const gfxTextRun::DetailedGlyph *d = mTextRun->GetDetailedGlyphs(i);
 
-        if (glyphs[i].IsMissing()) {
+        if (glyphs[i].IsMissing() && d->mAdvance > 0) {
           newGlyph.mIndex = 0;
           if (rtl) {
             inlinePos = baselineOriginInline - advanceSum -
@@ -3507,6 +3536,10 @@ struct MOZ_STACK_CLASS CanvasBidiProcessor : public nsBidiPresUtils::BidiProcess
 
   // current font
   gfxFontGroup* mFontgrp;
+
+  // to record any unsupported characters found in the text,
+  // and notify front-end if it is interested
+  nsAutoPtr<gfxMissingFontRecorder> mMissingFonts;
 
   // dev pixel conversion factor
   int32_t mAppUnitsPerDevPixel;

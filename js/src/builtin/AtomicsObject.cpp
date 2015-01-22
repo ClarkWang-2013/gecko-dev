@@ -145,19 +145,7 @@ MSC_FETCHBITOP(uint32_t, long, _InterlockedAnd, _InterlockedOr, _InterlockedXor)
 
 const Class AtomicsObject::class_ = {
     "Atomics",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_Atomics),
-    JS_PropertyStub,
-    JS_DeletePropertyStub,
-    JS_PropertyStub,
-    JS_StrictPropertyStub,
-    JS_EnumerateStub,
-    JS_ResolveStub,
-    JS_ConvertStub,
-    nullptr,                 // finalize
-    nullptr,                 // call
-    nullptr,                 // hasInstance
-    nullptr,                 // construct
-    nullptr                  // trace
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Atomics)
 };
 
 static bool
@@ -740,7 +728,7 @@ class AutoLockFutexAPI
 {
     JS::PerRuntimeFutexAPI * const fx;
   public:
-    AutoLockFutexAPI(JS::PerRuntimeFutexAPI *fx) : fx(fx) {
+    explicit AutoLockFutexAPI(JS::PerRuntimeFutexAPI *fx) : fx(fx) {
         fx->lock();
     }
     ~AutoLockFutexAPI() {
@@ -1071,7 +1059,7 @@ AtomicsObject::initClass(JSContext *cx, Handle<GlobalObject *> global)
     RootedValue AtomicsValue(cx, ObjectValue(*Atomics));
 
     // Everything is set up, install Atomics on the global object.
-    if (!JSObject::defineProperty(cx, global, cx->names().Atomics, AtomicsValue, nullptr, nullptr, 0))
+    if (!DefineProperty(cx, global, cx->names().Atomics, AtomicsValue, nullptr, nullptr, 0))
         return nullptr;
 
     global->setConstructor(JSProto_Atomics, AtomicsValue);

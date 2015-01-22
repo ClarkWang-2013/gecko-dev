@@ -43,6 +43,13 @@ public:
   {
     BindToOwner(aWindow);
   }
+  explicit DOMEventTargetHelper(nsIGlobalObject* aGlobalObject)
+    : mParentObject(nullptr)
+    , mOwnerWindow(nullptr)
+    , mHasOrHasHadOwnerWindow(false)
+  {
+    BindToOwner(aGlobalObject);
+  }
   explicit DOMEventTargetHelper(DOMEventTargetHelper* aOther)
     : mParentObject(nullptr)
     , mOwnerWindow(nullptr)
@@ -92,6 +99,11 @@ public:
 #endif
 
     return static_cast<DOMEventTargetHelper*>(target);
+  }
+
+  bool HasListenersFor(const nsAString& aType)
+  {
+    return mListenerManager && mListenerManager->HasListenersFor(aType);
   }
 
   bool HasListenersFor(nsIAtom* aTypeWithOn)
@@ -264,11 +276,11 @@ NS_DEFINE_STATIC_IID_ACCESSOR(DOMEventTargetHelper,
   using _class::RemoveEventListener;                \
   NS_FORWARD_NSIDOMEVENTTARGET(_class::)            \
   virtual mozilla::EventListenerManager*            \
-  GetOrCreateListenerManager() {                    \
+  GetOrCreateListenerManager() MOZ_OVERRIDE {       \
     return _class::GetOrCreateListenerManager();    \
   }                                                 \
   virtual mozilla::EventListenerManager*            \
-  GetExistingListenerManager() const {              \
+  GetExistingListenerManager() const MOZ_OVERRIDE { \
     return _class::GetExistingListenerManager();    \
   }
 

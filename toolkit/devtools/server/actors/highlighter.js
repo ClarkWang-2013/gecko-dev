@@ -421,6 +421,9 @@ let CustomHighlighterFront = protocol.FrontClass(CustomHighlighterActor, {});
 function CanvasFrameAnonymousContentHelper(tabActor, nodeBuilder) {
   this.tabActor = tabActor;
   this.nodeBuilder = nodeBuilder;
+  this.anonymousContentDocument = this.tabActor.window.document;
+  // XXX the next line is a wallpaper for bug 1123362.
+  this.anonymousContentGlobal = Cu.getGlobalForObject(this.anonymousContentDocument);
 
   this._insert();
 
@@ -433,11 +436,13 @@ CanvasFrameAnonymousContentHelper.prototype = {
     // If the current window isn't the one the content was inserted into, this
     // will fail, but that's fine.
     try {
-      let doc = this.tabActor.window.document;
+      let doc = this.anonymousContentDocument;
       doc.removeAnonymousContent(this._content);
-    } catch (e) {}
+    } catch (e) {console.error(e)}
     events.off(this.tabActor, "navigate", this._onNavigate);
     this.tabActor = this.nodeBuilder = this._content = null;
+    this.anonymousContentDocument = null;
+    this.anonymousContentGlobal = null;
   },
 
   _insert: function() {
@@ -684,16 +689,15 @@ AutoRefreshHighlighter.prototype = {
   _startRefreshLoop: function() {
     let win = this.currentNode.ownerDocument.defaultView;
     this.rafID = win.requestAnimationFrame(this._startRefreshLoop.bind(this));
+    this.rafWin = win;
     this.update();
   },
 
   _stopRefreshLoop: function() {
-    if (!this.rafID) {
-      return;
+    if (this.rafID && !Cu.isDeadWrapper(this.rafWin)) {
+      this.rafWin.cancelAnimationFrame(this.rafID);
     }
-    let win = this.currentNode.ownerDocument.defaultView;
-    win.cancelAnimationFrame(this.rafID);
-    this.rafID = null;
+    this.rafID = this.rafWin = null;
   },
 
   destroy: function() {

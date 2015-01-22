@@ -133,7 +133,7 @@ public:
   MediaByteRange(int64_t aStart, int64_t aEnd)
     : mStart(aStart), mEnd(aEnd)
   {
-    NS_ASSERTION(mStart < mEnd, "Range should end after start!");
+    NS_ASSERTION(mStart <= mEnd, "Range should end after start!");
   }
 
   explicit MediaByteRange(TimestampedMediaByteRange& aByteRange);
@@ -164,6 +164,8 @@ public:
     return MediaByteRange(std::min(mStart, aByteRange.mStart),
                           std::max(mEnd, aByteRange.mEnd));
   }
+
+  int64_t Length() { return mEnd - mStart; }
 
   int64_t mStart, mEnd;
 };
@@ -313,10 +315,10 @@ public:
   virtual nsresult Seek(int32_t aWhence, int64_t aOffset) = 0;
   // Report the current offset in bytes from the start of the stream.
   virtual int64_t Tell() = 0;
-  // Moves any existing channel loads into the background, so that they don't
-  // block the load event. Any new loads initiated (for example to seek)
-  // will also be in the background.
-  virtual void MoveLoadsToBackground() {}
+  // Moves any existing channel loads into or out of background. Background
+  // loads don't block the load event. This also determines whether or not any
+  // new loads initiated (for example to seek) will be in the background.
+  virtual void SetLoadInBackground(bool aLoadInBackground) {}
   // Ensures that the value returned by IsSuspendedByCache below is up to date
   // (i.e. the cache has examined this stream at least once).
   virtual void EnsureCacheUpToDate() {}
@@ -428,8 +430,8 @@ private:
 
 class BaseMediaResource : public MediaResource {
 public:
-  virtual nsIURI* URI() const { return mURI; }
-  virtual void MoveLoadsToBackground();
+  virtual nsIURI* URI() const MOZ_OVERRIDE { return mURI; }
+  virtual void SetLoadInBackground(bool aLoadInBackground) MOZ_OVERRIDE;
 
   virtual size_t SizeOfExcludingThis(
                   MallocSizeOf aMallocSizeOf) const MOZ_OVERRIDE
@@ -502,8 +504,10 @@ protected:
   // is safe.
   const nsAutoCString mContentType;
 
-  // True if MoveLoadsToBackground() has been called, i.e. the load event
-  // has been fired, and all channel loads will be in the background.
+  // True if SetLoadInBackground() has been called with
+  // aLoadInBackground = true, i.e. when the document load event is not
+  // blocked by this resource, and all channel loads will be in the
+  // background.
   bool mLoadInBackground;
 };
 
@@ -536,6 +540,8 @@ public:
   void CacheClientNotifyDataEnded(nsresult aStatus);
   // Notify that the principal for the cached resource changed.
   void CacheClientNotifyPrincipalChanged();
+  // Notify the decoder that the cache suspended status changed.
+  void CacheClientNotifySuspendedStatusChanged();
 
   // These are called on the main thread by MediaCache. These shouldn't block,
   // but they may grab locks --- the media cache is not holding its lock
@@ -558,15 +564,15 @@ public:
   virtual void NotifyLastByteRange() MOZ_OVERRIDE;
 
   // Main thread
-  virtual nsresult Open(nsIStreamListener** aStreamListener);
-  virtual nsresult Close();
-  virtual void     Suspend(bool aCloseImmediately);
-  virtual void     Resume();
-  virtual already_AddRefed<nsIPrincipal> GetCurrentPrincipal();
+  virtual nsresult Open(nsIStreamListener** aStreamListener) MOZ_OVERRIDE;
+  virtual nsresult Close() MOZ_OVERRIDE;
+  virtual void     Suspend(bool aCloseImmediately) MOZ_OVERRIDE;
+  virtual void     Resume() MOZ_OVERRIDE;
+  virtual already_AddRefed<nsIPrincipal> GetCurrentPrincipal() MOZ_OVERRIDE;
   // Return true if the stream has been closed.
   bool IsClosed() const { return mCacheStream.IsClosed(); }
-  virtual bool     CanClone();
-  virtual already_AddRefed<MediaResource> CloneData(MediaDecoder* aDecoder);
+  virtual bool     CanClone() MOZ_OVERRIDE;
+  virtual already_AddRefed<MediaResource> CloneData(MediaDecoder* aDecoder) MOZ_OVERRIDE;
   // Set statistics to be recorded to the object passed in. If not called,
   // |ChannelMediaResource| will create it's own statistics objects in |Open|.
   void RecordStatisticsTo(MediaChannelStatistics *aStatistics) MOZ_OVERRIDE {
@@ -576,28 +582,28 @@ public:
       mChannelStatistics = aStatistics;
     }
   }
-  virtual nsresult ReadFromCache(char* aBuffer, int64_t aOffset, uint32_t aCount);
-  virtual void     EnsureCacheUpToDate();
+  virtual nsresult ReadFromCache(char* aBuffer, int64_t aOffset, uint32_t aCount) MOZ_OVERRIDE;
+  virtual void     EnsureCacheUpToDate() MOZ_OVERRIDE;
 
   // Other thread
-  virtual void     SetReadMode(MediaCacheStream::ReadMode aMode);
-  virtual void     SetPlaybackRate(uint32_t aBytesPerSecond);
-  virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes);
+  virtual void     SetReadMode(MediaCacheStream::ReadMode aMode) MOZ_OVERRIDE;
+  virtual void     SetPlaybackRate(uint32_t aBytesPerSecond) MOZ_OVERRIDE;
+  virtual nsresult Read(char* aBuffer, uint32_t aCount, uint32_t* aBytes) MOZ_OVERRIDE;
   virtual nsresult ReadAt(int64_t offset, char* aBuffer,
-                          uint32_t aCount, uint32_t* aBytes);
-  virtual nsresult Seek(int32_t aWhence, int64_t aOffset);
-  virtual int64_t  Tell();
+                          uint32_t aCount, uint32_t* aBytes) MOZ_OVERRIDE;
+  virtual nsresult Seek(int32_t aWhence, int64_t aOffset) MOZ_OVERRIDE;
+  virtual int64_t  Tell() MOZ_OVERRIDE;
 
   // Any thread
-  virtual void    Pin();
-  virtual void    Unpin();
-  virtual double  GetDownloadRate(bool* aIsReliable);
-  virtual int64_t GetLength();
-  virtual int64_t GetNextCachedData(int64_t aOffset);
-  virtual int64_t GetCachedDataEnd(int64_t aOffset);
-  virtual bool    IsDataCachedToEndOfResource(int64_t aOffset);
-  virtual bool    IsSuspendedByCache();
-  virtual bool    IsSuspended();
+  virtual void    Pin() MOZ_OVERRIDE;
+  virtual void    Unpin() MOZ_OVERRIDE;
+  virtual double  GetDownloadRate(bool* aIsReliable) MOZ_OVERRIDE;
+  virtual int64_t GetLength() MOZ_OVERRIDE;
+  virtual int64_t GetNextCachedData(int64_t aOffset) MOZ_OVERRIDE;
+  virtual int64_t GetCachedDataEnd(int64_t aOffset) MOZ_OVERRIDE;
+  virtual bool    IsDataCachedToEndOfResource(int64_t aOffset) MOZ_OVERRIDE;
+  virtual bool    IsSuspendedByCache() MOZ_OVERRIDE;
+  virtual bool    IsSuspended() MOZ_OVERRIDE;
   virtual bool    IsTransportSeekable() MOZ_OVERRIDE;
 
   virtual size_t SizeOfExcludingThis(
@@ -639,7 +645,7 @@ public:
   };
   friend class Listener;
 
-  nsresult GetCachedRanges(nsTArray<MediaByteRange>& aRanges);
+  virtual nsresult GetCachedRanges(nsTArray<MediaByteRange>& aRanges) MOZ_OVERRIDE;
 
 protected:
   // These are called on the main thread by Listener.
@@ -738,7 +744,7 @@ class MOZ_STACK_CLASS AutoPinned {
   }
 
   operator T*() const { return mResource; }
-  T* operator->() const { return mResource; }
+  T* operator->() const MOZ_NO_ADDREF_RELEASE_ON_RETURN { return mResource; }
 
 private:
   T* mResource;

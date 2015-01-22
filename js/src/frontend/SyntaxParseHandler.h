@@ -156,7 +156,7 @@ class SyntaxParseHandler
     Node newCaseOrDefault(uint32_t begin, Node expr, Node body) { return NodeGeneric; }
     Node newContinueStatement(PropertyName *label, const TokenPos &pos) { return NodeGeneric; }
     Node newBreakStatement(PropertyName *label, const TokenPos &pos) { return NodeGeneric; }
-    Node newReturnStatement(Node expr, const TokenPos &pos) { return NodeGeneric; }
+    Node newReturnStatement(Node expr, Node genrval, const TokenPos &pos) { return NodeGeneric; }
 
     Node newLabeledStatement(PropertyName *label, Node stmt, uint32_t begin) {
         return NodeGeneric;
@@ -230,6 +230,9 @@ class SyntaxParseHandler
         // String literals enclosed by parentheses are ignored during
         // strict mode parsing.
         return (pn == NodeString) ? NodeGeneric : pn;
+    }
+    Node setLikelyIIFE(Node pn) {
+        return pn; // Remain in syntax-parse mode.
     }
     void setPrologue(Node pn) {}
 

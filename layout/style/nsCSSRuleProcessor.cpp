@@ -218,7 +218,7 @@ RuleHash_CIMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
   nsIAtom *match_atom = const_cast<nsIAtom*>(static_cast<const nsIAtom*>
                                               (key));
   // Use our extra |getKey| callback to avoid code duplication.
-  nsIAtom *entry_atom = ToLocalOps(table->ops)->getKey(table, hdr);
+  nsIAtom *entry_atom = ToLocalOps(table->Ops())->getKey(table, hdr);
 
   // Check for case-sensitive match first.
   if (match_atom == entry_atom)
@@ -240,7 +240,7 @@ RuleHash_CSMatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
   nsIAtom *match_atom = const_cast<nsIAtom*>(static_cast<const nsIAtom*>
                                               (key));
   // Use our extra |getKey| callback to avoid code duplication.
-  nsIAtom *entry_atom = ToLocalOps(table->ops)->getKey(table, hdr);
+  nsIAtom *entry_atom = ToLocalOps(table->Ops())->getKey(table, hdr);
 
   return match_atom == entry_atom;
 }
@@ -362,26 +362,20 @@ RuleHash_NameSpaceTable_MatchEntry(PLDHashTable *table,
 }
 
 static const PLDHashTableOps RuleHash_TagTable_Ops = {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   RuleHash_TagTable_MatchEntry,
   RuleHash_TagTable_MoveEntry,
   RuleHash_TagTable_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_TagTable_InitEntry
 };
 
 // Case-sensitive ops.
 static const RuleHashTableOps RuleHash_ClassTable_CSOps = {
   {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   RuleHash_CSMatchEntry,
   RuleHash_MoveEntry,
   RuleHash_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_InitEntry
   },
   RuleHash_ClassTable_GetKey
@@ -390,13 +384,10 @@ static const RuleHashTableOps RuleHash_ClassTable_CSOps = {
 // Case-insensitive ops.
 static const RuleHashTableOps RuleHash_ClassTable_CIOps = {
   {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   RuleHash_CIHashKey,
   RuleHash_CIMatchEntry,
   RuleHash_MoveEntry,
   RuleHash_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_InitEntry
   },
   RuleHash_ClassTable_GetKey
@@ -405,13 +396,10 @@ static const RuleHashTableOps RuleHash_ClassTable_CIOps = {
 // Case-sensitive ops.
 static const RuleHashTableOps RuleHash_IdTable_CSOps = {
   {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   RuleHash_CSMatchEntry,
   RuleHash_MoveEntry,
   RuleHash_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_InitEntry
   },
   RuleHash_IdTable_GetKey
@@ -420,26 +408,20 @@ static const RuleHashTableOps RuleHash_IdTable_CSOps = {
 // Case-insensitive ops.
 static const RuleHashTableOps RuleHash_IdTable_CIOps = {
   {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   RuleHash_CIHashKey,
   RuleHash_CIMatchEntry,
   RuleHash_MoveEntry,
   RuleHash_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_InitEntry
   },
   RuleHash_IdTable_GetKey
 };
 
 static const PLDHashTableOps RuleHash_NameSpaceTable_Ops = {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   RuleHash_NameSpaceTable_HashKey,
   RuleHash_NameSpaceTable_MatchEntry,
   RuleHash_MoveEntry,
   RuleHash_ClearEntry,
-  PL_DHashFinalizeStub,
   RuleHash_InitEntry
 };
 
@@ -472,8 +454,7 @@ protected:
   void AppendUniversalRule(const RuleSelectorPair& aRuleInfo);
 
   int32_t     mRuleCount;
-  // The hashtables are lazily initialized; we use a null .ops to
-  // indicate that they need initialization.
+  // The hashtables are lazily initialized.
   PLDHashTable mIdTable;
   PLDHashTable mClassTable;
   PLDHashTable mTagTable;
@@ -532,11 +513,6 @@ RuleHash::RuleHash(bool aQuirksMode)
 #endif
 {
   MOZ_COUNT_CTOR(RuleHash);
-
-  mTagTable.ops = nullptr;
-  mIdTable.ops = nullptr;
-  mClassTable.ops = nullptr;
-  mNameSpaceTable.ops = nullptr;
 }
 
 RuleHash::~RuleHash()
@@ -579,16 +555,16 @@ RuleHash::~RuleHash()
     delete [] mEnumList;
   }
   // delete arena for strings and small objects
-  if (mIdTable.ops) {
+  if (mIdTable.IsInitialized()) {
     PL_DHashTableFinish(&mIdTable);
   }
-  if (mClassTable.ops) {
+  if (mClassTable.IsInitialized()) {
     PL_DHashTableFinish(&mClassTable);
   }
-  if (mTagTable.ops) {
+  if (mTagTable.IsInitialized()) {
     PL_DHashTableFinish(&mTagTable);
   }
-  if (mNameSpaceTable.ops) {
+  if (mNameSpaceTable.IsInitialized()) {
     PL_DHashTableFinish(&mNameSpaceTable);
   }
 }
@@ -598,7 +574,7 @@ void RuleHash::AppendRuleToTable(PLDHashTable* aTable, const void* aKey,
 {
   // Get a new or existing entry.
   RuleHashTableEntry *entry = static_cast<RuleHashTableEntry*>
-                                         (PL_DHashTableOperate(aTable, aKey, PL_DHASH_ADD));
+                                         (PL_DHashTableAdd(aTable, aKey));
   if (!entry)
     return;
   entry->mRules.AppendElement(RuleValue(aRuleInfo, mRuleCount++, mQuirksMode));
@@ -610,7 +586,7 @@ AppendRuleToTagTable(PLDHashTable* aTable, nsIAtom* aKey,
 {
   // Get a new or exisiting entry
   RuleHashTagTableEntry *entry = static_cast<RuleHashTagTableEntry*>
-    (PL_DHashTableOperate(aTable, aKey, PL_DHASH_ADD));
+    (PL_DHashTableAdd(aTable, aKey));
   if (!entry)
     return;
 
@@ -629,29 +605,29 @@ void RuleHash::AppendRule(const RuleSelectorPair& aRuleInfo)
     selector = selector->mNext;
   }
   if (nullptr != selector->mIDList) {
-    if (!mIdTable.ops) {
+    if (!mIdTable.IsInitialized()) {
       PL_DHashTableInit(&mIdTable,
                         mQuirksMode ? &RuleHash_IdTable_CIOps.ops
                                     : &RuleHash_IdTable_CSOps.ops,
-                        nullptr, sizeof(RuleHashTableEntry));
+                        sizeof(RuleHashTableEntry));
     }
     AppendRuleToTable(&mIdTable, selector->mIDList->mAtom, aRuleInfo);
     RULE_HASH_STAT_INCREMENT(mIdSelectors);
   }
   else if (nullptr != selector->mClassList) {
-    if (!mClassTable.ops) {
+    if (!mClassTable.IsInitialized()) {
       PL_DHashTableInit(&mClassTable,
                         mQuirksMode ? &RuleHash_ClassTable_CIOps.ops
                                     : &RuleHash_ClassTable_CSOps.ops,
-                        nullptr, sizeof(RuleHashTableEntry));
+                        sizeof(RuleHashTableEntry));
     }
     AppendRuleToTable(&mClassTable, selector->mClassList->mAtom, aRuleInfo);
     RULE_HASH_STAT_INCREMENT(mClassSelectors);
   }
   else if (selector->mLowercaseTag) {
     RuleValue ruleValue(aRuleInfo, mRuleCount++, mQuirksMode);
-    if (!mTagTable.ops) {
-      PL_DHashTableInit(&mTagTable, &RuleHash_TagTable_Ops, nullptr,
+    if (!mTagTable.IsInitialized()) {
+      PL_DHashTableInit(&mTagTable, &RuleHash_TagTable_Ops,
                         sizeof(RuleHashTagTableEntry));
     }
     AppendRuleToTagTable(&mTagTable, selector->mLowercaseTag, ruleValue);
@@ -663,8 +639,8 @@ void RuleHash::AppendRule(const RuleSelectorPair& aRuleInfo)
     }
   }
   else if (kNameSpaceID_Unknown != selector->mNameSpace) {
-    if (!mNameSpaceTable.ops) {
-      PL_DHashTableInit(&mNameSpaceTable, &RuleHash_NameSpaceTable_Ops, nullptr,
+    if (!mNameSpaceTable.IsInitialized()) {
+      PL_DHashTableInit(&mNameSpaceTable, &RuleHash_NameSpaceTable_Ops,
                         sizeof(RuleHashTableEntry));
     }
     AppendRuleToTable(&mNameSpaceTable,
@@ -723,36 +699,34 @@ void RuleHash::EnumerateAllRules(Element* aElement, ElementDependentRuleProcesso
     RULE_HASH_STAT_INCREMENT_LIST_COUNT(mUniversalRules, mElementUniversalCalls);
   }
   // universal rules within the namespace
-  if (kNameSpaceID_Unknown != nameSpace && mNameSpaceTable.ops) {
+  if (kNameSpaceID_Unknown != nameSpace && mNameSpaceTable.IsInitialized()) {
     RuleHashTableEntry *entry = static_cast<RuleHashTableEntry*>
-                                           (PL_DHashTableOperate(&mNameSpaceTable, NS_INT32_TO_PTR(nameSpace),
-                             PL_DHASH_LOOKUP));
+                                           (PL_DHashTableLookup(&mNameSpaceTable, NS_INT32_TO_PTR(nameSpace)));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       mEnumList[valueCount++] = ToEnumData(entry->mRules);
       RULE_HASH_STAT_INCREMENT_LIST_COUNT(entry->mRules, mElementNameSpaceCalls);
     }
   }
-  if (mTagTable.ops) {
+  if (mTagTable.IsInitialized()) {
     RuleHashTableEntry *entry = static_cast<RuleHashTableEntry*>
-                                           (PL_DHashTableOperate(&mTagTable, tag, PL_DHASH_LOOKUP));
+                                           (PL_DHashTableLookup(&mTagTable, tag));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       mEnumList[valueCount++] = ToEnumData(entry->mRules);
       RULE_HASH_STAT_INCREMENT_LIST_COUNT(entry->mRules, mElementTagCalls);
     }
   }
-  if (id && mIdTable.ops) {
+  if (id && mIdTable.IsInitialized()) {
     RuleHashTableEntry *entry = static_cast<RuleHashTableEntry*>
-                                           (PL_DHashTableOperate(&mIdTable, id, PL_DHASH_LOOKUP));
+                                           (PL_DHashTableLookup(&mIdTable, id));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       mEnumList[valueCount++] = ToEnumData(entry->mRules);
       RULE_HASH_STAT_INCREMENT_LIST_COUNT(entry->mRules, mElementIdCalls);
     }
   }
-  if (mClassTable.ops) {
+  if (mClassTable.IsInitialized()) {
     for (int32_t index = 0; index < classCount; ++index) {
       RuleHashTableEntry *entry = static_cast<RuleHashTableEntry*>
-                                             (PL_DHashTableOperate(&mClassTable, classList->AtomAt(index),
-                             PL_DHASH_LOOKUP));
+                                             (PL_DHashTableLookup(&mClassTable, classList->AtomAt(index)));
       if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
         mEnumList[valueCount++] = ToEnumData(entry->mRules);
         RULE_HASH_STAT_INCREMENT_LIST_COUNT(entry->mRules, mElementClassCalls);
@@ -812,25 +786,25 @@ RuleHash::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = 0;
 
-  if (mIdTable.ops) {
+  if (mIdTable.IsInitialized()) {
     n += PL_DHashTableSizeOfExcludingThis(&mIdTable,
                                           SizeOfRuleHashTableEntry,
                                           aMallocSizeOf);
   }
 
-  if (mClassTable.ops) {
+  if (mClassTable.IsInitialized()) {
     n += PL_DHashTableSizeOfExcludingThis(&mClassTable,
                                           SizeOfRuleHashTableEntry,
                                           aMallocSizeOf);
   }
 
-  if (mTagTable.ops) {
+  if (mTagTable.IsInitialized()) {
     n += PL_DHashTableSizeOfExcludingThis(&mTagTable,
                                           SizeOfRuleHashTableEntry,
                                           aMallocSizeOf);
   }
 
-  if (mNameSpaceTable.ops) {
+  if (mNameSpaceTable.IsInitialized()) {
     n += PL_DHashTableSizeOfExcludingThis(&mNameSpaceTable,
                                           SizeOfRuleHashTableEntry,
                                           aMallocSizeOf);
@@ -895,26 +869,20 @@ AtomSelector_GetKey(PLDHashTable *table, const PLDHashEntryHdr *hdr)
 
 // Case-sensitive ops.
 static const PLDHashTableOps AtomSelector_CSOps = {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   PL_DHashMatchEntryStub,
   AtomSelector_MoveEntry,
   AtomSelector_ClearEntry,
-  PL_DHashFinalizeStub,
   AtomSelector_InitEntry
 };
 
 // Case-insensitive ops.
 static const RuleHashTableOps AtomSelector_CIOps = {
   {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   RuleHash_CIHashKey,
   RuleHash_CIMatchEntry,
   AtomSelector_MoveEntry,
   AtomSelector_ClearEntry,
-  PL_DHashFinalizeStub,
   AtomSelector_InitEntry
   },
   AtomSelector_GetKey
@@ -935,21 +903,21 @@ struct RuleCascadeData {
   {
     // mAttributeSelectors is matching on the attribute _name_, not the value,
     // and we case-fold names at parse-time, so this is a case-sensitive match.
-    PL_DHashTableInit(&mAttributeSelectors, &AtomSelector_CSOps, nullptr,
+    PL_DHashTableInit(&mAttributeSelectors, &AtomSelector_CSOps,
                       sizeof(AtomSelectorEntry));
-    PL_DHashTableInit(&mAnonBoxRules, &RuleHash_TagTable_Ops, nullptr,
+    PL_DHashTableInit(&mAnonBoxRules, &RuleHash_TagTable_Ops,
                       sizeof(RuleHashTagTableEntry));
     PL_DHashTableInit(&mIdSelectors,
                       aQuirksMode ? &AtomSelector_CIOps.ops :
                                     &AtomSelector_CSOps,
-                      nullptr, sizeof(AtomSelectorEntry));
+                      sizeof(AtomSelectorEntry));
     PL_DHashTableInit(&mClassSelectors,
                       aQuirksMode ? &AtomSelector_CIOps.ops :
                                     &AtomSelector_CSOps,
-                      nullptr, sizeof(AtomSelectorEntry));
+                      sizeof(AtomSelectorEntry));
     memset(mPseudoElementRuleHashes, 0, sizeof(mPseudoElementRuleHashes));
 #ifdef MOZ_XUL
-    PL_DHashTableInit(&mXULTreeRules, &RuleHash_TagTable_Ops, nullptr,
+    PL_DHashTableInit(&mXULTreeRules, &RuleHash_TagTable_Ops,
                       sizeof(RuleHashTagTableEntry));
 #endif
   }
@@ -1074,8 +1042,7 @@ RuleCascadeData::AttributeListFor(nsIAtom* aAttribute)
 {
   AtomSelectorEntry *entry =
     static_cast<AtomSelectorEntry*>
-               (PL_DHashTableOperate(&mAttributeSelectors, aAttribute,
-                                     PL_DHASH_ADD));
+               (PL_DHashTableAdd(&mAttributeSelectors, aAttribute));
   if (!entry)
     return nullptr;
   return &entry->mSelectors;
@@ -1087,9 +1054,14 @@ RuleCascadeData::AttributeListFor(nsIAtom* aAttribute)
 
 nsCSSRuleProcessor::nsCSSRuleProcessor(const sheet_array_type& aSheets,
                                        uint8_t aSheetType,
-                                       Element* aScopeElement)
+                                       Element* aScopeElement,
+                                       nsCSSRuleProcessor*
+                                         aPreviousCSSRuleProcessor)
   : mSheets(aSheets)
   , mRuleCascades(nullptr)
+  , mPreviousCacheKey(aPreviousCSSRuleProcessor
+                       ? aPreviousCSSRuleProcessor->CloneMQCacheKey()
+                       : UniquePtr<nsMediaQueryResultCacheKey>())
   , mLastPresContext(nullptr)
   , mScopeElement(aScopeElement)
   , mSheetType(aSheetType)
@@ -2611,8 +2583,7 @@ nsCSSRuleProcessor::RulesMatching(AnonBoxRuleProcessorData* aData)
 
   if (cascade && cascade->mAnonBoxRules.EntryCount()) {
     RuleHashTagTableEntry* entry = static_cast<RuleHashTagTableEntry*>
-      (PL_DHashTableOperate(&cascade->mAnonBoxRules, aData->mPseudoTag,
-                            PL_DHASH_LOOKUP));
+      (PL_DHashTableLookup(&cascade->mAnonBoxRules, aData->mPseudoTag));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       nsTArray<RuleValue>& rules = entry->mRules;
       for (RuleValue *value = rules.Elements(), *end = value + rules.Length();
@@ -2632,8 +2603,7 @@ nsCSSRuleProcessor::RulesMatching(XULTreeRuleProcessorData* aData)
 
   if (cascade && cascade->mXULTreeRules.EntryCount()) {
     RuleHashTagTableEntry* entry = static_cast<RuleHashTagTableEntry*>
-      (PL_DHashTableOperate(&cascade->mXULTreeRules, aData->mPseudoTag,
-                            PL_DHASH_LOOKUP));
+      (PL_DHashTableLookup(&cascade->mXULTreeRules, aData->mPseudoTag));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       NodeMatchContext nodeContext(EventStates(),
                                    nsCSSRuleProcessor::IsLink(aData->mElement));
@@ -2868,8 +2838,7 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
       if (id) {
         AtomSelectorEntry *entry =
           static_cast<AtomSelectorEntry*>
-                     (PL_DHashTableOperate(&cascade->mIdSelectors,
-                                           id, PL_DHASH_LOOKUP));
+                     (PL_DHashTableLookup(&cascade->mIdSelectors, id));
         if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
           EnumerateSelectors(entry->mSelectors, &data);
         }
@@ -2886,8 +2855,8 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
           nsIAtom* curClass = elementClasses->AtomAt(i);
           AtomSelectorEntry *entry =
             static_cast<AtomSelectorEntry*>
-                       (PL_DHashTableOperate(&cascade->mClassSelectors,
-                                             curClass, PL_DHASH_LOOKUP));
+                       (PL_DHashTableLookup(&cascade->mClassSelectors,
+                                            curClass));
           if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
             EnumerateSelectors(entry->mSelectors, &data);
           }
@@ -2899,8 +2868,8 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
 
     AtomSelectorEntry *entry =
       static_cast<AtomSelectorEntry*>
-                 (PL_DHashTableOperate(&cascade->mAttributeSelectors,
-                                       aData->mAttribute, PL_DHASH_LOOKUP));
+                 (PL_DHashTableLookup(&cascade->mAttributeSelectors,
+                                      aData->mAttribute));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
       EnumerateSelectors(entry->mSelectors, &data);
     }
@@ -2912,17 +2881,66 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
 /* virtual */ bool
 nsCSSRuleProcessor::MediumFeaturesChanged(nsPresContext* aPresContext)
 {
-  RuleCascadeData *old = mRuleCascades;
   // We don't want to do anything if there aren't any sets of rules
-  // cached yet (or somebody cleared them and is thus responsible for
-  // rebuilding things), since we should not build the rule cascade too
-  // early (e.g., before we know whether the quirk style sheet should be
+  // cached yet, since we should not build the rule cascade too early
+  // (e.g., before we know whether the quirk style sheet should be
   // enabled).  And if there's nothing cached, it doesn't matter if
-  // anything changed.  See bug 448281.
+  // anything changed.  But in the cases where it does matter, we've
+  // cached a previous cache key to test against, instead of our current
+  // rule cascades.  See bug 448281 and bug 1089417.
+  MOZ_ASSERT(!(mRuleCascades && mPreviousCacheKey));
+  RuleCascadeData *old = mRuleCascades;
   if (old) {
     RefreshRuleCascade(aPresContext);
+    return (old != mRuleCascades);
   }
-  return (old != mRuleCascades);
+
+  if (mPreviousCacheKey) {
+    // RefreshRuleCascade will get rid of mPreviousCacheKey anyway to
+    // maintain the invariant that we can't have both an mRuleCascades
+    // and an mPreviousCacheKey.  But we need to hold it a little
+    // longer.
+    UniquePtr<nsMediaQueryResultCacheKey> previousCacheKey(
+      Move(mPreviousCacheKey));
+    RefreshRuleCascade(aPresContext);
+
+    // This test is a bit pessimistic since the cache key's operator==
+    // just does list comparison rather than set comparison, but it
+    // should catch all the cases we care about (i.e., where the cascade
+    // order hasn't changed).  Other cases will do a restyle anyway, so
+    // we shouldn't need to worry about posting a second.
+    return !mRuleCascades || // all sheets gone, but we had sheets before
+           mRuleCascades->mCacheKey != *previousCacheKey;
+  }
+
+  return false;
+}
+
+UniquePtr<nsMediaQueryResultCacheKey>
+nsCSSRuleProcessor::CloneMQCacheKey()
+{
+  MOZ_ASSERT(!(mRuleCascades && mPreviousCacheKey));
+
+  RuleCascadeData* c = mRuleCascades;
+  if (!c) {
+    // We might have an mPreviousCacheKey.  It already comes from a call
+    // to CloneMQCacheKey, so don't bother checking
+    // HasFeatureConditions().
+    if (mPreviousCacheKey) {
+      NS_ASSERTION(mPreviousCacheKey->HasFeatureConditions(),
+                   "we shouldn't have a previous cache key unless it has "
+                   "feature conditions");
+      return MakeUnique<nsMediaQueryResultCacheKey>(*mPreviousCacheKey);
+    }
+
+    return UniquePtr<nsMediaQueryResultCacheKey>();
+  }
+
+  if (!c->mCacheKey.HasFeatureConditions()) {
+    return UniquePtr<nsMediaQueryResultCacheKey>();
+  }
+
+  return MakeUnique<nsMediaQueryResultCacheKey>(c->mCacheKey);
 }
 
 /* virtual */ size_t
@@ -3023,6 +3041,10 @@ nsCSSRuleProcessor::AppendFontFeatureValuesRules(
 nsresult
 nsCSSRuleProcessor::ClearRuleCascades()
 {
+  if (!mPreviousCacheKey) {
+    mPreviousCacheKey = CloneMQCacheKey();
+  }
+
   // We rely on our caller (perhaps indirectly) to do something that
   // will rebuild style data and the user font set (either
   // nsIPresShell::ReconstructStyleData or
@@ -3114,9 +3136,8 @@ AddSelector(RuleCascadeData* aCascade,
       for (nsAtomList* curID = negation->mIDList; curID;
            curID = curID->mNext) {
         AtomSelectorEntry *entry =
-          static_cast<AtomSelectorEntry*>(PL_DHashTableOperate(&aCascade->mIdSelectors,
-                                                               curID->mAtom,
-                                                               PL_DHASH_ADD));
+          static_cast<AtomSelectorEntry*>(PL_DHashTableAdd(&aCascade->mIdSelectors,
+                                                           curID->mAtom));
         if (entry) {
           entry->mSelectors.AppendElement(aSelectorInTopLevel);
         }
@@ -3130,9 +3151,8 @@ AddSelector(RuleCascadeData* aCascade,
       for (nsAtomList* curClass = negation->mClassList; curClass;
            curClass = curClass->mNext) {
         AtomSelectorEntry *entry =
-          static_cast<AtomSelectorEntry*>(PL_DHashTableOperate(&aCascade->mClassSelectors,
-                                                               curClass->mAtom,
-                                                               PL_DHASH_ADD));
+          static_cast<AtomSelectorEntry*>(PL_DHashTableAdd(&aCascade->mClassSelectors,
+                                                           curClass->mAtom));
         if (entry) {
           entry->mSelectors.AppendElement(aSelectorInTopLevel);
         }
@@ -3311,13 +3331,10 @@ InitWeightEntry(PLDHashTable *table, PLDHashEntryHdr *hdr,
 }
 
 static const PLDHashTableOps gRulesByWeightOps = {
-    PL_DHashAllocTable,
-    PL_DHashFreeTable,
     HashIntKey,
     MatchWeightEntry,
     PL_DHashMoveEntryStub,
     PL_DHashClearEntryStub,
-    PL_DHashFinalizeStub,
     InitWeightEntry
 };
 
@@ -3339,9 +3356,8 @@ struct CascadeEnumData {
       mCacheKey(aKey),
       mSheetType(aSheetType)
   {
-    if (!PL_DHashTableInit(&mRulesByWeight, &gRulesByWeightOps, nullptr,
-                           sizeof(RuleByWeightEntry), fallible_t(), 32))
-      mRulesByWeight.ops = nullptr;
+    PL_DHashTableInit(&mRulesByWeight, &gRulesByWeightOps,
+                      sizeof(RuleByWeightEntry), 32);
 
     // Initialize our arena
     PL_INIT_ARENA_POOL(&mArena, "CascadeEnumDataArena",
@@ -3350,7 +3366,7 @@ struct CascadeEnumData {
 
   ~CascadeEnumData()
   {
-    if (mRulesByWeight.ops)
+    if (mRulesByWeight.IsInitialized())
       PL_DHashTableFinish(&mRulesByWeight);
     PL_FinishArenaPool(&mArena);
   }
@@ -3395,8 +3411,7 @@ CascadeRuleEnumFunc(css::Rule* aRule, void* aData)
          sel; sel = sel->mNext) {
       int32_t weight = sel->mWeight;
       RuleByWeightEntry *entry = static_cast<RuleByWeightEntry*>(
-        PL_DHashTableOperate(&data->mRulesByWeight, NS_INT32_TO_PTR(weight),
-                             PL_DHASH_ADD));
+        PL_DHashTableAdd(&data->mRulesByWeight, NS_INT32_TO_PTR(weight)));
       if (!entry)
         return false;
       entry->data.mWeight = weight;
@@ -3548,6 +3563,11 @@ nsCSSRuleProcessor::RefreshRuleCascade(nsPresContext* aPresContext)
     }
   }
 
+  // We're going to make a new rule cascade; this means that we should
+  // now stop using the previous cache key that we're holding on to from
+  // the last time we had rule cascades.
+  mPreviousCacheKey = nullptr;
+
   if (mSheets.Length() != 0) {
     nsAutoPtr<RuleCascadeData> newCascade(
       new RuleCascadeData(aPresContext->Medium(),
@@ -3560,7 +3580,7 @@ nsCSSRuleProcessor::RefreshRuleCascade(nsPresContext* aPresContext)
                            newCascade->mCounterStyleRules,
                            newCascade->mCacheKey,
                            mSheetType);
-      if (!data.mRulesByWeight.ops)
+      if (!data.mRulesByWeight.IsInitialized())
         return; /* out of memory */
 
       for (uint32_t i = 0; i < mSheets.Length(); ++i) {

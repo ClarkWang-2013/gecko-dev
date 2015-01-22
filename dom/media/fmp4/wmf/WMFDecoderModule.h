@@ -17,7 +17,7 @@ public:
   virtual ~WMFDecoderModule();
 
   // Initializes the module, loads required dynamic libraries, etc.
-  nsresult Startup();
+  virtual nsresult Startup() MOZ_OVERRIDE;
 
   // Called when the decoders have shutdown.
   virtual nsresult Shutdown() MOZ_OVERRIDE;
@@ -36,6 +36,13 @@ public:
 
   bool SupportsVideoMimeType(const char* aMimeType) MOZ_OVERRIDE;
   bool SupportsAudioMimeType(const char* aMimeType) MOZ_OVERRIDE;
+
+  // Accessors that report whether we have the required MFTs available
+  // on the system to play various codecs. Windows Vista doesn't have the
+  // H.264/AAC decoders if the "Platform Update Supplement for Windows Vista"
+  // is not installed.
+  static bool HasAAC();
+  static bool HasH264();
 
   // Called on main thread.
   static void Init();

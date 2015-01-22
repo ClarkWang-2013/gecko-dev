@@ -27,6 +27,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.GridView;
 import com.nineoldandroids.animation.Animator;
@@ -93,13 +94,26 @@ class TabsGridLayout extends GridView
 
         final int padding = resources.getDimensionPixelSize(R.dimen.new_tablet_tab_panel_grid_padding);
         final int paddingTop = resources.getDimensionPixelSize(R.dimen.new_tablet_tab_panel_grid_padding_top);
-        setPadding(padding, paddingTop, padding, padding);
+
+        // Lets set double the top padding on the bottom so that the last row shows up properly!
+        // Your demise, GridView, cannot come fast enough.
+        final int paddingBottom = paddingTop * 2;
+
+        setPadding(padding, paddingTop, padding, paddingBottom);
+
+        setOnItemClickListener(new OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                TabsLayoutItemView tab = (TabsLayoutItemView) view;
+                Tabs.getInstance().selectTab(tab.getTabId());
+                autoHidePanel();
+            }
+        });
     }
 
     private class TabsGridLayoutAdapter extends TabsLayoutAdapter {
 
         final private Button.OnClickListener mCloseClickListener;
-        final private View.OnClickListener mSelectClickListener;
 
         public TabsGridLayoutAdapter (Context context) {
             super(context, R.layout.new_tablet_tabs_item_cell);
@@ -110,22 +124,14 @@ class TabsGridLayout extends GridView
                     closeTab(v);
                 }
             };
-
-            mSelectClickListener = new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    TabsLayoutItemView tab = (TabsLayoutItemView) v;
-                    Tabs.getInstance().selectTab(tab.getTabId());
-                    autoHidePanel();
-                }
-            };
         }
 
         @Override
         TabsLayoutItemView newView(int position, ViewGroup parent) {
             final TabsLayoutItemView item = super.newView(position, parent);
-            item.setOnClickListener(mSelectClickListener);
+
             item.setCloseOnClickListener(mCloseClickListener);
+
             return item;
         }
 
@@ -164,7 +170,8 @@ class TabsGridLayout extends GridView
             // via a sweet animation
 
             final int removedHeight = getChildAt(0).getMeasuredHeight();
-            final int verticalSpacing = getVerticalSpacing();
+            final int verticalSpacing =
+                    getResources().getDimensionPixelOffset(R.dimen.new_tablet_tab_panel_grid_vspacing);
 
             ValueAnimator paddingAnimator = ValueAnimator.ofInt(getPaddingBottom() + removedHeight + verticalSpacing, getPaddingBottom());
             paddingAnimator.setDuration(ANIM_TIME_MS * 2);
@@ -391,5 +398,4 @@ class TabsGridLayout extends GridView
             }
         });
     }
-
 }

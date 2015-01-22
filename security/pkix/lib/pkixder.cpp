@@ -138,12 +138,6 @@ Result
 SignatureAlgorithmOIDValue(Reader& algorithmID,
                            /*out*/ SignatureAlgorithm& algorithm)
 {
-  // RFC 5758 Section 3.1 (id-dsa-with-sha224 is intentionally excluded)
-  // python DottedOIDToCode.py id-dsa-with-sha256 2.16.840.1.101.3.4.3.2
-  static const uint8_t id_dsa_with_sha256[] = {
-    0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x02
-  };
-
   // RFC 5758 Section 3.2 (ecdsa-with-SHA224 is intentionally excluded)
   // python DottedOIDToCode.py ecdsa-with-SHA256 1.2.840.10045.4.3.2
   static const uint8_t ecdsa_with_SHA256[] = {
@@ -187,12 +181,6 @@ SignatureAlgorithmOIDValue(Reader& algorithmID,
     0x2b, 0x0e, 0x03, 0x02, 0x1d
   };
 
-  // RFC 3279 Section 2.2.2
-  // python DottedOIDToCode.py id-dsa-with-sha1 1.2.840.10040.4.3
-  static const uint8_t id_dsa_with_sha1[] = {
-    0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x03
-  };
-
   // RFC 3279 Section 2.2.3
   // python DottedOIDToCode.py ecdsa-with-SHA1 1.2.840.10045.4.1
   static const uint8_t ecdsa_with_SHA1[] = {
@@ -226,10 +214,6 @@ SignatureAlgorithmOIDValue(Reader& algorithmID,
     algorithm = SignatureAlgorithm::rsa_pkcs1_with_sha384;
   } else if (algorithmID.MatchRest(sha512WithRSAEncryption)) {
     algorithm = SignatureAlgorithm::rsa_pkcs1_with_sha512;
-  } else if (algorithmID.MatchRest(id_dsa_with_sha1)) {
-    algorithm = SignatureAlgorithm::dsa_with_sha1;
-  } else if (algorithmID.MatchRest(id_dsa_with_sha256)) {
-    algorithm = SignatureAlgorithm::dsa_with_sha256;
   } else if (algorithmID.MatchRest(sha1WithRSASignature)) {
     // XXX(bug 1042479): recognize this old OID for compatibility.
     algorithm = SignatureAlgorithm::rsa_pkcs1_with_sha1;
@@ -335,9 +319,7 @@ BitStringWithNoUnusedBits(Reader& input, /*out*/ Input& value)
   if (unusedBitsAtEnd != 0) {
     return Result::ERROR_BAD_DER;
   }
-  Reader::Mark mark(valueWithUnusedBits.GetMark());
-  valueWithUnusedBits.SkipToEnd();
-  return valueWithUnusedBits.GetInput(mark, value);
+  return valueWithUnusedBits.SkipToEnd(value);
 }
 
 static inline Result
@@ -345,10 +327,10 @@ ReadDigit(Reader& input, /*out*/ unsigned int& value)
 {
   uint8_t b;
   if (input.Read(b) != Success) {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   if (b < '0' || b > '9') {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   value = static_cast<unsigned int>(b - static_cast<uint8_t>('0'));
   return Success;
@@ -370,7 +352,7 @@ ReadTwoDigits(Reader& input, unsigned int minValue, unsigned int maxValue,
   }
   value = (hi * 10) + lo;
   if (value < minValue || value > maxValue) {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   return Success;
 }
@@ -412,12 +394,12 @@ TimeChoice(Reader& tagged, uint8_t expectedTag, /*out*/ Time& time)
     yearHi = yearLo >= 50u ? 19u : 20u;
   } else {
     return NotReached("invalid tag given to TimeChoice",
-                      Result::ERROR_INVALID_TIME);
+                      Result::ERROR_INVALID_DER_TIME);
   }
   unsigned int year = (yearHi * 100u) + yearLo;
   if (year < 1970u) {
     // We don't support dates before January 1, 1970 because that is the epoch.
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   days = DaysBeforeYear(year);
 
@@ -496,13 +478,13 @@ TimeChoice(Reader& tagged, uint8_t expectedTag, /*out*/ Time& time)
 
   uint8_t b;
   if (input.Read(b) != Success) {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   if (b != 'Z') {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
   if (End(input) != Success) {
-    return Result::ERROR_INVALID_TIME;
+    return Result::ERROR_INVALID_DER_TIME;
   }
 
   uint64_t totalSeconds = (static_cast<uint64_t>(days) * 24u * 60u * 60u) +

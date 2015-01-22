@@ -202,6 +202,7 @@ WebGLContextOptions::WebGLContextOptions()
 
 WebGLContext::WebGLContext()
     : WebGLContextUnchecked(nullptr)
+    , mBypassShaderValidation(false)
     , mNeedsFakeNoAlpha(false)
 {
     mGeneration = 0;
@@ -214,8 +215,6 @@ WebGLContext::WebGLContext()
     mPixelStoreFlipY = false;
     mPixelStorePremultiplyAlpha = false;
     mPixelStoreColorspaceConversion = BROWSER_DEFAULT_WEBGL;
-
-    mShaderValidation = true;
 
     mFakeBlackStatus = WebGLContextFakeBlackStatus::NotNeeded;
 
@@ -257,6 +256,7 @@ WebGLContext::WebGLContext()
     mGLMaxColorAttachments = 1;
     mGLMaxDrawBuffers = 1;
     mGLMaxTransformFeedbackSeparateAttribs = 0;
+    mGLMaxUniformBufferBindings = 0;
 
     // See OpenGL ES 2.0.25 spec, 6.2 State Tables, table 6.13
     mPixelStorePackAlignment = 4;
@@ -322,9 +322,16 @@ WebGLContext::DestroyResourcesAndContext()
     mBoundCubeMapTextures.Clear();
     mBound3DTextures.Clear();
     mBoundArrayBuffer = nullptr;
+    mBoundCopyReadBuffer = nullptr;
+    mBoundCopyWriteBuffer = nullptr;
+    mBoundPixelPackBuffer = nullptr;
+    mBoundPixelUnpackBuffer = nullptr;
     mBoundTransformFeedbackBuffer = nullptr;
+    mBoundUniformBuffer = nullptr;
     mCurrentProgram = nullptr;
-    mBoundFramebuffer = nullptr;
+    mActiveProgramLinkInfo = nullptr;
+    mBoundDrawFramebuffer = nullptr;
+    mBoundReadFramebuffer = nullptr;
     mActiveOcclusionQuery = nullptr;
     mBoundRenderbuffer = nullptr;
     mBoundVertexArray = nullptr;
@@ -337,6 +344,9 @@ WebGLContext::DestroyResourcesAndContext()
             mBoundTransformFeedbackBuffers[i] = nullptr;
         }
     }
+
+    for (GLuint i = 0; i < mGLMaxUniformBufferBindings; i++)
+        mBoundUniformBuffers[i] = nullptr;
 
     while (!mTextures.isEmpty())
         mTextures.getLast()->DeleteOnce();
@@ -1798,6 +1808,9 @@ WebGLContext::TexImageFromVideoElement(const TexImageTarget texImageTarget,
 
     gl->MakeCurrent();
     nsRefPtr<mozilla::layers::Image> srcImage = container->LockCurrentImage();
+    if (!srcImage)
+        return false;
+
     WebGLTexture* tex = ActiveBoundTextureForTexImageTarget(texImageTarget);
 
     const WebGLTexture::ImageInfo& info = tex->ImageInfoAt(texImageTarget, 0);
@@ -1862,20 +1875,26 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLContext)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLContext)
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WebGLContext,
-                                      mCanvasElement,
-                                      mExtensions,
-                                      mBound2DTextures,
-                                      mBoundCubeMapTextures,
-                                      mBound3DTextures,
-                                      mBoundArrayBuffer,
-                                      mBoundTransformFeedbackBuffer,
-                                      mCurrentProgram,
-                                      mBoundFramebuffer,
-                                      mBoundRenderbuffer,
-                                      mBoundVertexArray,
-                                      mDefaultVertexArray,
-                                      mActiveOcclusionQuery,
-                                      mActiveTransformFeedbackQuery)
+  mCanvasElement,
+  mExtensions,
+  mBound2DTextures,
+  mBoundCubeMapTextures,
+  mBound3DTextures,
+  mBoundArrayBuffer,
+  mBoundCopyReadBuffer,
+  mBoundCopyWriteBuffer,
+  mBoundPixelPackBuffer,
+  mBoundPixelUnpackBuffer,
+  mBoundTransformFeedbackBuffer,
+  mBoundUniformBuffer,
+  mCurrentProgram,
+  mBoundDrawFramebuffer,
+  mBoundReadFramebuffer,
+  mBoundRenderbuffer,
+  mBoundVertexArray,
+  mDefaultVertexArray,
+  mActiveOcclusionQuery,
+  mActiveTransformFeedbackQuery)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLContext)
     NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY

@@ -5,7 +5,7 @@
 MOZ_APP_BASENAME=Fennec
 MOZ_APP_VENDOR=Mozilla
 
-MOZ_APP_VERSION=37.0a1
+MOZ_APP_VERSION=38.0a1
 MOZ_APP_UA_NAME=Firefox
 
 MOZ_BRANDING_DIRECTORY=mobile/android/branding/unofficial
@@ -73,11 +73,8 @@ MOZ_WEBGL_CONFORMANT=1
 # Enable the Search Activity.
 MOZ_ANDROID_SEARCH_ACTIVITY=1
 
-# Enable the new tablet UI in pre-release builds
-# if the max Android sdk is undefined or at least 11.
-if test ! "$RELEASE_BUILD"; then
-  MOZ_ANDROID_NEW_TABLET_UI=1
-fi
+# Use the new tablet UI. This will go away in Bug 1106935.
+MOZ_ANDROID_NEW_TABLET_UI=1
 
 # Enable the share handler.
 MOZ_ANDROID_SHARE_OVERLAY=1
@@ -86,12 +83,7 @@ MOZ_ANDROID_SHARE_OVERLAY=1
 MOZ_ANDROID_MLS_STUMBLER=1
 
 # Enable adding to the system downloads list in pre-release builds.
-if test ! "$RELEASE_BUILD"; then
-  MOZ_ANDROID_DOWNLOADS_INTEGRATION=1
-fi
-
-# Enable generational GC on mobile.
-export JSGC_GENERATIONAL=1
+MOZ_ANDROID_DOWNLOADS_INTEGRATION=1
 
 # Use the low-memory GC tuning.
 export JS_GC_SMALL_CHUNK_SIZE=1

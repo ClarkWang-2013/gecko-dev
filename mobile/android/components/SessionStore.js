@@ -10,11 +10,6 @@ const Cr = Components.results;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
-#ifdef MOZ_CRASHREPORTER
-XPCOMUtils.defineLazyServiceGetter(this, "CrashReporter",
-  "@mozilla.org/xre/app-info;1", "nsICrashReporter");
-#endif
-
 XPCOMUtils.defineLazyModuleGetter(this, "Task", "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS", "resource://gre/modules/osfile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Messaging", "resource://gre/modules/Messaging.jsm");
@@ -86,6 +81,7 @@ SessionStore.prototype = {
         observerService.addObserver(this, "ClosedTabs:StartNotifications", true);
         observerService.addObserver(this, "ClosedTabs:StopNotifications", true);
         observerService.addObserver(this, "last-pb-context-exited", true);
+        observerService.addObserver(this, "Session:RestoreRecentTabs", true);
         break;
       case "final-ui-startup":
         observerService.removeObserver(this, "final-ui-startup");
@@ -176,6 +172,11 @@ SessionStore.prototype = {
         }
         this._lastClosedTabIndex = -1;
         break;
+      case "Session:RestoreRecentTabs": {
+        let data = JSON.parse(aData);
+        this._restoreTabsWithHistory(data);
+        break;
+      }
     }
   },
 
@@ -428,6 +429,10 @@ SessionStore.prototype = {
         normalWin[prop] = data[prop];
       }
       normalWin.tabs = [];
+
+      // Save normal closed tabs. Forget about private closed tabs.
+      normalWin.closedTabs = win.closedTabs.filter(tab => !tab.isPrivate);
+
       normalData.windows.push(normalWin);
       privateData.windows.push({ tabs: [] });
 
@@ -555,7 +560,10 @@ SessionStore.prototype = {
   },
 
   _updateCrashReportURL: function ss_updateCrashReportURL(aWindow) {
-#ifdef MOZ_CRASHREPORTER
+    let crashReporterBuilt = "nsICrashReporter" in Ci && Services.appinfo instanceof Ci.nsICrashReporter;
+    if (!crashReporterBuilt)
+      return;
+
     if (!aWindow.BrowserApp.selectedBrowser)
       return;
 
@@ -567,14 +575,13 @@ SessionStore.prototype = {
       }
       catch (ex) { } // ignore failures on about: URIs
 
-      CrashReporter.annotateCrashReport("URL", currentURI.spec);
+      Services.appinfo.annotateCrashReport("URL", currentURI.spec);
     }
     catch (ex) {
       // don't make noise when crashreporter is built but not enabled
-      if (ex.result != Components.results.NS_ERROR_NOT_INITIALIZED)
-        Components.utils.reportError("SessionStore:" + ex);
+      if (ex.result != Cr.NS_ERROR_NOT_INITIALIZED)
+        Cu.reportError("SessionStore:" + ex);
     }
-#endif
   },
 
   _serializeHistoryEntry: function _serializeHistoryEntry(aEntry) {
@@ -758,7 +765,23 @@ SessionStore.prototype = {
     return shEntry;
   },
 
-  _restoreHistory: function _restoreHistory(aTabData, aHistory) {
+  // This function iterates through a list of tab data restoring history for each of them.
+  _restoreTabsWithHistory: function ss_restoreTabsWithHistory(data) {
+    let window = Services.wm.getMostRecentWindow("navigator:browser");
+    for (let i = 0; i < data.tabs.length; i++) {
+      let tabData = JSON.parse(data.tabs[i]);
+      let params = {
+        selected: (i == data.tabs.length - 1),
+        isPrivate: tabData.isPrivate,
+        desktopMode: tabData.desktopMode,
+      };
+
+      let tab = window.BrowserApp.addTab(tabData.entries[tabData.index - 1].url, params);
+      this._restoreHistory(tabData, tab.browser.sessionHistory);
+    }
+  },
+
+  _restoreHistory: function ss_restoreHistory(aTabData, aHistory) {
     if (aHistory.count > 0)
       aHistory.PurgeHistory(aHistory.count);
     aHistory.QueryInterface(Ci.nsISHistoryInternal);
@@ -842,6 +865,11 @@ SessionStore.prototype = {
       }
 
       tab.browser.__SS_extdata = tabData.extData;
+    }
+
+    // Restore the closed tabs array on the current window.
+    if (state.windows[0].closedTabs) {
+      this._windows[window.__SSID].closedTabs = state.windows[0].closedTabs;
     }
   },
 
@@ -934,7 +962,8 @@ SessionStore.prototype = {
         let lastEntry = tab.entries[tab.entries.length - 1];
         return {
           url: lastEntry.url,
-          title: lastEntry.title || ""
+          title: lastEntry.title || "",
+          data: tab
         };
       });
 
@@ -971,26 +1000,9 @@ SessionStore.prototype = {
     let notifyMessage = "";
 
     try {
-      // Normally, we'll receive the session string from Java, but there are
-      // cases where we may want to restore that Java cannot detect (e.g., if
-      // browser.sessionstore.resume_session_once is true). In these cases, the
-      // session will be read from sessionstore.bak (which is also used for
-      // "tabs from last time").
-      let data = aSessionString;
-
-      if (data == null) {
-        let bytes = yield OS.File.read(this._sessionFileBackup.path);
-        data = JSON.parse(new TextDecoder().decode(bytes) || "");
-      }
-
-      this._restoreWindow(data);
+      this._restoreWindow(aSessionString);
     } catch (e) {
-      if (e instanceof OS.File.Error) {
-        Cu.reportError("SessionStore: " + e.message);
-      } else {
-        Cu.reportError("SessionStore: " + e);
-      }
-
+      Cu.reportError("SessionStore: " + e);
       notifyMessage = "fail";
     }
 

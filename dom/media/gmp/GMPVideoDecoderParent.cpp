@@ -48,7 +48,7 @@ GMPVideoDecoderParent::GMPVideoDecoderParent(GMPParent* aPlugin)
   , mShuttingDown(false)
   , mPlugin(aPlugin)
   , mCallback(nullptr)
-  , mVideoHost(MOZ_THIS_IN_INITIALIZER_LIST())
+  , mVideoHost(this)
 {
   MOZ_ASSERT(mPlugin);
 }
@@ -76,7 +76,7 @@ GMPVideoDecoderParent::Close()
 
   // In case this is the last reference
   nsRefPtr<GMPVideoDecoderParent> kungfudeathgrip(this);
-  NS_RELEASE(kungfudeathgrip);
+  Release();
   Shutdown();
 }
 
@@ -322,7 +322,7 @@ GMPVideoDecoderParent::RecvError(const GMPErr& aError)
 }
 
 bool
-GMPVideoDecoderParent::RecvParentShmemForPool(Shmem& aEncodedBuffer)
+GMPVideoDecoderParent::RecvParentShmemForPool(Shmem&& aEncodedBuffer)
 {
   if (aEncodedBuffer.IsWritable()) {
     mVideoHost.SharedMemMgr()->MgrDeallocShmem(GMPSharedMem::kGMPEncodedData,

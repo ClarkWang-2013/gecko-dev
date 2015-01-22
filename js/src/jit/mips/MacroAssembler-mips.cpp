@@ -1531,7 +1531,7 @@ MacroAssemblerMIPS::ma_bc1d(FloatRegister lhs, FloatRegister rhs, Label *label,
     branchWithCode(getBranchCode(testKind, fcc), label, jumpKind);
 }
 
-bool
+void
 MacroAssemblerMIPSCompat::buildFakeExitFrame(Register scratch, uint32_t *offset)
 {
     mozilla::DebugOnly<uint32_t> initialDepth = framePushed();
@@ -1547,7 +1547,7 @@ MacroAssemblerMIPSCompat::buildFakeExitFrame(Register scratch, uint32_t *offset)
     *offset = currentOffset();
 
     MOZ_ASSERT(framePushed() == initialDepth + ExitFrameLayout::Size());
-    return addCodeLabel(cl);
+    addCodeLabel(cl);
 }
 
 bool
@@ -2624,6 +2624,13 @@ MacroAssemblerMIPSCompat::unboxNonDouble(const Address &src, Register dest)
 }
 
 void
+MacroAssemblerMIPSCompat::unboxNonDouble(const BaseIndex &src, Register dest)
+{
+    computeScaledAddress(src, SecondScratchReg);
+    ma_lw(dest, Address(SecondScratchReg, src.offset + PAYLOAD_OFFSET));
+}
+
+void
 MacroAssemblerMIPSCompat::unboxInt32(const ValueOperand &operand, Register dest)
 {
     ma_move(dest, operand.payloadReg());
@@ -3615,25 +3622,18 @@ MacroAssemblerMIPSCompat::callWithABI(Register fun, MoveOp::Type result)
 }
 
 void
-MacroAssemblerMIPSCompat::handleFailureWithHandler(void *handler)
+MacroAssemblerMIPSCompat::handleFailureWithHandlerTail(void *handler)
 {
     // Reserve space for exception information.
     int size = (sizeof(ResumeFromException) + ABIStackAlignment) & ~(ABIStackAlignment - 1);
     ma_subu(StackPointer, StackPointer, Imm32(size));
     ma_move(a0, StackPointer); // Use a0 since it is a first function argument
 
-    // Ask for an exception handler.
+    // Call the handler.
     setupUnalignedABICall(1, a1);
     passABIArg(a0);
     callWithABI(handler);
 
-    JitCode *excTail = GetJitContext()->runtime->jitRuntime()->getExceptionTail();
-    branch(excTail);
-}
-
-void
-MacroAssemblerMIPSCompat::handleFailureWithHandlerTail()
-{
     Label entryFrame;
     Label catch_;
     Label finally;
@@ -3693,6 +3693,18 @@ MacroAssemblerMIPSCompat::handleFailureWithHandlerTail()
               JSReturnOperand);
     ma_move(StackPointer, BaselineFrameReg);
     pop(BaselineFrameReg);
+
+    // If profiling is enabled, then update the lastProfilingFrame to refer to caller
+    // frame before returning.
+    {
+        Label skipProfilingInstrumentation;
+        // Test if profiler enabled.
+        AbsoluteAddress addressOfEnabled(GetJitContext()->runtime->spsProfiler().addressOfEnabled());
+        branch32(Assembler::Equal, addressOfEnabled, Imm32(0), &skipProfilingInstrumentation);
+        profilerExitFrame();
+        bind(&skipProfilingInstrumentation);
+    }
+
     ret();
 
     // If we are bailing out to baseline to handle an exception, jump to
@@ -3730,8 +3742,6 @@ MacroAssemblerMIPSCompat::toggledCall(JitCode *target, bool enabled)
     return offset;
 }
 
-#ifdef JSGC_GENERATIONAL
-
 void
 MacroAssemblerMIPSCompat::branchPtrInNurseryRange(Condition cond, Register ptr, Register temp,
                                                   Label *label)
@@ -3761,4 +3771,17 @@ MacroAssemblerMIPSCompat::branchValueIsNurseryObject(Condition cond, ValueOperan
     bind(&done);
 }
 
-#endif
+void
+MacroAssemblerMIPSCompat::profilerEnterFrame(Register reg)
+{
+    AbsoluteAddress activation(GetJitContext()->runtime->addressOfProfilingActivation());
+    loadPtr(activation, scratch);
+    storePtr(framePtr, Address(scratch, JitActivation::offsetOfLastProfilingFrame()));
+    storePtr(ImmPtr(nullptr), Address(scratch, JitActivation::offsetOfLastProfilingCallSite()));
+}
+
+void
+MacroAssemblerMIPSCompat::profilerExitFrame()
+{
+    branch(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
+}

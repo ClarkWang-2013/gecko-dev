@@ -207,10 +207,6 @@ public:
   // Called to indicate the download is progressing.
   virtual void DownloadProgressed() MOZ_FINAL MOZ_OVERRIDE;
 
-  // Called by the media decoder to indicate that the download has stalled
-  // (no data has arrived for a while).
-  virtual void DownloadStalled() MOZ_FINAL MOZ_OVERRIDE;
-
   // Called by the media decoder to indicate whether the media cache has
   // suspended the channel.
   virtual void NotifySuspendedByCache(bool aIsSuspended) MOZ_FINAL MOZ_OVERRIDE;
@@ -221,8 +217,6 @@ public:
   layers::ImageContainer* GetImageContainer();
 
   // Dispatch events
-  using nsGenericHTMLElement::DispatchEvent;
-  virtual nsresult DispatchEvent(const nsAString& aName) MOZ_FINAL MOZ_OVERRIDE;
   virtual nsresult DispatchAsyncEvent(const nsAString& aName) MOZ_FINAL MOZ_OVERRIDE;
 
   // Dispatch events that were raised while in the bfcache
@@ -285,6 +279,11 @@ public:
 
   void NotifyMediaTrackEnabled(MediaTrack* aTrack);
 
+  /**
+   * Called when tracks become available to the source media stream.
+   */
+  void NotifyMediaStreamTracksAvailable(DOMMediaStream* aStream);
+
   virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
 
   /**
@@ -337,8 +336,8 @@ public:
 
   MediaStream* GetSrcMediaStream() const
   {
-    NS_ASSERTION(mSrcStream, "Don't call this when not playing a stream");
-    return mSrcStream->GetStream();
+    NS_ASSERTION(mPlaybackStream, "Don't call this when not playing a stream");
+    return mPlaybackStream->GetStream();
   }
 
   // WebIDL
@@ -541,7 +540,7 @@ public:
   void SetOnencrypted(mozilla::dom::EventHandlerNonNull* listener);
 
   void DispatchEncrypted(const nsTArray<uint8_t>& aInitData,
-                         const nsAString& aInitDataType);
+                         const nsAString& aInitDataType) MOZ_OVERRIDE;
 
 
   bool IsEventAttributeName(nsIAtom* aName) MOZ_OVERRIDE;
@@ -583,7 +582,7 @@ public:
 
   VideoTrackList* VideoTracks();
 
-  TextTrackList* TextTracks();
+  TextTrackList* GetTextTracks();
 
   already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
                                            const nsAString& aLabel,
@@ -616,6 +615,7 @@ protected:
   virtual ~HTMLMediaElement();
 
   class MediaLoadListener;
+  class MediaStreamTracksAvailableCallback;
   class StreamListener;
 
   virtual void GetItemValueText(nsAString& text) MOZ_OVERRIDE;
@@ -881,6 +881,27 @@ protected:
   void UpdatePreloadAction();
 
   /**
+   * Fire progress events if needed according to the time and byte constraints
+   * outlined in the specification. aHaveNewProgress is true if progress has
+   * just been detected.  Otherwise the method is called as a result of the
+   * progress timer.
+   */
+  void CheckProgress(bool aHaveNewProgress);
+  static void ProgressTimerCallback(nsITimer* aTimer, void* aClosure);
+  /**
+   * Start timer to update download progress.
+   */
+  void StartProgressTimer();
+  /**
+   * Start sending progress and/or stalled events.
+   */
+  void StartProgress();
+  /**
+   * Stop progress information timer and events.
+   */
+  void StopProgress();
+
+  /**
    * Dispatches an error event to a child source element.
    */
   void DispatchAsyncSourceError(nsIContent* aSourceElement);
@@ -957,6 +978,11 @@ protected:
   // MediaElement doesn't yet have one then it will create it.
   TextTrackManager* GetOrCreateTextTrackManager();
 
+  class nsAsyncEventRunner;
+  using nsGenericHTMLElement::DispatchEvent;
+  // For nsAsyncEventRunner.
+  nsresult DispatchEvent(const nsAString& aName);
+
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
   nsRefPtr<MediaDecoder> mDecoder;
@@ -973,6 +999,14 @@ protected:
   // actually playing.
   // At most one of mDecoder and mSrcStream can be non-null.
   nsRefPtr<DOMMediaStream> mSrcStream;
+
+  // Holds a reference to a MediaInputPort connecting mSrcStream to mPlaybackStream.
+  nsRefPtr<MediaInputPort> mPlaybackStreamInputPort;
+
+  // Holds a reference to a stream with mSrcStream as input but intended for
+  // playback. Used so we don't block playback of other video elements
+  // playing the same mSrcStream.
+  nsRefPtr<DOMMediaStream> mPlaybackStream;
 
   // Holds references to the DOM wrappers for the MediaStreams that we're
   // writing to.
@@ -1018,6 +1052,9 @@ protected:
   //   http://www.whatwg.org/specs/web-apps/current-work/#video)
   nsMediaNetworkState mNetworkState;
   nsMediaReadyState mReadyState;
+
+  // Last value passed from codec or stream source to UpdateReadyStateForData.
+  NextFrameStatus mLastNextFrameStatus;
 
   enum LoadAlgorithmState {
     // No load algorithm instance is waiting for a source to be added to the
@@ -1068,6 +1105,16 @@ protected:
   // main thread only.
   TimeStamp mTimeUpdateTime;
 
+  // Time that the last progress event was fired. Read/Write from the
+  // main thread only.
+  TimeStamp mProgressTime;
+
+  // Time that data was last read from the media resource. Used for
+  // computing if the download has stalled and to rate limit progress events
+  // when data is arriving slower than PROGRESS_MS.
+  // Read/Write from the main thread only.
+  TimeStamp mDataTime;
+
   // Media 'currentTime' value when the last timeupdate event occurred.
   // Read/Write from the main thread only.
   double mLastCurrentTime;
@@ -1102,6 +1149,9 @@ protected:
 
   // Range of time played.
   nsRefPtr<TimeRanges> mPlayed;
+
+  // Timer used for updating progress events
+  nsCOMPtr<nsITimer> mProgressTimer;
 
 #ifdef MOZ_EME
   // Encrypted Media Extension media keys.
@@ -1267,6 +1317,19 @@ protected:
   nsRefPtr<VideoTrackList> mVideoTrackList;
 
   MediaWaitingFor mWaitingFor;
+
+  enum ElementInTreeState {
+    // The MediaElement is not in the DOM tree now.
+    ELEMENT_NOT_INTREE,
+    // The MediaElement is in the DOM tree now.
+    ELEMENT_INTREE,
+    // The MediaElement is not in the DOM tree now but had been binded to the
+    // tree before.
+    ELEMENT_NOT_INTREE_HAD_INTREE
+  };
+
+  ElementInTreeState mElementInTreeState;
+
 };
 
 } // namespace dom

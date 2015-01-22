@@ -17,6 +17,7 @@
 #include "js/Vector.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/ErrorObject.h"
+#include "vm/Runtime.h"
 
 extern JSObject *
 js_InitSharedArrayBufferClass(JSContext *cx, js::HandleObject obj);
@@ -103,8 +104,9 @@ class GlobalObject : public NativeObject
     static const unsigned RUNTIME_CODEGEN_ENABLED = WARNED_PROTO_SETTING_SLOW + 1;
     static const unsigned DEBUGGERS               = RUNTIME_CODEGEN_ENABLED + 1;
     static const unsigned INTRINSICS              = DEBUGGERS + 1;
-    static const unsigned FLOAT32X4_TYPE_DESCR   = INTRINSICS + 1;
-    static const unsigned INT32X4_TYPE_DESCR     = FLOAT32X4_TYPE_DESCR + 1;
+    static const unsigned FLOAT32X4_TYPE_DESCR    = INTRINSICS + 1;
+    static const unsigned FLOAT64X2_TYPE_DESCR    = FLOAT32X4_TYPE_DESCR + 1;
+    static const unsigned INT32X4_TYPE_DESCR      = FLOAT64X2_TYPE_DESCR + 1;
     static const unsigned FOR_OF_PIC_CHAIN        = INT32X4_TYPE_DESCR + 1;
 
     /* Total reserved-slot count for global objects. */
@@ -259,8 +261,17 @@ class GlobalObject : public NativeObject
     template<typename T>
     inline void setCreateArrayFromBuffer(Handle<JSFunction*> fun);
 
+  private:
+    // Disallow use of unqualified JSObject::create in GlobalObject.
+    static GlobalObject *create(...) = delete;
+
+    friend struct ::JSRuntime;
+    static GlobalObject *createInternal(JSContext *cx, const Class *clasp);
+
   public:
-    static GlobalObject *create(JSContext *cx, const Class *clasp);
+    static GlobalObject *
+    new_(JSContext *cx, const Class *clasp, JSPrincipals *principals,
+         JS::OnNewGlobalHookOption hookOption, const JS::CompartmentOptions &options);
 
     /*
      * Create a constructor function with the specified name and length using
@@ -285,6 +296,12 @@ class GlobalObject : public NativeObject
      * of the returned blank prototype.
      */
     NativeObject *createBlankPrototypeInheriting(JSContext *cx, const js::Class *clasp, JSObject &proto);
+
+    template <typename T>
+    T *createBlankPrototype(JSContext *cx) {
+        NativeObject *res = createBlankPrototype(cx, &T::class_);
+        return res ? &res->template as<T>() : nullptr;
+    }
 
     NativeObject *getOrCreateObjectPrototype(JSContext *cx) {
         if (functionObjectClassesInitialized())
@@ -390,6 +407,16 @@ class GlobalObject : public NativeObject
     JSObject &float32x4TypeDescr() {
         MOZ_ASSERT(getSlotRef(FLOAT32X4_TYPE_DESCR).isObject());
         return getSlotRef(FLOAT32X4_TYPE_DESCR).toObject();
+    }
+
+    void setFloat64x2TypeDescr(JSObject &obj) {
+        MOZ_ASSERT(getSlotRef(FLOAT64X2_TYPE_DESCR).isUndefined());
+        setSlot(FLOAT64X2_TYPE_DESCR, ObjectValue(obj));
+    }
+
+    JSObject &float64x2TypeDescr() {
+        MOZ_ASSERT(getSlotRef(FLOAT64X2_TYPE_DESCR).isObject());
+        return getSlotRef(FLOAT64X2_TYPE_DESCR).toObject();
     }
 
     void setInt32x4TypeDescr(JSObject &obj) {
@@ -563,7 +590,7 @@ class GlobalObject : public NativeObject
 #endif
         RootedObject holder(cx, intrinsicsHolder());
         RootedValue valCopy(cx, value);
-        return JSObject::setProperty(cx, holder, holder, name, &valCopy, false);
+        return SetProperty(cx, holder, holder, name, &valCopy, false);
     }
 
     bool getSelfHostedFunction(JSContext *cx, HandleAtom selfHostedName, HandleAtom name,

@@ -570,6 +570,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     // unboxing code
     void unboxNonDouble(const ValueOperand &operand, Register dest);
     void unboxNonDouble(const Address &src, Register dest);
+    void unboxNonDouble(const BaseIndex &src, Register dest);
     void unboxInt32(const ValueOperand &operand, Register dest);
     void unboxInt32(const Address &src, Register dest);
     void unboxBoolean(const ValueOperand &operand, Register dest);
@@ -580,6 +581,7 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS
     void unboxString(const Address &src, Register dest);
     void unboxObject(const ValueOperand &src, Register dest);
     void unboxObject(const Address &src, Register dest);
+    void unboxObject(const BaseIndex &src, Register dest) { unboxNonDouble(src, dest); }
     void unboxValue(const ValueOperand &src, AnyRegister dest);
     void unboxPrivate(const ValueOperand &src, Register dest);
 
@@ -851,6 +853,11 @@ public:
         loadPtr(lhs, ScratchRegister);
         ma_b(ScratchRegister, rhs, label, cond);
     }
+    void branch32(Condition cond, AsmJSAbsoluteAddress addr, Imm32 imm,
+                  Label *label) {
+        loadPtr(addr, ScratchRegister);
+        ma_b(ScratchRegister, imm, label, cond);
+    }
 
     void loadUnboxedValue(Address address, MIRType type, AnyRegister dest) {
         if (dest.isFloat())
@@ -949,8 +956,7 @@ public:
         ma_or(frameSizeReg, frameSizeReg, Imm32(type));
     }
 
-    void handleFailureWithHandler(void *handler);
-    void handleFailureWithHandlerTail();
+    void handleFailureWithHandlerTail(void *handler);
 
     /////////////////////////////////////////////////////////////////
     // Common interface.
@@ -1141,7 +1147,7 @@ public:
 
     // Builds an exit frame on the stack, with a return address to an internal
     // non-function. Returns offset to be passed to markSafepointAt().
-    bool buildFakeExitFrame(Register scratch, uint32_t *offset);
+    void buildFakeExitFrame(Register scratch, uint32_t *offset);
 
     void callWithExitFrame(Label *target);
     void callWithExitFrame(JitCode *target);
@@ -1463,11 +1469,9 @@ public:
         as_movs(dest, src);
     }
 
-#ifdef JSGC_GENERATIONAL
     void branchPtrInNurseryRange(Condition cond, Register ptr, Register temp, Label *label);
     void branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp,
                                     Label *label);
-#endif
 
     void loadAsmJSActivation(Register dest) {
         loadPtr(Address(GlobalReg, AsmJSActivationGlobalDataOffset - AsmJSGlobalRegBias), dest);
@@ -1476,6 +1480,10 @@ public:
         MOZ_ASSERT(Imm16::IsInSignedRange(AsmJSHeapGlobalDataOffset - AsmJSGlobalRegBias));
         loadPtr(Address(GlobalReg, AsmJSHeapGlobalDataOffset - AsmJSGlobalRegBias), HeapReg);
     }
+
+    // Instrumentation for entering and leaving the profiler.
+    void profilerEnterFrame(Register framePtr, Register scratch);
+    void profilerExitFrame();
 };
 
 typedef MacroAssemblerMIPSCompat MacroAssemblerSpecific;

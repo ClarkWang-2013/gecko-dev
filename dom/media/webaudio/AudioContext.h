@@ -59,6 +59,7 @@ class MediaStreamAudioSourceNode;
 class OscillatorNode;
 class PannerNode;
 class ScriptProcessorNode;
+class StereoPannerNode;
 class WaveShaperNode;
 class PeriodicWave;
 class Promise;
@@ -143,6 +144,9 @@ public:
                         uint32_t aNumberOfOutputChannels,
                         ErrorResult& aRv);
 
+  already_AddRefed<StereoPannerNode>
+  CreateStereoPanner();
+
   already_AddRefed<AnalyserNode>
   CreateAnalyser();
 
@@ -188,7 +192,8 @@ public:
   already_AddRefed<Promise>
   DecodeAudioData(const ArrayBuffer& aBuffer,
                   const Optional<OwningNonNull<DecodeSuccessCallback> >& aSuccessCallback,
-                  const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback);
+                  const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback,
+                  ErrorResult& aRv);
 
   // OfflineAudioContext methods
   already_AddRefed<Promise> StartRendering(ErrorResult& aRv);
@@ -257,7 +262,7 @@ private:
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize);
+                            nsISupports* aData, bool aAnonymize) MOZ_OVERRIDE;
 
   friend struct ::mozilla::WebAudioDecodeJob;
 
@@ -267,7 +272,6 @@ private:
   const float mSampleRate;
   nsRefPtr<AudioDestinationNode> mDestination;
   nsRefPtr<AudioListener> mListener;
-  MediaBufferDecoder mDecoder;
   nsTArray<nsRefPtr<WebAudioDecodeJob> > mDecodeJobs;
   // See RegisterActiveNode.  These will keep the AudioContext alive while it
   // is rendering and the window remains alive.

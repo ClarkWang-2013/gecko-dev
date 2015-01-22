@@ -80,13 +80,10 @@ RequestMapInitEntry(PLDHashTable *table, PLDHashEntryHdr *hdr,
 }
 
 static const PLDHashTableOps gMapOps = {
-  PL_DHashAllocTable,
-  PL_DHashFreeTable,
   PL_DHashVoidPtrKeyStub,
   RequestMapMatchEntry,
   PL_DHashMoveEntryStub,
   PL_DHashClearEntryStub,
-  PL_DHashFinalizeStub,
   RequestMapInitEntry
 };
 
@@ -126,7 +123,6 @@ nsSecureBrowserUIImpl::nsSecureBrowserUIImpl()
   , mOnStateLocationChangeReentranceDetection(0)
 #endif
 {
-  mTransferringRequests.ops = nullptr;
   ResetStateTracking();
   
 #if defined(PR_LOGGING)
@@ -137,9 +133,8 @@ nsSecureBrowserUIImpl::nsSecureBrowserUIImpl()
 
 nsSecureBrowserUIImpl::~nsSecureBrowserUIImpl()
 {
-  if (mTransferringRequests.ops) {
+  if (mTransferringRequests.IsInitialized()) {
     PL_DHashTableFinish(&mTransferringRequests);
-    mTransferringRequests.ops = nullptr;
   }
 }
 
@@ -472,15 +467,13 @@ void nsSecureBrowserUIImpl::ResetStateTracking()
   ReentrantMonitorAutoEnter lock(mReentrantMonitor);
 
   mDocumentRequestsInProgress = 0;
-  if (mTransferringRequests.ops) {
+  if (mTransferringRequests.IsInitialized()) {
     PL_DHashTableFinish(&mTransferringRequests);
-    mTransferringRequests.ops = nullptr;
   }
-  PL_DHashTableInit(&mTransferringRequests, &gMapOps, nullptr,
-                    sizeof(RequestHashEntry));
+  PL_DHashTableInit(&mTransferringRequests, &gMapOps, sizeof(RequestHashEntry));
 }
 
-nsresult
+void
 nsSecureBrowserUIImpl::EvaluateAndUpdateSecurityState(nsIRequest* aRequest,
                                                       nsISupports *info,
                                                       bool withNewLocation,
@@ -543,8 +536,7 @@ nsSecureBrowserUIImpl::EvaluateAndUpdateSecurityState(nsIRequest* aRequest,
     mRestoreSubrequests = false;
   }
 
-  return UpdateSecurityState(aRequest, withNewLocation,
-                             withNewSink || updateStatus);
+  UpdateSecurityState(aRequest, withNewLocation, withNewSink || updateStatus);
 }
 
 void
@@ -963,7 +955,7 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
     // means, there has already been data transfered.
 
     ReentrantMonitorAutoEnter lock(mReentrantMonitor);
-    PL_DHashTableOperate(&mTransferringRequests, aRequest, PL_DHASH_ADD);
+    PL_DHashTableAdd(&mTransferringRequests, aRequest);
     
     return NS_OK;
   }
@@ -976,10 +968,10 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
   {
     { /* scope for the ReentrantMonitorAutoEnter */
       ReentrantMonitorAutoEnter lock(mReentrantMonitor);
-      PLDHashEntryHdr *entry = PL_DHashTableOperate(&mTransferringRequests, aRequest, PL_DHASH_LOOKUP);
+      PLDHashEntryHdr *entry = PL_DHashTableLookup(&mTransferringRequests, aRequest);
       if (PL_DHASH_ENTRY_IS_BUSY(entry))
       {
-        PL_DHashTableOperate(&mTransferringRequests, aRequest, PL_DHASH_REMOVE);
+        PL_DHashTableRemove(&mTransferringRequests, aRequest);
 
         requestHasTransferedData = true;
       }
@@ -1189,9 +1181,11 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
       // But when the target sink changes between OnLocationChange and
       // OnStateChange, we have to fire the notification here (again).
 
-      if (sinkChanged || mOnLocationChangeSeen)
-        return EvaluateAndUpdateSecurityState(aRequest, securityInfo,
-                                              false, sinkChanged);
+      if (sinkChanged || mOnLocationChangeSeen) {
+        EvaluateAndUpdateSecurityState(aRequest, securityInfo, false,
+                                       sinkChanged);
+        return NS_OK;
+      }
     }
     mOnLocationChangeSeen = false;
 
@@ -1268,8 +1262,9 @@ nsSecureBrowserUIImpl::OnStateChange(nsIWebProgress* aWebProgress,
         temp_NewToplevelSecurityStateKnown = mNewToplevelSecurityStateKnown;
       }
 
-      if (temp_NewToplevelSecurityStateKnown)
-        return UpdateSecurityState(aRequest, false, false);
+      if (temp_NewToplevelSecurityStateKnown) {
+        UpdateSecurityState(aRequest, false, false);
+      }
     }
 
     return NS_OK;
@@ -1287,130 +1282,74 @@ void nsSecureBrowserUIImpl::ObtainEventSink(nsIChannel *channel,
     NS_QueryNotificationCallbacks(channel, sink);
 }
 
-nsresult nsSecureBrowserUIImpl::UpdateSecurityState(nsIRequest* aRequest, 
-                                                    bool withNewLocation, 
-                                                    bool withUpdateStatus)
+void
+nsSecureBrowserUIImpl::UpdateSecurityState(nsIRequest* aRequest,
+                                           bool withNewLocation,
+                                           bool withUpdateStatus)
 {
-  lockIconState warnSecurityState = lis_no_security;
-  nsresult rv = NS_OK;
-
-  // both parameters are both input and outout
-  bool flagsChanged = UpdateMyFlags(warnSecurityState);
-
-  if (flagsChanged || withNewLocation || withUpdateStatus)
-    rv = TellTheWorld(warnSecurityState, aRequest);
-
-  return rv;
-}
-
-// must not fail, by definition, only trivial assignments
-// or string operations are allowed
-// returns true if our overall state has changed and we must send out notifications
-bool nsSecureBrowserUIImpl::UpdateMyFlags(lockIconState &warnSecurityState)
-{
-  ReentrantMonitorAutoEnter lock(mReentrantMonitor);
-  bool mustTellTheWorld = false;
-
-  lockIconState newSecurityState;
-
-  if (mNewToplevelSecurityState & STATE_IS_SECURE)
-  {
-    if (mSubRequestsBrokenSecurity
-        ||
-        mSubRequestsNoSecurity)
-    {
+  lockIconState newSecurityState = lis_no_security;
+  if (mNewToplevelSecurityState & STATE_IS_SECURE) {
+    // If a subresoure/request was insecure, then we have mixed security.
+    if (mSubRequestsBrokenSecurity || mSubRequestsNoSecurity) {
       newSecurityState = lis_mixed_security;
-    }
-    else
-    {
+    } else {
       newSecurityState = lis_high_security;
     }
   }
-  else
-  if (mNewToplevelSecurityState & STATE_IS_BROKEN)
-  {
-    // indicating BROKEN is more important than MIXED.
-  
+
+  if (mNewToplevelSecurityState & STATE_IS_BROKEN) {
     newSecurityState = lis_broken_security;
-  }
-  else
-  {
-    newSecurityState = lis_no_security;
   }
 
   PR_LOG(gSecureDocLog, PR_LOG_DEBUG,
          ("SecureUI:%p: UpdateSecurityState:  old-new  %d - %d\n", this,
-         mNotifiedSecurityState, newSecurityState
-          ));
+          mNotifiedSecurityState, newSecurityState));
 
-  if (mNotifiedSecurityState != newSecurityState)
-  {
-    mustTellTheWorld = true;
-
-    // we'll treat "broken" exactly like "insecure",
-
-    /*
-      security    icon
-      ----------------
-    
-      no          open
-      mixed       broken
-      broken      broken
-      high        high
-    */
-
+  bool flagsChanged = false;
+  if (mNotifiedSecurityState != newSecurityState) {
+    // Something changed since the last time.
+    flagsChanged = true;
     mNotifiedSecurityState = newSecurityState;
 
-    if (lis_no_security == newSecurityState)
-    {
+    // If we have no security, we also shouldn't have any SSL status.
+    if (newSecurityState == lis_no_security) {
       mSSLStatus = nullptr;
     }
   }
 
   if (mNotifiedToplevelIsEV != mNewToplevelIsEV) {
-    mustTellTheWorld = true;
+    flagsChanged = true;
     mNotifiedToplevelIsEV = mNewToplevelIsEV;
   }
 
-  return mustTellTheWorld;
+  if (flagsChanged || withNewLocation || withUpdateStatus) {
+    TellTheWorld(aRequest);
+  }
 }
 
-nsresult nsSecureBrowserUIImpl::TellTheWorld(lockIconState warnSecurityState, 
-                                             nsIRequest* aRequest)
+void
+nsSecureBrowserUIImpl::TellTheWorld(nsIRequest* aRequest)
 {
-  nsCOMPtr<nsISecurityEventSink> temp_ToplevelEventSink;
-  lockIconState temp_NotifiedSecurityState;
-  bool temp_NotifiedToplevelIsEV;
-
+  nsCOMPtr<nsISecurityEventSink> toplevelEventSink;
+  uint32_t state = STATE_IS_INSECURE;
   {
     ReentrantMonitorAutoEnter lock(mReentrantMonitor);
-    temp_ToplevelEventSink = mToplevelEventSink;
-    temp_NotifiedSecurityState = mNotifiedSecurityState;
-    temp_NotifiedToplevelIsEV = mNotifiedToplevelIsEV;
+    toplevelEventSink = mToplevelEventSink;
+    GetState(&state);
   }
 
-  if (temp_ToplevelEventSink)
-  {
-    uint32_t newState = STATE_IS_INSECURE;
-    MapInternalToExternalState(&newState, 
-                               temp_NotifiedSecurityState, 
-                               temp_NotifiedToplevelIsEV);
-
+  if (toplevelEventSink) {
     PR_LOG(gSecureDocLog, PR_LOG_DEBUG,
-           ("SecureUI:%p: UpdateSecurityState: calling OnSecurityChange\n", this
-            ));
+           ("SecureUI:%p: UpdateSecurityState: calling OnSecurityChange\n",
+            this));
 
-    temp_ToplevelEventSink->OnSecurityChange(aRequest, newState);
-  }
-  else
-  {
+    toplevelEventSink->OnSecurityChange(aRequest, state);
+  } else {
     PR_LOG(gSecureDocLog, PR_LOG_DEBUG,
-           ("SecureUI:%p: UpdateSecurityState: NO mToplevelEventSink!\n", this
-            ));
+           ("SecureUI:%p: UpdateSecurityState: NO mToplevelEventSink!\n",
+            this));
 
   }
-
-  return NS_OK; 
 }
 
 NS_IMETHODIMP
@@ -1479,7 +1418,8 @@ nsSecureBrowserUIImpl::OnLocationChange(nsIWebProgress* aWebProgress,
   if (windowForProgress.get() == window.get()) {
     // For toplevel channels, update the security state right away.
     mOnLocationChangeSeen = true;
-    return EvaluateAndUpdateSecurityState(aRequest, securityInfo, true, false);
+    EvaluateAndUpdateSecurityState(aRequest, securityInfo, true, false);
+    return NS_OK;
   }
 
   // For channels in subdocuments we only update our subrequest state members.
@@ -1502,8 +1442,9 @@ nsSecureBrowserUIImpl::OnLocationChange(nsIWebProgress* aWebProgress,
     temp_NewToplevelSecurityStateKnown = mNewToplevelSecurityStateKnown;
   }
 
-  if (temp_NewToplevelSecurityStateKnown)
-    return UpdateSecurityState(aRequest, true, false);
+  if (temp_NewToplevelSecurityStateKnown) {
+    UpdateSecurityState(aRequest, true, false);
+  }
 
   return NS_OK;
 }

@@ -14,7 +14,7 @@ var gSmallTests = [
   { name:"seek.webm", type:"video/webm", width:320, height:240, duration:3.966 },
   { name:"vp9.webm", type:"video/webm", width:320, height:240, duration:4 },
   { name:"detodos.opus", type:"audio/ogg; codecs=opus", duration:2.9135 },
-  { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
+  { name:"gizmo.mp4", type:"video/mp4", width:560, height:320, duration:5.56 },
   { name:"bogus.duh", type:"bogus/duh" }
 ];
 
@@ -56,7 +56,9 @@ var gPlayedTests = [
   { name:"seek.webm", type:"video/webm", duration:3.966 },
   { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
   { name:"owl.mp3", type:"audio/mpeg", duration:3.29 },
-  { name:"vbr.mp3", type:"audio/mpeg", duration:10.0 },
+  // Disable vbr.mp3 to see if it reduces the error of AUDCLNT_E_CPUUSAGE_EXCEEDED.
+  // See bug 1110922 comment 26.
+  //{ name:"vbr.mp3", type:"audio/mpeg", duration:10.0 },
   { name:"bug495794.ogg", type:"audio/ogg", duration:0.3 }
 ];
 
@@ -171,10 +173,6 @@ var gPlayTests = [
   // Test playback of a WebM file with non-zero start time.
   { name:"split.webm", type:"video/webm", duration:1.967 },
 
-  // Test playback of a WebM file with vp9 video
-  //{ name:"vp9.webm", type:"video/webm", duration:4 },
-  { name:"vp9cake.webm", type:"video/webm", duration:7.966 },
-
   // Test playback of a raw file
   { name:"seek.yuv", type:"video/x-raw-yuv", duration:1.833 },
 
@@ -222,7 +220,11 @@ var gPlayTests = [
   { name:"vbr-head.mp3", type:"audio/mpeg", duration:10.00 },
 
   // Invalid file
-  { name:"bogus.duh", type:"bogus/duh", duration:Number.NaN }
+  { name:"bogus.duh", type:"bogus/duh", duration:Number.NaN },
+
+  // Test playback of a WebM file with vp9 video
+  //{ name:"vp9.webm", type:"video/webm", duration:4 },
+  { name:"vp9cake.webm", type:"video/webm", duration:7.966 }
 ];
 
 // A file for each type we can support.
@@ -870,6 +872,8 @@ function mediaTestCleanup(callback) {
 }
 
 (function() {
+  SimpleTest.requestFlakyTimeout("untriaged");
+
   // Ensure that preload preferences are comsistent
   var prefService = SpecialPowers.wrap(SpecialPowers.Components)
                                  .classes["@mozilla.org/preferences-service;1"]

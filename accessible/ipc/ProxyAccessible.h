@@ -23,11 +23,16 @@ public:
 
   ProxyAccessible(uint64_t aID, ProxyAccessible* aParent,
                   DocAccessibleParent* aDoc, role aRole) :
-     mParent(aParent), mDoc(aDoc), mID(aID), mRole(aRole), mOuterDoc(false)
+     mParent(aParent), mDoc(aDoc), mWrapper(0), mID(aID), mRole(aRole),
+     mOuterDoc(false)
   {
     MOZ_COUNT_CTOR(ProxyAccessible);
   }
-  ~ProxyAccessible() { MOZ_COUNT_DTOR(ProxyAccessible); }
+  ~ProxyAccessible()
+  {
+    MOZ_COUNT_DTOR(ProxyAccessible);
+    MOZ_ASSERT(!mWrapper);
+  }
 
   void AddChildAt(uint32_t aIdx, ProxyAccessible* aChild)
   { mChildren.InsertElementAt(aIdx, aChild); }
@@ -75,6 +80,12 @@ public:
   void Attributes(nsTArray<Attribute> *aAttrs) const;
 
   /**
+   * Get the text between the given offsets.
+   */
+  void TextSubstring(int32_t aStartOffset, int32_t aEndOfset,
+                     nsString& aText) const;
+
+  /**
    * Allow the platform to store a pointers worth of data on us.
    */
   uintptr_t GetWrapper() const { return mWrapper; }
@@ -86,8 +97,9 @@ public:
   uint64_t ID() const { return mID; }
 
 protected:
-  ProxyAccessible() :
-    mParent(nullptr), mDoc(nullptr), mWrapper(0), mID(0)
+  explicit ProxyAccessible(DocAccessibleParent* aThisAsDoc) :
+    mParent(nullptr), mDoc(aThisAsDoc), mWrapper(0), mID(0),
+    mRole(roles::DOCUMENT)
   { MOZ_COUNT_CTOR(ProxyAccessible); }
 
 protected:
@@ -100,6 +112,11 @@ private:
   uint64_t mID;
   role mRole : 31;
   bool mOuterDoc : 1;
+};
+
+enum Interfaces
+{
+  HYPERTEXT = 1
 };
 
 }

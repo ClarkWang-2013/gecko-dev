@@ -41,7 +41,7 @@
 #include "nsWildCard.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/ScriptSettings.h"
-
+#include "nsIXULRuntime.h"
 #include "nsIXPConnect.h"
 
 #include "nsIObserverService.h"
@@ -52,6 +52,7 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <OpenGL/OpenGL.h>
 #include "nsCocoaFeatures.h"
+#include "PluginUtilsOSX.h"
 #endif
 
 // needed for nppdf plugin
@@ -321,11 +322,21 @@ nsNPAPIPlugin::RunPluginOOP(const nsPluginTag *aPluginTag)
     prefGroupKey.AssignLiteral("dom.ipc.plugins.enabled.a11y.");
 #endif
 
-  // Java plugins include a number of different file names,
-  // so use the mime type (mIsJavaPlugin) and a special pref.
-  if (aPluginTag->mIsJavaPlugin &&
-      !Preferences::GetBool("dom.ipc.plugins.java.enabled", true)) {
-    return false;
+  if (BrowserTabsRemoteAutostart()) {
+    // dom.ipc.plugins.java.enabled is obsolete in Nightly w/e10s, we've
+    // flipped the default to ON and now have a force-disable pref. This
+    // way we don't break non-e10s browsers.
+    if (aPluginTag->mIsJavaPlugin &&
+        Preferences::GetBool("dom.ipc.plugins.java.force-disable", false)) {
+      return false;
+    }
+  } else {
+    // Java plugins include a number of different file names,
+    // so use the mime type (mIsJavaPlugin) and a special pref.
+    if (aPluginTag->mIsJavaPlugin &&
+        !Preferences::GetBool("dom.ipc.plugins.java.enabled", true)) {
+      return false;
+    }
   }
 
   uint32_t prefCount;
@@ -398,7 +409,7 @@ GetNewPluginLibrary(nsPluginTag *aPluginTag)
   }
 
   if (nsNPAPIPlugin::RunPluginOOP(aPluginTag)) {
-    return PluginModuleChromeParent::LoadModule(aPluginTag->mFullPath.get(), aPluginTag->mId);
+    return PluginModuleChromeParent::LoadModule(aPluginTag->mFullPath.get(), aPluginTag->mId, aPluginTag);
   }
   return new PluginPRLibrary(aPluginTag->mFullPath.get(), aPluginTag->mLibrary);
 }
@@ -433,13 +444,11 @@ nsNPAPIPlugin::CreatePlugin(nsPluginTag *aPluginTag, nsNPAPIPlugin** aResult)
   plugin->mLibrary = pluginLib;
   pluginLib->SetPlugin(plugin);
 
-  NPError pluginCallError;
-  nsresult rv;
-
 // Exchange NPAPI entry points.
 #if defined(XP_WIN)
   // NP_GetEntryPoints must be called before NP_Initialize on Windows.
-  rv = pluginLib->NP_GetEntryPoints(&plugin->mPluginFuncs, &pluginCallError);
+  NPError pluginCallError;
+  nsresult rv = pluginLib->NP_GetEntryPoints(&plugin->mPluginFuncs, &pluginCallError);
   if (rv != NS_OK || pluginCallError != NPERR_NO_ERROR) {
     return NS_ERROR_FAILURE;
   }
@@ -452,7 +461,8 @@ nsNPAPIPlugin::CreatePlugin(nsPluginTag *aPluginTag, nsNPAPIPlugin** aResult)
 #elif defined(XP_MACOSX)
   // NP_Initialize must be called before NP_GetEntryPoints on Mac OS X.
   // We need to match WebKit's behavior.
-  rv = pluginLib->NP_Initialize(&sBrowserFuncs, &pluginCallError);
+  NPError pluginCallError;
+  nsresult rv = pluginLib->NP_Initialize(&sBrowserFuncs, &pluginCallError);
   if (rv != NS_OK || pluginCallError != NPERR_NO_ERROR) {
     return NS_ERROR_FAILURE;
   }
@@ -463,7 +473,8 @@ nsNPAPIPlugin::CreatePlugin(nsPluginTag *aPluginTag, nsNPAPIPlugin** aResult)
   }
 #elif defined(MOZ_WIDGET_GONK)
 #else
-  rv = pluginLib->NP_Initialize(&sBrowserFuncs, &plugin->mPluginFuncs, &pluginCallError);
+  NPError pluginCallError;
+  nsresult rv = pluginLib->NP_Initialize(&sBrowserFuncs, &plugin->mPluginFuncs, &pluginCallError);
   if (rv != NS_OK || pluginCallError != NPERR_NO_ERROR) {
     return NS_ERROR_FAILURE;
   }
@@ -2121,13 +2132,13 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
   }
 
   case NPNVsupportsCoreAnimationBool: {
-    *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
+    *(NPBool*)result = true;
 
     return NPERR_NO_ERROR;
   }
 
   case NPNVsupportsInvalidatingCoreAnimationBool: {
-    *(NPBool*)result = nsCocoaFeatures::SupportCoreAnimationPlugins();
+    *(NPBool*)result = true;
 
     return NPERR_NO_ERROR;
   }
@@ -2160,6 +2171,20 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
     nsNPAPIPluginInstance *inst =
       (nsNPAPIPluginInstance *) (npp ? npp->ndata : nullptr);
     double scaleFactor = inst ? inst->GetContentsScaleFactor() : 1.0;
+    // Work around a Flash bug that causes long hangs when Flash tries to
+    // display its camera and microphone access dialog while it thinks HiDPI
+    // support is available. This is Adobe bug ADBE 3921114, which should get
+    // fixed in a future release. When this happens we'll no longer need this
+    // workaround. See QUIRK_FLASH_HIDE_HIDPI_SUPPORT in PluginModuleChild.h,
+    // and also bug 1118615.
+    if (inst) {
+      const char *mimeType;
+      inst->GetMIMEType(&mimeType);
+      NS_NAMED_LITERAL_CSTRING(flash, "application/x-shockwave-flash");
+      if (!PL_strncasecmp(mimeType, flash.get(), flash.Length())) {
+        scaleFactor = 1.0;
+      }
+    }
     *(double*)result = scaleFactor;
     return NPERR_NO_ERROR;
   }
@@ -2258,12 +2283,11 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
     }
 
     case kJavaContext_ANPGetValue: {
-      jobject ret = mozilla::widget::android::GeckoAppShell::GetContext();
+      auto ret = widget::GeckoAppShell::GetContext();
       if (!ret)
         return NPERR_GENERIC_ERROR;
 
-      int32_t* i  = reinterpret_cast<int32_t*>(result);
-      *i = reinterpret_cast<int32_t>(ret);
+      *static_cast<jobject*>(result) = ret.Forget();
       return NPERR_NO_ERROR;
     }
 
@@ -2784,11 +2808,50 @@ _unscheduletimer(NPP instance, uint32_t timerID)
 NPError
 _popupcontextmenu(NPP instance, NPMenu* menu)
 {
+#ifdef MOZ_WIDGET_COCOA
   nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance *)instance->ndata;
-  if (!inst)
+
+  double pluginX, pluginY;
+  double screenX, screenY;
+
+  const NPCocoaEvent* currentEvent = static_cast<NPCocoaEvent*>(inst->GetCurrentEvent());
+  if (!currentEvent) {
+    return NPERR_GENERIC_ERROR;
+  }
+
+  // Ensure that the events has an x/y value.
+  if (currentEvent->type != NPCocoaEventMouseDown    &&
+      currentEvent->type != NPCocoaEventMouseUp      &&
+      currentEvent->type != NPCocoaEventMouseMoved   &&
+      currentEvent->type != NPCocoaEventMouseEntered &&
+      currentEvent->type != NPCocoaEventMouseExited  &&
+      currentEvent->type != NPCocoaEventMouseDragged) {
+      return NPERR_GENERIC_ERROR;
+  }
+
+  pluginX = currentEvent->data.mouse.pluginX;
+  pluginY = currentEvent->data.mouse.pluginY;
+
+  if ((pluginX < 0.0) || (pluginY < 0.0))
     return NPERR_GENERIC_ERROR;
 
-  return inst->PopUpContextMenu(menu);
+  NPBool success = _convertpoint(instance,
+                                 pluginX,  pluginY, NPCoordinateSpacePlugin,
+                                 &screenX, &screenY, NPCoordinateSpaceScreen);
+
+  if (success) {
+    return mozilla::plugins::PluginUtilsOSX::ShowCocoaContextMenu(menu,
+                                    screenX, screenY,
+                                    nullptr,
+                                    nullptr);
+  } else {
+    NS_WARNING("Convertpoint failed, could not created contextmenu.");
+    return NPERR_GENERIC_ERROR;
+  }
+#else
+    NS_WARNING("Not supported on this platform!");
+    return NPERR_GENERIC_ERROR;
+#endif
 }
 
 NPBool

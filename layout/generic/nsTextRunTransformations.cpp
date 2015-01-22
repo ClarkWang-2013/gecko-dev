@@ -311,8 +311,11 @@ nsCaseTransformTextRunFactory::TransformString(
       style = aAllUppercase ? NS_STYLE_TEXT_TRANSFORM_UPPERCASE :
         styleContext->StyleText()->mTextTransform;
 
-      if (lang != styleContext->StyleFont()->mLanguage) {
-        lang = styleContext->StyleFont()->mLanguage;
+      const nsStyleFont* styleFont = styleContext->StyleFont();
+      nsIAtom* newLang = styleFont->mExplicitLanguage
+                         ? styleFont->mLanguage : nullptr;
+      if (lang != newLang) {
+        lang = newLang;
         languageSpecificCasing = GetCasingFor(lang);
         greekState.Reset();
         irishState.Reset();
@@ -593,7 +596,7 @@ nsCaseTransformTextRunFactory::TransformString(
 
 void
 nsCaseTransformTextRunFactory::RebuildTextRun(nsTransformedTextRun* aTextRun,
-    gfxContext* aRefContext)
+    gfxContext* aRefContext, gfxMissingFontRecorder *aMFR)
 {
   nsAutoString convertedString;
   nsAutoTArray<bool,50> charsToMergeArray;
@@ -628,7 +631,7 @@ nsCaseTransformTextRunFactory::RebuildTextRun(nsTransformedTextRun* aTextRun,
   } else {
     cachedChild = fontGroup->MakeTextRun(
         convertedString.BeginReading(), convertedString.Length(),
-        &innerParams, flags);
+        &innerParams, flags, aMFR);
     child = cachedChild.get();
   }
   if (!child)
@@ -640,7 +643,7 @@ nsCaseTransformTextRunFactory::RebuildTextRun(nsTransformedTextRun* aTextRun,
   child->SetPotentialLineBreaks(0, canBreakBeforeArray.Length(),
       canBreakBeforeArray.Elements(), aRefContext);
   if (transformedChild) {
-    transformedChild->FinishSettingProperties(aRefContext);
+    transformedChild->FinishSettingProperties(aRefContext, aMFR);
   }
 
   if (mergeNeeded) {

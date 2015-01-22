@@ -124,8 +124,7 @@ void
 MediaEngineWebRTCVideoSource::NotifyPull(MediaStreamGraph* aGraph,
                                          SourceMediaStream* aSource,
                                          TrackID aID,
-                                         StreamTime aDesiredTime,
-                                         StreamTime &aLastEndTime)
+                                         StreamTime aDesiredTime)
 {
   VideoSegment segment;
 
@@ -134,7 +133,7 @@ MediaEngineWebRTCVideoSource::NotifyPull(MediaStreamGraph* aGraph,
   // So mState could be kReleased here.  We really don't care about the state,
   // though.
 
-  StreamTime delta = aDesiredTime - aLastEndTime;
+  StreamTime delta = aDesiredTime - aSource->GetEndOfAppendedData(aID);
   LOGFRAME(("NotifyPull, desired = %ld, delta = %ld %s", (int64_t) aDesiredTime,
             (int64_t) delta, mImage.get() ? "" : "<null>"));
 
@@ -150,9 +149,7 @@ MediaEngineWebRTCVideoSource::NotifyPull(MediaStreamGraph* aGraph,
   // Doing so means a negative delta and thus messes up handling of the graph
   if (delta > 0) {
     // nullptr images are allowed
-    if (AppendToTrack(aSource, mImage, aID, delta)) {
-      aLastEndTime = aDesiredTime;
-    }
+    AppendToTrack(aSource, mImage, aID, delta);
   }
 }
 
@@ -433,6 +430,9 @@ MediaEngineWebRTCVideoSource::Stop(SourceMediaStream *aSource, TrackID aID)
     // Already stopped - this is allowed
     return NS_OK;
   }
+
+  aSource->EndTrack(aID);
+
   if (!mSources.IsEmpty()) {
     return NS_OK;
   }
@@ -443,7 +443,6 @@ MediaEngineWebRTCVideoSource::Stop(SourceMediaStream *aSource, TrackID aID)
   {
     MonitorAutoLock lock(mMonitor);
     mState = kStopped;
-    aSource->EndTrack(aID);
     // Drop any cached image so we don't start with a stale image on next
     // usage
     mImage = nullptr;

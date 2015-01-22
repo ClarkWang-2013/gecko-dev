@@ -34,6 +34,12 @@ class CompileRuntime
     // &mainThread.jitTop
     const void *addressOfJitTop();
 
+    // &mainThread.jitActivation
+    const void *addressOfJitActivation();
+
+    // &mainThread.profilingActivation
+    const void *addressOfProfilingActivation();
+
     // rt->mainThread.jitStackLimit;
     const void *addressOfJitStackLimit();
 
@@ -51,9 +57,6 @@ class CompileRuntime
 #endif
 
     const void *addressOfInterruptUint32();
-    const void *addressOfInterruptParUint32();
-
-    const void *addressOfThreadPool();
 
     const JitRuntime *jitRuntime();
 
@@ -70,6 +73,7 @@ class CompileRuntime
     const StaticStrings &staticStrings();
     const Value &NaNValue();
     const Value &positiveInfinityValue();
+    const WellKnownSymbols &wellKnownSymbols();
 
 #ifdef DEBUG
     bool isInsideNursery(gc::Cell *cell);
@@ -80,9 +84,7 @@ class CompileRuntime
 
     const MathCache *maybeGetMathCache();
 
-#ifdef JSGC_GENERATIONAL
     const Nursery &gcNursery();
-#endif
 };
 
 class CompileZone
@@ -94,7 +96,7 @@ class CompileZone
 
     const void *addressOfNeedsIncrementalBarrier();
 
-    // allocator.arenas.getFreeList(allocKind)
+    // arenas.getFreeList(allocKind)
     const void *addressOfFreeListFirst(gc::AllocKind allocKind);
     const void *addressOfFreeListLast(gc::AllocKind allocKind);
 };

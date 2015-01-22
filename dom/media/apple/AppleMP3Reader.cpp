@@ -492,15 +492,10 @@ AppleMP3Reader::SetupDecoder()
 }
 
 
-void
-AppleMP3Reader::Seek(int64_t aTime,
-                     int64_t aStartTime,
-                     int64_t aEndTime,
-                     int64_t aCurrentTime)
+nsRefPtr<MediaDecoderReader::SeekPromise>
+AppleMP3Reader::Seek(int64_t aTime, int64_t aEndTime)
 {
   MOZ_ASSERT(mDecoder->OnDecodeThread(), "Should be on decode thread");
-  NS_ASSERTION(aStartTime < aEndTime,
-               "Seeking should happen over a positive range");
 
   // Find the exact frame/packet that contains |aTime|.
   mCurrentAudioFrame = aTime * mAudioSampleRate / USECS_PER_S;
@@ -518,8 +513,7 @@ AppleMP3Reader::Seek(int64_t aTime,
 
   if (rv) {
     LOGE("Couldn't seek demuxer. Error code %x\n", rv);
-    GetCallback()->OnSeekCompleted(NS_ERROR_FAILURE);
-    return;
+    return SeekPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
   }
 
   LOGD("computed byte offset = %lld; estimated = %s\n",
@@ -530,7 +524,7 @@ AppleMP3Reader::Seek(int64_t aTime,
 
   ResetDecode();
 
-  GetCallback()->OnSeekCompleted(NS_OK);
+  return SeekPromise::CreateAndResolve(aTime, __func__);
 }
 
 void

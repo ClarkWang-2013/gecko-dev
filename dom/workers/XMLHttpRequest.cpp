@@ -454,7 +454,7 @@ public:
   EventRunnable(Proxy* aProxy, bool aUploadEvent, const nsString& aType,
                 bool aLengthComputable, uint64_t aLoaded, uint64_t aTotal)
   : MainThreadProxyRunnable(aProxy->mWorkerPrivate, aProxy), mType(aType),
-    mResponse(JSVAL_VOID), mLoaded(aLoaded), mTotal(aTotal),
+    mResponse(JS::UndefinedValue()), mLoaded(aLoaded), mTotal(aTotal),
     mEventStreamId(aProxy->mInnerEventStreamId), mStatus(0), mReadyState(0),
     mUploadEvent(aUploadEvent), mProgressEvent(true),
     mLengthComputable(aLengthComputable), mUseCachedArrayBufferResponse(false),
@@ -463,7 +463,7 @@ public:
 
   EventRunnable(Proxy* aProxy, bool aUploadEvent, const nsString& aType)
   : MainThreadProxyRunnable(aProxy->mWorkerPrivate, aProxy), mType(aType),
-    mResponse(JSVAL_VOID), mLoaded(0), mTotal(0),
+    mResponse(JS::UndefinedValue()), mLoaded(0), mTotal(0),
     mEventStreamId(aProxy->mInnerEventStreamId), mStatus(0), mReadyState(0),
     mUploadEvent(aUploadEvent), mProgressEvent(false), mLengthComputable(0),
     mUseCachedArrayBufferResponse(false), mResponseTextResult(NS_OK),
@@ -919,7 +919,8 @@ Proxy::Init()
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(ownerWindow);
   if (NS_FAILED(mXHR->Init(mWorkerPrivate->GetPrincipal(),
                            mWorkerPrivate->GetScriptContext(),
-                           global, mWorkerPrivate->GetBaseURI()))) {
+                           global, mWorkerPrivate->GetBaseURI(),
+                           mWorkerPrivate->GetLoadGroup()))) {
     mXHR = nullptr;
     return false;
   }
@@ -1219,7 +1220,7 @@ EventRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
         if (doClone) {
           // Anything subject to GC must be cloned.
-          JSStructuredCloneCallbacks* callbacks =
+          const JSStructuredCloneCallbacks* callbacks =
             aWorkerPrivate->IsChromeWorker() ?
             workers::ChromeWorkerStructuredCloneCallbacks(true) :
             workers::WorkerStructuredCloneCallbacks(true);
@@ -1331,7 +1332,7 @@ EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 
         JSAutoStructuredCloneBuffer responseBuffer(Move(mResponseBuffer));
 
-        JSStructuredCloneCallbacks* callbacks =
+        const JSStructuredCloneCallbacks* callbacks =
           aWorkerPrivate->IsChromeWorker() ?
           workers::ChromeWorkerStructuredCloneCallbacks(false) :
           workers::WorkerStructuredCloneCallbacks(false);
@@ -1515,7 +1516,7 @@ SendRunnable::MainThreadRun()
 
     nsresult rv = NS_OK;
 
-    JSStructuredCloneCallbacks* callbacks =
+    const JSStructuredCloneCallbacks* callbacks =
       mWorkerPrivate->IsChromeWorker() ?
       workers::ChromeWorkerStructuredCloneCallbacks(true) :
       workers::WorkerStructuredCloneCallbacks(true);
@@ -2139,7 +2140,7 @@ XMLHttpRequest::Send(JS::Handle<JSObject*> aBody, ErrorResult& aRv)
     valToClone.setString(bodyStr);
   }
 
-  JSStructuredCloneCallbacks* callbacks =
+  const JSStructuredCloneCallbacks* callbacks =
     mWorkerPrivate->IsChromeWorker() ?
     ChromeWorkerStructuredCloneCallbacks(false) :
     WorkerStructuredCloneCallbacks(false);
@@ -2177,7 +2178,15 @@ XMLHttpRequest::Send(File& aBody, ErrorResult& aRv)
     return;
   }
 
-  JSStructuredCloneCallbacks* callbacks =
+  nsRefPtr<FileImpl> blobImpl = aBody.Impl();
+  MOZ_ASSERT(blobImpl);
+
+  aRv = blobImpl->SetMutable(false);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return;
+  }
+
+  const JSStructuredCloneCallbacks* callbacks =
     mWorkerPrivate->IsChromeWorker() ?
     ChromeWorkerStructuredCloneCallbacks(false) :
     WorkerStructuredCloneCallbacks(false);
