@@ -737,7 +737,7 @@ Assembler::as_addiu(Register rd, Register rs, int32_t j)
 BufferOffset
 Assembler::as_daddiu(Register rd, Register rs, int32_t j)
 {
-    MOZ_ASSERT(Imm16::isInSignedRange(j));
+    MOZ_ASSERT(Imm16::IsInSignedRange(j));
     return writeInst(InstImm(op_daddiu, rs, rd, Imm16(j)).encode());
 }
 

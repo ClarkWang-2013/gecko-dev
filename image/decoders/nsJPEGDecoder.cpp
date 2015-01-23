@@ -18,12 +18,13 @@
 #include "jerror.h"
 
 #include "gfxPlatform.h"
+#include "mozilla/Endian.h"
 
 extern "C" {
 #include "iccjpeg.h"
 }
 
-#if defined(IS_BIG_ENDIAN)
+#if MOZ_BIG_ENDIAN
 #define MOZ_JCS_EXT_NATIVE_ENDIAN_XRGB JCS_EXT_XRGB
 #else
 #define MOZ_JCS_EXT_NATIVE_ENDIAN_XRGB JCS_EXT_BGRX
@@ -537,7 +538,9 @@ nsJPEGDecoder::WriteInternal(const char* aBuffer, uint32_t aCount)
             break;
 
           mInfo.output_scanline = 0;
-          mDownscaler->ResetForNextProgressivePass();
+          if (mDownscaler) {
+            mDownscaler->ResetForNextProgressivePass();
+          }
         }
       }
 
