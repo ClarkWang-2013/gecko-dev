@@ -276,6 +276,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
         masm.load32(slotNumStackValues, numStackValues);
 #elif defined(USES_N32_ABI)
         Register numStackValues = reg_values;
+        regs.take(numStackValues);
 #endif
 
         // Push return address.
