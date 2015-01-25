@@ -311,6 +311,8 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, AbstractFrame
         if (evalType == DIRECT_EVAL)
             enclosing = callerScript->innermostStaticScope(pc);
         Rooted<StaticEvalObject *> staticScope(cx, StaticEvalObject::create(cx, enclosing));
+        if (!staticScope)
+            return false;
 
         CompileOptions options(cx);
         options.setFileAndLine(filename, 1)
@@ -428,7 +430,19 @@ js::DirectEvalStringFromIon(JSContext *cx,
     // the calling frame cannot be updated to store the new object.
     MOZ_ASSERT(thisValue.isObject() || thisValue.isUndefined() || thisValue.isNull());
 
-    return ExecuteKernel(cx, esg.script(), *scopeobj, thisValue, ExecuteType(DIRECT_EVAL),
+    // When eval'ing strict code in a non-strict context, compute the 'this'
+    // value to use from what the caller passed in. This isn't necessary if
+    // the callee is not strict, as it will compute the non-strict 'this'
+    // value as necessary while it executes.
+    RootedValue nthisValue(cx, thisValue);
+    if (!callerScript->strict() && esg.script()->strict() && !thisValue.isObject()) {
+        JSObject *obj = BoxNonStrictThis(cx, thisValue);
+        if (!obj)
+            return false;
+        nthisValue = ObjectValue(*obj);
+    }
+
+    return ExecuteKernel(cx, esg.script(), *scopeobj, nthisValue, ExecuteType(DIRECT_EVAL),
                          NullFramePtr() /* evalInFrame */, vp.address());
 }
 
@@ -499,7 +513,7 @@ js::ExecuteInGlobalAndReturnScope(JSContext *cx, HandleObject global, HandleScri
         Debugger::onNewScript(cx, script, global);
     }
 
-    RootedObject scope(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
+    RootedObject scope(cx, JS_NewPlainObject(cx));
     if (!scope)
         return false;
 

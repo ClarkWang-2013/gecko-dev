@@ -224,10 +224,19 @@ JS_CopyPropertiesFrom(JSContext *cx, JS::HandleObject target, JS::HandleObject o
  * property of the given name exists on |obj|.
  *
  * On entry, |cx| must be same-compartment with |obj|.
+ *
+ * The copyBehavior argument controls what happens with
+ * non-configurable properties.
  */
+typedef enum  {
+    MakeNonConfigurableIntoConfigurable,
+    CopyNonConfigurableAsIs
+} PropertyCopyBehavior;
+
 extern JS_FRIEND_API(bool)
 JS_CopyPropertyFrom(JSContext *cx, JS::HandleId id, JS::HandleObject target,
-                    JS::HandleObject obj);
+                    JS::HandleObject obj,
+                    PropertyCopyBehavior copyBehavior = CopyNonConfigurableAsIs);
 
 extern JS_FRIEND_API(bool)
 JS_WrapPropertyDescriptor(JSContext *cx, JS::MutableHandle<JSPropertyDescriptor> desc);
@@ -302,7 +311,6 @@ namespace js {
             js::proxy_SetProperty,                                                      \
             js::proxy_SetElement,                                                       \
             js::proxy_GetOwnPropertyDescriptor,                                         \
-            js::proxy_GetGenericAttributes,                                             \
             js::proxy_SetGenericAttributes,                                             \
             js::proxy_DeleteGeneric,                                                    \
             js::proxy_Watch, js::proxy_Unwatch,                                         \
@@ -367,8 +375,6 @@ proxy_SetElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::Mutabl
 extern JS_FRIEND_API(bool)
 proxy_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                                JS::MutableHandle<JSPropertyDescriptor> desc);
-extern JS_FRIEND_API(bool)
-proxy_GetGenericAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned *attrsp);
 extern JS_FRIEND_API(bool)
 proxy_SetGenericAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned *attrsp);
 extern JS_FRIEND_API(bool)
@@ -1367,8 +1373,11 @@ struct MOZ_STACK_CLASS JS_FRIEND_API(ErrorReport)
     // More or less an equivalent of JS_ReportErrorNumber/js_ReportErrorNumberVA
     // but fills in an ErrorReport instead of reporting it.  Uses varargs to
     // make it simpler to call js_ExpandErrorArguments.
-    void populateUncaughtExceptionReport(JSContext *cx, ...);
-    void populateUncaughtExceptionReportVA(JSContext *cx, va_list ap);
+    //
+    // Returns false if we fail to actually populate the ErrorReport
+    // for some reason (probably out of memory).
+    bool populateUncaughtExceptionReport(JSContext *cx, ...);
+    bool populateUncaughtExceptionReportVA(JSContext *cx, va_list ap);
 
     // We may have a provided JSErrorReport, so need a way to represent that.
     JSErrorReport *reportp;

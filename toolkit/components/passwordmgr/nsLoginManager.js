@@ -209,9 +209,28 @@ LoginManager.prototype = {
     },
 
     _gatherTelemetry : function() {
+      let numPasswordsBlocklist = Services.telemetry.getHistogramById("PWMGR_BLOCKLIST_NUM_SITES");
+      numPasswordsBlocklist.clear();
+      numPasswordsBlocklist.add(this.getAllDisabledHosts({}).length);
+
       let numPasswordsHist = Services.telemetry.getHistogramById("PWMGR_NUM_SAVED_PASSWORDS");
       numPasswordsHist.clear();
       numPasswordsHist.add(this.countLogins("", "", ""));
+
+      let isPwdSavedEnabledHist = Services.telemetry.getHistogramById("PWMGR_SAVING_ENABLED");
+      isPwdSavedEnabledHist.clear();
+      isPwdSavedEnabledHist.add(this._remember);
+
+      // Don't try to get logins if MP is enabled, since we don't want to show a MP prompt.
+      if (this.isLoggedIn) {
+        let logins = this.getAllLogins({});
+
+        let usernameHist = Services.telemetry.getHistogramById("PWMGR_USERNAME_PRESENT");
+        usernameHist.clear();
+        for (let login of logins) {
+          usernameHist.add(!!login.username);
+        }
+      }
     },
 
 

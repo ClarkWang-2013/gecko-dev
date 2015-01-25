@@ -2640,6 +2640,14 @@ Debugger::getMemory(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+/*
+ * Given a value used to designate a global (there's quite a variety; see the
+ * docs), return the actual designee.
+ *
+ * Note that this does not check whether the designee is marked "invisible to
+ * Debugger" or not; different callers need to handle invisible-to-Debugger
+ * globals in different ways.
+ */
 GlobalObject *
 Debugger::unwrapDebuggeeArgument(JSContext *cx, const Value &v)
 {
@@ -3780,6 +3788,16 @@ Debugger::makeGlobalObjectReference(JSContext *cx, unsigned argc, Value *vp)
     Rooted<GlobalObject *> global(cx, dbg->unwrapDebuggeeArgument(cx, args[0]));
     if (!global)
         return false;
+
+    // If we create a D.O referring to a global in an invisible compartment,
+    // then from it we can reach function objects, scripts, environments, etc.,
+    // none of which we're ever supposed to see.
+    JSCompartment *globalCompartment = global->compartment();
+    if (globalCompartment->options().invisibleToDebugger()) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
+                             JSMSG_DEBUG_INVISIBLE_COMPARTMENT);
+        return false;
+    }
 
     args.rval().setObject(*global);
     return dbg->wrapDebuggeeValue(cx, args.rval());
@@ -5907,10 +5925,10 @@ DebuggerFrame_setOnPop(JSContext *cx, unsigned argc, Value *vp)
  * environment; either way, |frame|'s scope is where newly declared variables
  * go. In this case, |frame| must have a computed 'this' value, equal to |thisv|.
  */
-bool
-js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFramePtr frame,
-                  jsbytecode *pc, mozilla::Range<const char16_t> chars, const char *filename,
-                  unsigned lineno, MutableHandleValue rval)
+static bool
+EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFramePtr frame,
+              jsbytecode *pc, mozilla::Range<const char16_t> chars, const char *filename,
+              unsigned lineno, MutableHandleValue rval)
 {
     assertSameCompartment(cx, env, frame);
     MOZ_ASSERT_IF(frame, thisv.get() == frame.thisValue());
@@ -5923,10 +5941,15 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFr
      * calls and properly compute a static level. In practice, any non-zero
      * static level will suffice.
      *
-     * Pass in NullPtr for evalStaticScope, as ScopeIter should stop at any
-     * non-ScopeObject boundaries, and we are putting a DebugScopeProxy on the
-     * scope chain.
+     * Pass in a StaticEvalObject *not* linked to env for evalStaticScope, as
+     * ScopeIter should stop at any non-ScopeObject boundaries, and we are
+     * putting a DebugScopeProxy on the scope chain.
      */
+    Rooted<StaticEvalObject *> staticScope(cx, StaticEvalObject::create(cx, js::NullPtr()));
+    if (!staticScope)
+        return false;
+    if (frame && frame.script()->strict())
+        staticScope->setStrict();
     CompileOptions options(cx);
     options.setCompileAndGo(true)
            .setForEval(true)
@@ -5938,8 +5961,8 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFr
     RootedScript callerScript(cx, frame ? frame.script() : nullptr);
     SourceBufferHolder srcBuf(chars.start().get(), chars.length(), SourceBufferHolder::NoOwnership);
     RootedScript script(cx, frontend::CompileScript(cx, &cx->tempLifoAlloc(), env, callerScript,
-                                                    /* evalStaticScope = */ js::NullPtr(),
-                                                    options, srcBuf, /* source = */ nullptr,
+                                                    staticScope, options, srcBuf,
+                                                    /* source = */ nullptr,
                                                     /* staticLevel = */ frame ? 1 : 0));
     if (!script)
         return false;
@@ -6991,6 +7014,16 @@ DebuggerObject_unwrap(JSContext *cx, unsigned argc, Value *vp)
     if (!unwrapped) {
         args.rval().setNull();
         return true;
+    }
+
+    // Don't allow unwrapping to create a D.O whose referent is in an
+    // invisible-to-Debugger global. (If our referent is a *wrapper* to such,
+    // and the wrapper is in a visible compartment, that's fine.)
+    JSCompartment *unwrappedCompartment = unwrapped->compartment();
+    if (unwrappedCompartment->options().invisibleToDebugger()) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
+                             JSMSG_DEBUG_INVISIBLE_COMPARTMENT);
+        return false;
     }
 
     args.rval().setObject(*unwrapped);

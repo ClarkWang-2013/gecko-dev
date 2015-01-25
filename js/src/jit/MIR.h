@@ -1279,6 +1279,8 @@ class MConstant : public MNullaryInstruction
     INSTRUCTION_HEADER(Constant)
     static MConstant *New(TempAllocator &alloc, const Value &v,
                           types::CompilerConstraintList *constraints = nullptr);
+    static MConstant *NewTypedValue(TempAllocator &alloc, const Value &v, MIRType type,
+                                    types::CompilerConstraintList *constraints = nullptr);
     static MConstant *NewAsmJS(TempAllocator &alloc, const Value &v, MIRType type);
     static MConstant *NewConstraintlessObject(TempAllocator &alloc, JSObject *v);
 
@@ -2791,17 +2793,21 @@ class MNewObject
   : public MUnaryInstruction,
     public NoTypePolicy::Data
 {
+  public:
+    enum Mode { ObjectLiteral, ObjectCreate };
+
+  private:
     gc::InitialHeap initialHeap_;
-    bool templateObjectIsClassPrototype_;
+    Mode mode_;
 
     MNewObject(types::CompilerConstraintList *constraints, MConstant *templateConst,
-               gc::InitialHeap initialHeap, bool templateObjectIsClassPrototype)
+               gc::InitialHeap initialHeap, Mode mode)
       : MUnaryInstruction(templateConst),
         initialHeap_(initialHeap),
-        templateObjectIsClassPrototype_(templateObjectIsClassPrototype)
+        mode_(mode)
     {
         PlainObject *obj = templateObject();
-        MOZ_ASSERT_IF(templateObjectIsClassPrototype, !shouldUseVM());
+        MOZ_ASSERT_IF(mode != ObjectLiteral, !shouldUseVM());
         setResultType(MIRType_Object);
         if (!obj->hasSingletonType())
             setResultTypeSet(MakeSingletonTypeSet(constraints, obj));
@@ -2819,18 +2825,17 @@ class MNewObject
 
     static MNewObject *New(TempAllocator &alloc, types::CompilerConstraintList *constraints,
                            MConstant *templateConst, gc::InitialHeap initialHeap,
-                           bool templateObjectIsClassPrototype)
+                           Mode mode)
     {
-        return new(alloc) MNewObject(constraints, templateConst, initialHeap,
-                                     templateObjectIsClassPrototype);
+        return new(alloc) MNewObject(constraints, templateConst, initialHeap, mode);
     }
 
     // Returns true if the code generator should call through to the
     // VM rather than the fast path.
     bool shouldUseVM() const;
 
-    bool templateObjectIsClassPrototype() const {
-        return templateObjectIsClassPrototype_;
+    Mode mode() const {
+        return mode_;
     }
 
     PlainObject *templateObject() const {
@@ -4756,6 +4761,11 @@ class MTruncateToInt32
     }
 #endif
 
+    bool writeRecoverData(CompactBufferWriter &writer) const;
+    bool canRecoverOnBailout() const {
+        return input()->type() < MIRType_Symbol;
+    }
+
     ALLOW_CLONE(MTruncateToInt32)
 };
 
@@ -5702,6 +5712,8 @@ class MMathFunction
     bool possiblyCalls() const MOZ_OVERRIDE {
         return true;
     }
+
+    MDefinition *foldsTo(TempAllocator &alloc) MOZ_OVERRIDE;
 
     void printOpcode(FILE *fp) const MOZ_OVERRIDE;
 

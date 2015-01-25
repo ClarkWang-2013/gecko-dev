@@ -60,6 +60,8 @@ VMFunction::addToFunctions()
 bool
 InvokeFunction(JSContext *cx, HandleObject obj0, uint32_t argc, Value *argv, Value *rval)
 {
+    AutoArrayRooter argvRoot(cx, argc + 1, argv);
+
     RootedObject obj(cx, obj0);
     if (obj->is<JSFunction>()) {
         RootedFunction fun(cx, &obj->as<JSFunction>());
@@ -295,27 +297,6 @@ NewInitObject(JSContext *cx, HandlePlainObject templateObject)
 
     if (!templateObject->hasSingletonType())
         obj->setType(templateObject->type());
-
-    return obj;
-}
-
-JSObject *
-NewInitObjectWithClassPrototype(JSContext *cx, HandlePlainObject templateObject)
-{
-    MOZ_ASSERT(!templateObject->hasSingletonType());
-    MOZ_ASSERT(!templateObject->hasLazyType());
-
-    NewObjectKind newKind = templateObject->type()->shouldPreTenure()
-                            ? TenuredObject
-                            : GenericObject;
-    PlainObject *obj = NewObjectWithGivenProto<PlainObject>(cx,
-                                                            templateObject->getProto(),
-                                                            cx->global(),
-                                                            newKind);
-    if (!obj)
-        return nullptr;
-
-    obj->setType(templateObject->type());
 
     return obj;
 }

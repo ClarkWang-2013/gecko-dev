@@ -25,6 +25,11 @@
 #include "base/task.h"
 #include "base/thread.h"
 
+#ifdef XP_WIN
+// For IsDebuggerPresent()
+#include <windows.h>
+#endif
+
 using namespace mozilla;
 using namespace mozilla::dom;
 
@@ -144,7 +149,7 @@ public:
   NS_IMETHOD TerminatePlugin() MOZ_OVERRIDE;
   NS_IMETHOD TerminateProcess() MOZ_OVERRIDE;
 
-  NS_IMETHOD IsReportForBrowser(nsIFrameLoader* aFrameLoader, bool* aResult);
+  NS_IMETHOD IsReportForBrowser(nsIFrameLoader* aFrameLoader, bool* aResult) MOZ_OVERRIDE;
 
   void Clear() { mContentParent = nullptr; mActor = nullptr; }
 
@@ -526,6 +531,14 @@ HangMonitorParent::RecvHangEvidence(const HangData& aHangData)
   if (!mReportHangs) {
     return true;
   }
+
+#ifdef XP_WIN
+  // Don't report hangs if we're debugging the process. You can comment this
+  // line out for testing purposes.
+  if (IsDebuggerPresent()) {
+    return true;
+  }
+#endif
 
   mHangMonitor->InitiateCPOWTimeout();
 

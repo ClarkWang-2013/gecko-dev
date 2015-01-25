@@ -190,35 +190,27 @@ js::ObjectToSource(JSContext *cx, HandleObject obj)
     bool comma = false;
     for (size_t i = 0; i < idv.length(); ++i) {
         RootedId id(cx, idv[i]);
-        RootedObject obj2(cx);
-        RootedShape shape(cx);
-        if (!LookupProperty(cx, obj, id, &obj2, &shape))
+        Rooted<PropertyDescriptor> desc(cx);
+        if (!GetOwnPropertyDescriptor(cx, obj, id, &desc))
             return nullptr;
 
-        /*  Decide early whether we prefer get/set or old getter/setter syntax. */
         int valcnt = 0;
-        if (shape) {
-            bool doGet = true;
-            if (obj2->isNative() && !IsImplicitDenseOrTypedArrayElement(shape)) {
-                unsigned attrs = shape->attributes();
-                if (attrs & JSPROP_GETTER) {
-                    doGet = false;
-                    val[valcnt].set(shape->getterValue());
+        if (desc.object()) {
+            if (desc.hasGetterOrSetterObject()) {
+                if (desc.hasGetterObject() && desc.getterObject()) {
+                    val[valcnt].setObject(*desc.getterObject());
                     gsop[valcnt].set(cx->names().get);
                     valcnt++;
                 }
-                if (attrs & JSPROP_SETTER) {
-                    doGet = false;
-                    val[valcnt].set(shape->setterValue());
+                if (desc.hasSetterObject() && desc.setterObject()) {
+                    val[valcnt].setObject(*desc.setterObject());
                     gsop[valcnt].set(cx->names().set);
                     valcnt++;
                 }
-            }
-            if (doGet) {
+            } else {
                 valcnt = 1;
+                val[0].set(desc.value());
                 gsop[0].set(nullptr);
-                if (!GetProperty(cx, obj, obj, id, val[0]))
-                    return nullptr;
             }
         }
 
@@ -250,13 +242,6 @@ js::ObjectToSource(JSContext *cx, HandleObject obj)
         }
 
         for (int j = 0; j < valcnt; j++) {
-            /*
-             * Censor an accessor descriptor getter or setter part if it's
-             * undefined.
-             */
-            if (gsop[j] && val[j].isUndefined())
-                continue;
-
             /* Convert val[j] to its canonical source form. */
             JSString *valsource = ValueToSource(cx, val[j]);
             if (!valsource)
@@ -637,6 +622,42 @@ obj_isPrototypeOf(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+PlainObject *
+js::ObjectCreateImpl(JSContext *cx, HandleObject proto, NewObjectKind newKind, HandleTypeObject type)
+{
+    // Give the new object a small number of fixed slots, like we do for empty
+    // object literals ({}).
+    gc::AllocKind allocKind = GuessObjectGCKind(0);
+
+    if (!proto) {
+        // Object.create(null) is common, optimize it by using an allocation
+        // site specific TypeObject. Because GetTypeCallerInitObject is pretty
+        // slow, the caller can pass in the type if it's known and we use that
+        // instead.
+        RootedTypeObject ntype(cx, type);
+        if (!ntype) {
+            ntype = GetTypeCallerInitObject(cx, JSProto_Null);
+            if (!ntype)
+                return nullptr;
+        }
+
+        MOZ_ASSERT(!ntype->proto().toObjectOrNull());
+
+        return NewObjectWithType<PlainObject>(cx, ntype, cx->global(), allocKind,
+                                              newKind);
+    }
+
+    return NewObjectWithGivenProto<PlainObject>(cx, proto, cx->global(), allocKind, newKind);
+}
+
+PlainObject *
+js::ObjectCreateWithTemplate(JSContext *cx, HandlePlainObject templateObj)
+{
+    RootedObject proto(cx, templateObj->getProto());
+    RootedTypeObject type(cx, templateObj->type());
+    return ObjectCreateImpl(cx, proto, GenericObject, type);
+}
+
 /* ES5 15.2.3.5: Object.create(O [, Properties]) */
 bool
 js::obj_create(JSContext *cx, unsigned argc, Value *vp)
@@ -648,8 +669,8 @@ js::obj_create(JSContext *cx, unsigned argc, Value *vp)
         return false;
     }
 
-    RootedValue v(cx, args[0]);
-    if (!v.isObjectOrNull()) {
+    if (!args[0].isObjectOrNull()) {
+        RootedValue v(cx, args[0]);
         char *bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, NullPtr());
         if (!bytes)
             return false;
@@ -659,13 +680,8 @@ js::obj_create(JSContext *cx, unsigned argc, Value *vp)
         return false;
     }
 
-    RootedObject proto(cx, v.toObjectOrNull());
-
-    /*
-     * Use the callee's global as the parent of the new object to avoid dynamic
-     * scoping (i.e., using the caller's global).
-     */
-    RootedObject obj(cx, NewObjectWithGivenProto<PlainObject>(cx, proto, &args.callee().global()));
+    RootedObject proto(cx, args[0].toObjectOrNull());
+    RootedPlainObject obj(cx, ObjectCreateImpl(cx, proto));
     if (!obj)
         return false;
 
