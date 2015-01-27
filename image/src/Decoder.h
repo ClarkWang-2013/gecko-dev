@@ -108,7 +108,7 @@ public:
   }
 
   // We're not COM-y, so we don't get refcounts by default
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(Decoder)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(Decoder, MOZ_OVERRIDE)
 
   // Implement IResumable.
   virtual void Resume() MOZ_OVERRIDE;
@@ -188,6 +188,19 @@ public:
     MOZ_ASSERT(!mInitialized, "Shouldn't be initialized yet");
     mImageIsTransient = aIsTransient;
   }
+
+  /**
+   * Set whether the image is locked for the lifetime of this decoder. We lock
+   * the image during our initial decode to ensure that we don't evict any
+   * surfaces before we realize that the image is animated.
+   */
+  void SetImageIsLocked()
+  {
+    MOZ_ASSERT(!mInitialized, "Shouldn't be initialized yet");
+    mImageIsLocked = true;
+  }
+
+  bool ImageIsLocked() const { return mImageIsLocked; }
 
   size_t BytesDecoded() const { return mBytesDecoded; }
 
@@ -445,6 +458,7 @@ protected:
   bool mDataError;
   bool mDecodeAborted;
   bool mImageIsTransient;
+  bool mImageIsLocked;
 
 private:
   uint32_t mFrameCount; // Number of frames, including anything in-progress
