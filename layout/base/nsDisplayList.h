@@ -340,6 +340,10 @@ public:
   {
     return (gfxPrefs::LayoutEventRegionsEnabled() && mMode == PAINTING);
   }
+  bool IsInsidePointerEventsNoneDoc()
+  {
+    return CurrentPresShellState()->mInsidePointerEventsNoneDoc;
+  }
 
   bool GetAncestorHasTouchEventHandler() { return mAncestorHasTouchEventHandler; }
   void SetAncestorHasTouchEventHandler(bool aValue)
@@ -391,8 +395,11 @@ public:
   /**
    * Notify the display list builder that we're entering a presshell.
    * aReferenceFrame should be a frame in the new presshell.
+   * aPointerEventsNoneDoc should be set to true if the frame generating this
+   * document is pointer-events:none without mozpasspointerevents.
    */
-  void EnterPresShell(nsIFrame* aReferenceFrame);
+  void EnterPresShell(nsIFrame* aReferenceFrame,
+                      bool aPointerEventsNoneDoc = false);
   /**
    * For print-preview documents, we sometimes need to build display items for
    * the same frames multiple times in the same presentation, with different
@@ -422,6 +429,12 @@ public:
    * nested presshell.
    */
   bool IsInSubdocument() { return mPresShellStates.Length() > 1; }
+
+  /**
+   * Return true if we're currently building a display list for the root
+   * presshell which is the presshell of a chrome document.
+   */
+  bool IsInRootChromeDocument() { return mIsInRootChromeDocument; }
 
   /**
    * @return true if images have been set to decode synchronously.
@@ -809,6 +822,10 @@ private:
     nsRect        mCaretRect;
     uint32_t      mFirstFrameMarkedForDisplay;
     bool          mIsBackgroundOnly;
+    // This is a per-document flag turning off event handling for all content
+    // in the document, and is set when we enter a subdocument for a pointer-
+    // events:none frame that doesn't have mozpasspointerevents set.
+    bool          mInsidePointerEventsNoneDoc;
   };
 
   PresShellState* CurrentPresShellState() {
@@ -897,6 +914,7 @@ private:
   // True when we're building a display list that's directly or indirectly
   // under an nsDisplayTransform
   bool                           mInTransform;
+  bool                           mIsInRootChromeDocument;
   bool                           mSyncDecodeImages;
   bool                           mIsPaintingToWindow;
   bool                           mIsCompositingCheap;
@@ -907,6 +925,7 @@ private:
   // display list has a display port. An async-scrollable scroll frame is one
   // which WantsAsyncScroll().
   bool                           mHaveScrollableDisplayPort;
+  bool                           mWindowDraggingAllowed;
 };
 
 class nsDisplayItem;

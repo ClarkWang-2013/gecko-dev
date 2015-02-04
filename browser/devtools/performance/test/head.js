@@ -30,6 +30,12 @@ gDevTools.testing = true;
 let DEFAULT_PREFS = [
   "devtools.debugger.log",
   "devtools.performance.ui.invert-call-tree",
+  "devtools.performance.ui.flatten-tree-recursion",
+  "devtools.performance.ui.show-platform-data",
+  "devtools.performance.ui.show-idle-blocks",
+  "devtools.performance.ui.enable-memory",
+  "devtools.performance.ui.enable-framerate",
+
   // remove after bug 1075567 is resolved.
   "devtools.performance_dev.enabled"
 ].reduce((prefs, pref) => {
@@ -298,9 +304,9 @@ function waitForWidgetsRendered(panel) {
   let {
     EVENTS,
     OverviewView,
-    CallTreeView,
     WaterfallView,
-    FlameGraphView
+    JsCallTreeView,
+    JsFlameGraphView
   } = panel.panelWin;
 
   return Promise.all([
@@ -309,8 +315,8 @@ function waitForWidgetsRendered(panel) {
     once(OverviewView, EVENTS.FRAMERATE_GRAPH_RENDERED),
     once(OverviewView, EVENTS.OVERVIEW_RENDERED),
     once(WaterfallView, EVENTS.WATERFALL_RENDERED),
-    once(CallTreeView, EVENTS.CALL_TREE_RENDERED),
-    once(FlameGraphView, EVENTS.FLAMEGRAPH_RENDERED)
+    once(JsCallTreeView, EVENTS.JS_CALL_TREE_RENDERED),
+    once(JsFlameGraphView, EVENTS.JS_FLAMEGRAPH_RENDERED)
   ]);
 }
 

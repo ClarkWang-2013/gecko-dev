@@ -37,9 +37,9 @@ function spawnTest () {
   yield notified;
 
   let firstInterval = OverviewView.getTimeInterval();
-  is(firstInterval.startTime, 10,
+  ok(firstInterval.startTime - 10 < Number.EPSILON,
     "The interval's start time was properly set.");
-  is(firstInterval.endTime, 20,
+  ok(firstInterval.endTime - 20 < Number.EPSILON,
     "The interval's end time was properly set.");
 
   // Get/set another time interval and make sure there's no event propagation.
@@ -53,9 +53,9 @@ function spawnTest () {
   OverviewView.off(EVENTS.OVERVIEW_RANGE_SELECTED, fail);
 
   let secondInterval = OverviewView.getTimeInterval();
-  is(secondInterval.startTime, 30,
+  is(Math.round(secondInterval.startTime), 30,
     "The interval's start time was properly set again.");
-  is(secondInterval.endTime, 40,
+  is(Math.round(secondInterval.endTime), 40,
     "The interval's end time was properly set again.");
 
   yield teardown(panel);

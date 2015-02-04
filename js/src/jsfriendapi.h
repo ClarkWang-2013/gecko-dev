@@ -297,21 +297,13 @@ namespace js {
         JS_NULL_CLASS_SPEC,                                                             \
         ext,                                                                            \
         {                                                                               \
-            js::proxy_LookupGeneric,                                                    \
             js::proxy_LookupProperty,                                                   \
-            js::proxy_LookupElement,                                                    \
-            js::proxy_DefineGeneric,                                                    \
             js::proxy_DefineProperty,                                                   \
-            js::proxy_DefineElement,                                                    \
-            js::proxy_GetGeneric,                                                       \
             js::proxy_GetProperty,                                                      \
-            js::proxy_GetElement,                                                       \
-            js::proxy_SetGeneric,                                                       \
             js::proxy_SetProperty,                                                      \
-            js::proxy_SetElement,                                                       \
             js::proxy_GetOwnPropertyDescriptor,                                         \
-            js::proxy_SetGenericAttributes,                                             \
-            js::proxy_DeleteGeneric,                                                    \
+            js::proxy_SetPropertyAttributes,                                            \
+            js::proxy_DeleteProperty,                                                   \
             js::proxy_Watch, js::proxy_Unwatch,                                         \
             js::proxy_GetElements,                                                      \
             nullptr,             /* enumerate       */                                  \
@@ -335,49 +327,25 @@ namespace js {
  */
 
 extern JS_FRIEND_API(bool)
-proxy_LookupGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleObject objp,
+proxy_LookupProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleObject objp,
                     JS::MutableHandle<Shape*> propp);
 extern JS_FRIEND_API(bool)
-proxy_LookupProperty(JSContext *cx, JS::HandleObject obj, JS::Handle<PropertyName*> name,
-                     JS::MutableHandleObject objp, JS::MutableHandle<Shape*> propp);
+proxy_DefineProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue value,
+                     JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
 extern JS_FRIEND_API(bool)
-proxy_LookupElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleObject objp,
-                    JS::MutableHandle<Shape*> propp);
+proxy_GetProperty(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver, JS::HandleId id,
+                  JS::MutableHandleValue vp);
 extern JS_FRIEND_API(bool)
-proxy_DefineGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue value,
-                    JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
-extern JS_FRIEND_API(bool)
-proxy_DefineProperty(JSContext *cx, JS::HandleObject obj, JS::Handle<PropertyName*> name,
-                     JS::HandleValue value, JSPropertyOp getter, JSStrictPropertyOp setter,
-                     unsigned attrs);
-extern JS_FRIEND_API(bool)
-proxy_DefineElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::HandleValue value,
-                    JSPropertyOp getter, JSStrictPropertyOp setter, unsigned attrs);
-extern JS_FRIEND_API(bool)
-proxy_GetGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver, JS::HandleId id,
-                 JS::MutableHandleValue vp);
-extern JS_FRIEND_API(bool)
-proxy_GetProperty(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver,
-                  JS::Handle<PropertyName*> name, JS::MutableHandleValue vp);
-extern JS_FRIEND_API(bool)
-proxy_GetElement(JSContext *cx, JS::HandleObject obj, JS::HandleObject receiver, uint32_t index,
-                 JS::MutableHandleValue vp);
-extern JS_FRIEND_API(bool)
-proxy_SetGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
-                 JS::MutableHandleValue bp, bool strict);
-extern JS_FRIEND_API(bool)
-proxy_SetProperty(JSContext *cx, JS::HandleObject obj, JS::Handle<PropertyName*> name,
+proxy_SetProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                   JS::MutableHandleValue bp, bool strict);
-extern JS_FRIEND_API(bool)
-proxy_SetElement(JSContext *cx, JS::HandleObject obj, uint32_t index, JS::MutableHandleValue vp,
-                 bool strict);
 extern JS_FRIEND_API(bool)
 proxy_GetOwnPropertyDescriptor(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
                                JS::MutableHandle<JSPropertyDescriptor> desc);
 extern JS_FRIEND_API(bool)
-proxy_SetGenericAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned *attrsp);
+proxy_SetPropertyAttributes(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
+                            unsigned *attrsp);
 extern JS_FRIEND_API(bool)
-proxy_DeleteGeneric(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *succeeded);
+proxy_DeleteProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, bool *succeeded);
 
 extern JS_FRIEND_API(void)
 proxy_Trace(JSTracer *trc, JSObject *obj);
@@ -551,7 +519,7 @@ GetAnyCompartmentInZone(JS::Zone *zone);
  */
 namespace shadow {
 
-struct TypeObject {
+struct ObjectGroup {
     const Class *clasp;
     JSObject    *proto;
 };
@@ -573,12 +541,12 @@ public:
 };
 
 // This layout is shared by all objects except for Typed Objects (which still
-// have a shape and type).
+// have a shape and group).
 struct Object {
-    shadow::Shape      *shape;
-    shadow::TypeObject *type;
-    JS::Value          *slots;
-    void               *_1;
+    shadow::Shape       *shape;
+    shadow::ObjectGroup *group;
+    JS::Value           *slots;
+    void                *_1;
 
     size_t numFixedSlots() const { return shape->slotInfo >> Shape::FIXED_SLOTS_SHIFT; }
     JS::Value *fixedSlots() const {
@@ -628,7 +596,7 @@ extern JS_FRIEND_DATA(const js::Class* const) ObjectClassPtr;
 inline const js::Class *
 GetObjectClass(JSObject *obj)
 {
-    return reinterpret_cast<const shadow::Object*>(obj)->type->clasp;
+    return reinterpret_cast<const shadow::Object*>(obj)->group->clasp;
 }
 
 inline const JSClass *

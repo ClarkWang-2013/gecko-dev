@@ -55,14 +55,14 @@ class TypeWrapper {
             return 0;
         return 1;
     }
-    inline JSObject *getSingleObjectNoBarrier(unsigned) const {
-        if (t_.isSingleObject())
-            return t_.singleObjectNoBarrier();
+    inline JSObject *getSingletonNoBarrier(unsigned) const {
+        if (t_.isSingleton())
+            return t_.singletonNoBarrier();
         return nullptr;
     }
-    inline types::TypeObject *getTypeObjectNoBarrier(unsigned) const {
-        if (t_.isTypeObject())
-            return t_.typeObjectNoBarrier();
+    inline types::ObjectGroup *getGroupNoBarrier(unsigned) const {
+        if (t_.isGroup())
+            return t_.groupNoBarrier();
         return nullptr;
     }
 };
@@ -144,9 +144,9 @@ MacroAssembler::guardTypeSet(const Source &address, const TypeSet *types, Barrie
         // properties become unknown, so check for this case.
         if (obj == scratch)
             extractObject(address, scratch);
-        loadPtr(Address(obj, JSObject::offsetOfType()), scratch);
+        loadPtr(Address(obj, JSObject::offsetOfGroup()), scratch);
         branchTestPtr(Assembler::NonZero,
-                      Address(scratch, types::TypeObject::offsetOfFlags()),
+                      Address(scratch, types::ObjectGroup::offsetOfFlags()),
                       Imm32(types::OBJECT_FLAG_UNKNOWN_PROPERTIES), &matched);
 
         assumeUnreachable("Unexpected object type");
@@ -175,22 +175,22 @@ MacroAssembler::guardObjectType(Register obj, const TypeSet *types,
 
     BranchGCPtr lastBranch;
     MOZ_ASSERT(!lastBranch.isInitialized());
-    bool hasTypeObjects = false;
+    bool hasObjectGroups = false;
     unsigned count = types->getObjectCount();
     for (unsigned i = 0; i < count; i++) {
-        if (!types->getSingleObjectNoBarrier(i)) {
-            hasTypeObjects = hasTypeObjects || types->getTypeObjectNoBarrier(i);
+        if (!types->getSingletonNoBarrier(i)) {
+            hasObjectGroups = hasObjectGroups || types->getGroupNoBarrier(i);
             continue;
         }
 
         if (lastBranch.isInitialized())
             lastBranch.emit(*this);
 
-        JSObject *object = types->getSingleObjectNoBarrier(i);
+        JSObject *object = types->getSingletonNoBarrier(i);
         lastBranch = BranchGCPtr(Equal, obj, ImmGCPtr(object), &matched);
     }
 
-    if (hasTypeObjects) {
+    if (hasObjectGroups) {
         // We are possibly going to overwrite the obj register. So already
         // emit the branch, since branch depends on previous value of obj
         // register and there is definitely a branch following. So no need
@@ -201,17 +201,17 @@ MacroAssembler::guardObjectType(Register obj, const TypeSet *types,
 
         // Note: Some platforms give the same register for obj and scratch.
         // Make sure when writing to scratch, the obj register isn't used anymore!
-        loadPtr(Address(obj, JSObject::offsetOfType()), scratch);
+        loadPtr(Address(obj, JSObject::offsetOfGroup()), scratch);
 
         for (unsigned i = 0; i < count; i++) {
-            if (!types->getTypeObjectNoBarrier(i))
+            if (!types->getGroupNoBarrier(i))
                 continue;
 
             if (lastBranch.isInitialized())
                 lastBranch.emit(*this);
 
-            types::TypeObject *object = types->getTypeObjectNoBarrier(i);
-            lastBranch = BranchGCPtr(Equal, scratch, ImmGCPtr(object), &matched);
+            types::ObjectGroup *group = types->getGroupNoBarrier(i);
+            lastBranch = BranchGCPtr(Equal, scratch, ImmGCPtr(group), &matched);
         }
     }
 
@@ -306,7 +306,7 @@ MacroAssembler::storeToTypedFloatArray(Scalar::Type arrayType, FloatRegister val
 template<typename T>
 void
 MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T &src, AnyRegister dest, Register temp,
-                                   Label *fail)
+                                   Label *fail, bool canonicalizeDoubles)
 {
     switch (arrayType) {
       case Scalar::Int8:
@@ -344,7 +344,8 @@ MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T &src, AnyRegi
         break;
       case Scalar::Float64:
         loadDouble(src, dest.fpu());
-        canonicalizeDouble(dest.fpu());
+        if (canonicalizeDoubles)
+            canonicalizeDouble(dest.fpu());
         break;
       default:
         MOZ_CRASH("Invalid typed array type");
@@ -352,9 +353,9 @@ MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const T &src, AnyRegi
 }
 
 template void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const Address &src, AnyRegister dest,
-                                                 Register temp, Label *fail);
+                                                 Register temp, Label *fail, bool canonicalizeDoubles);
 template void MacroAssembler::loadFromTypedArray(Scalar::Type arrayType, const BaseIndex &src, AnyRegister dest,
-                                                 Register temp, Label *fail);
+                                                 Register temp, Label *fail, bool canonicalizeDoubles);
 
 template<typename T>
 void
@@ -621,6 +622,214 @@ MacroAssembler::atomicBinopToTypedIntArray(AtomicOp op, Scalar::Type arrayType,
                                            const Register &value, const BaseIndex &mem,
                                            Register temp1, Register temp2, AnyRegister output);
 
+template <typename T>
+void
+MacroAssembler::loadUnboxedProperty(T address, JSValueType type, TypedOrValueRegister output)
+{
+    switch (type) {
+      case JSVAL_TYPE_BOOLEAN:
+      case JSVAL_TYPE_INT32:
+      case JSVAL_TYPE_STRING: {
+        Register outReg;
+        if (output.hasValue()) {
+            outReg = output.valueReg().scratchReg();
+        } else {
+            MOZ_ASSERT(output.type() == MIRTypeFromValueType(type));
+            outReg = output.typedReg().gpr();
+        }
+
+        switch (type) {
+          case JSVAL_TYPE_BOOLEAN:
+            load8ZeroExtend(address, outReg);
+            break;
+          case JSVAL_TYPE_INT32:
+            load32(address, outReg);
+            break;
+          case JSVAL_TYPE_STRING:
+            loadPtr(address, outReg);
+            break;
+          default:
+            MOZ_CRASH();
+        }
+
+        if (output.hasValue())
+            tagValue(type, outReg, output.valueReg());
+        break;
+      }
+
+      case JSVAL_TYPE_OBJECT:
+        if (output.hasValue()) {
+            Register scratch = output.valueReg().scratchReg();
+            loadPtr(address, scratch);
+
+            Label notNull, done;
+            branchPtr(Assembler::NotEqual, scratch, ImmWord(0), &notNull);
+
+            moveValue(NullValue(), output.valueReg());
+            jump(&done);
+
+            bind(&notNull);
+            tagValue(JSVAL_TYPE_OBJECT, scratch, output.valueReg());
+
+            bind(&done);
+        } else {
+            // Reading null can't be possible here, as otherwise the result
+            // would be a value (either because null has been read before or
+            // because there is a barrier).
+            Register reg = output.typedReg().gpr();
+            loadPtr(address, reg);
+#ifdef DEBUG
+            Label ok;
+            branchTestPtr(Assembler::NonZero, reg, reg, &ok);
+            assumeUnreachable("Null not possible");
+            bind(&ok);
+#endif
+        }
+        break;
+
+      case JSVAL_TYPE_DOUBLE:
+        // Note: doubles in unboxed objects are not accessed through other
+        // views and do not need canonicalization.
+        if (output.hasValue())
+            loadValue(address, output.valueReg());
+        else
+            loadDouble(address, output.typedReg().fpu());
+        break;
+
+      default:
+        MOZ_CRASH();
+    }
+}
+
+template void
+MacroAssembler::loadUnboxedProperty(Address address, JSValueType type,
+                                    TypedOrValueRegister output);
+
+template void
+MacroAssembler::loadUnboxedProperty(BaseIndex address, JSValueType type,
+                                    TypedOrValueRegister output);
+
+template <typename T>
+void
+MacroAssembler::storeUnboxedProperty(T address, JSValueType type,
+                                     ConstantOrRegister value, Label *failure)
+{
+    switch (type) {
+      case JSVAL_TYPE_BOOLEAN:
+        if (value.constant()) {
+            if (value.value().isBoolean())
+                store8(Imm32(value.value().toBoolean()), address);
+            else
+                jump(failure);
+        } else if (value.reg().hasTyped()) {
+            if (value.reg().type() == MIRType_Boolean)
+                store8(value.reg().typedReg().gpr(), address);
+            else
+                jump(failure);
+        } else {
+            if (failure)
+                branchTestBoolean(Assembler::NotEqual, value.reg().valueReg(), failure);
+            storeUnboxedPayload(value.reg().valueReg(), address, /* width = */ 1);
+        }
+        break;
+
+      case JSVAL_TYPE_INT32:
+        if (value.constant()) {
+            if (value.value().isInt32())
+                store32(Imm32(value.value().toInt32()), address);
+            else
+                jump(failure);
+        } else if (value.reg().hasTyped()) {
+            if (value.reg().type() == MIRType_Int32)
+                store32(value.reg().typedReg().gpr(), address);
+            else
+                jump(failure);
+        } else {
+            if (failure)
+                branchTestInt32(Assembler::NotEqual, value.reg().valueReg(), failure);
+            storeUnboxedPayload(value.reg().valueReg(), address, /* width = */ 4);
+        }
+        break;
+
+      case JSVAL_TYPE_DOUBLE:
+        if (value.constant()) {
+            if (value.value().isNumber()) {
+                loadConstantDouble(value.value().toNumber(), ScratchDoubleReg);
+                storeDouble(ScratchDoubleReg, address);
+            } else {
+                jump(failure);
+            }
+        } else if (value.reg().hasTyped()) {
+            if (value.reg().type() == MIRType_Int32) {
+                convertInt32ToDouble(value.reg().typedReg().gpr(), ScratchDoubleReg);
+                storeDouble(ScratchDoubleReg, address);
+            } else if (value.reg().type() == MIRType_Double) {
+                storeDouble(value.reg().typedReg().fpu(), address);
+            } else {
+                jump(failure);
+            }
+        } else {
+            if (failure)
+                branchTestNumber(Assembler::NotEqual, value.reg().valueReg(), failure);
+            unboxValue(value.reg().valueReg(), AnyRegister(ScratchDoubleReg));
+            storeDouble(ScratchDoubleReg, address);
+        }
+        break;
+
+      case JSVAL_TYPE_OBJECT:
+        if (value.constant()) {
+            if (value.value().isObjectOrNull())
+                storePtr(ImmGCPtr(value.value().toObjectOrNull()), address);
+            else
+                jump(failure);
+        } else if (value.reg().hasTyped()) {
+            MOZ_ASSERT(value.reg().type() != MIRType_Null);
+            if (value.reg().type() == MIRType_Object)
+                storePtr(value.reg().typedReg().gpr(), address);
+            else
+                jump(failure);
+        } else {
+            if (failure) {
+                Label ok;
+                branchTestNull(Assembler::Equal, value.reg().valueReg(), &ok);
+                branchTestObject(Assembler::NotEqual, value.reg().valueReg(), failure);
+                bind(&ok);
+            }
+            storeUnboxedPayload(value.reg().valueReg(), address, /* width = */ sizeof(uintptr_t));
+        }
+        break;
+
+      case JSVAL_TYPE_STRING:
+        if (value.constant()) {
+            if (value.value().isString())
+                storePtr(ImmGCPtr(value.value().toString()), address);
+            else
+                jump(failure);
+        } else if (value.reg().hasTyped()) {
+            if (value.reg().type() == MIRType_String)
+                storePtr(value.reg().typedReg().gpr(), address);
+            else
+                jump(failure);
+        } else {
+            if (failure)
+                branchTestString(Assembler::NotEqual, value.reg().valueReg(), failure);
+            storeUnboxedPayload(value.reg().valueReg(), address, /* width = */ sizeof(uintptr_t));
+        }
+        break;
+
+      default:
+        MOZ_CRASH();
+    }
+}
+
+template void
+MacroAssembler::storeUnboxedProperty(Address address, JSValueType type,
+                                     ConstantOrRegister value, Label *failure);
+
+template void
+MacroAssembler::storeUnboxedProperty(BaseIndex address, JSValueType type,
+                                     ConstantOrRegister value, Label *failure);
+
 // Inlined version of gc::CheckAllocatorState that checks the bare essentials
 // and bails for anything that cannot be handled with our jit allocators.
 void
@@ -780,22 +989,22 @@ MacroAssembler::allocateObject(Register result, Register slots, gc::AllocKind al
     callFreeStub(slots);
     jump(fail);
 
-    bind(&success);
+    breakpoint();
 }
 
 void
-MacroAssembler::newGCThing(Register result, Register temp, NativeObject *templateObj,
-                            gc::InitialHeap initialHeap, Label *fail)
+MacroAssembler::newGCThing(Register result, Register temp, JSObject *templateObj,
+                           gc::InitialHeap initialHeap, Label *fail)
 {
     // This method does not initialize the object: if external slots get
     // allocated into |temp|, there is no easy way for us to ensure the caller
     // frees them. Instead just assert this case does not happen.
-    MOZ_ASSERT(!templateObj->numDynamicSlots());
+    MOZ_ASSERT_IF(templateObj->isNative(), !templateObj->as<NativeObject>().numDynamicSlots());
 
     gc::AllocKind allocKind = templateObj->asTenured().getAllocKind();
     MOZ_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
 
-    allocateObject(result, temp, allocKind, templateObj->numDynamicSlots(), initialHeap, fail);
+    allocateObject(result, temp, allocKind, 0, initialHeap, fail);
 }
 
 void
@@ -983,7 +1192,7 @@ MacroAssembler::initGCThing(Register obj, Register slots, JSObject *templateObj,
     // Fast initialization of an empty object returned by allocateObject().
 
     storePtr(ImmGCPtr(templateObj->lastProperty()), Address(obj, JSObject::offsetOfShape()));
-    storePtr(ImmGCPtr(templateObj->type()), Address(obj, JSObject::offsetOfType()));
+    storePtr(ImmGCPtr(templateObj->group()), Address(obj, JSObject::offsetOfGroup()));
 
     if (templateObj->isNative()) {
         NativeObject *ntemplate = &templateObj->as<NativeObject>();
@@ -1030,17 +1239,36 @@ MacroAssembler::initGCThing(Register obj, Register slots, JSObject *templateObj,
             }
         }
     } else if (templateObj->is<InlineTypedObject>()) {
-        InlineTypedObject *ntemplate = &templateObj->as<InlineTypedObject>();
+        size_t nbytes = templateObj->as<InlineTypedObject>().size();
+        const uint8_t *memory = templateObj->as<InlineTypedObject>().inlineTypedMem();
 
         // Memcpy the contents of the template object to the new object.
-        size_t nbytes = ntemplate->size();
         size_t offset = 0;
         while (nbytes) {
-            uintptr_t value = *(uintptr_t *)(ntemplate->inlineTypedMem() + offset);
+            uintptr_t value = *(uintptr_t *)(memory + offset);
             storePtr(ImmWord(value),
                      Address(obj, InlineTypedObject::offsetOfDataStart() + offset));
             nbytes = (nbytes < sizeof(uintptr_t)) ? 0 : nbytes - sizeof(uintptr_t);
             offset += sizeof(uintptr_t);
+        }
+    } else if (templateObj->is<UnboxedPlainObject>()) {
+        const UnboxedLayout &layout = templateObj->as<UnboxedPlainObject>().layout();
+
+        // Initialize reference fields of the object, per UnboxedPlainObject::create.
+        if (const int32_t *list = layout.traceList()) {
+            while (*list != -1) {
+                storePtr(ImmGCPtr(GetJitContext()->runtime->names().empty),
+                         Address(obj, UnboxedPlainObject::offsetOfData() + *list));
+                list++;
+            }
+            list++;
+            while (*list != -1) {
+                storePtr(ImmWord(0),
+                         Address(obj, UnboxedPlainObject::offsetOfData() + *list));
+                list++;
+            }
+            // Unboxed objects don't have Values to initialize.
+            MOZ_ASSERT(*(list + 1) == -1);
         }
     } else {
         MOZ_CRASH("Unknown object");

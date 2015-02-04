@@ -191,6 +191,12 @@ static int64_t DurationToUsecs(TimeDuration aDuration) {
   return static_cast<int64_t>(aDuration.ToSeconds() * USECS_PER_S);
 }
 
+static const uint32_t MIN_VIDEO_QUEUE_SIZE = 3;
+static const uint32_t MAX_VIDEO_QUEUE_SIZE = 10;
+
+static uint32_t sVideoQueueDefaultSize = MAX_VIDEO_QUEUE_SIZE;
+static uint32_t sVideoQueueHWAccelSize = MIN_VIDEO_QUEUE_SIZE;
+
 MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
                                                    MediaDecoderReader* aReader,
                                                    bool aRealTime) :
@@ -216,7 +222,7 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   mVolume(1.0),
   mPlaybackRate(1.0),
   mPreservesPitch(true),
-  mAmpleVideoFrames(2),
+  mAmpleVideoFrames(MIN_VIDEO_QUEUE_SIZE),
   mLowAudioThresholdUsecs(detail::LOW_AUDIO_USECS),
   mAmpleAudioThresholdUsecs(detail::AMPLE_AUDIO_USECS),
   mQuickBufferingLowDataThresholdUsecs(detail::QUICK_BUFFERING_LOW_DATA_USECS),
@@ -247,8 +253,16 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   MOZ_COUNT_CTOR(MediaDecoderStateMachine);
   NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
 
-  mAmpleVideoFrames =
-    std::max<uint32_t>(Preferences::GetUint("media.video-queue.default-size", 10), 3);
+  static bool sPrefCacheInit = false;
+  if (!sPrefCacheInit) {
+    sPrefCacheInit = true;
+    Preferences::AddUintVarCache(&sVideoQueueDefaultSize,
+                                 "media.video-queue.default-size",
+                                 MAX_VIDEO_QUEUE_SIZE);
+    Preferences::AddUintVarCache(&sVideoQueueHWAccelSize,
+                                 "media.video-queue.hw-accel-size",
+                                 MIN_VIDEO_QUEUE_SIZE);
+  }
 
   mBufferingWait = IsRealTime() ? 0 : 30;
   mLowDataThresholdUsecs = IsRealTime() ? 0 : detail::LOW_DATA_THRESHOLD_USECS;
@@ -312,48 +326,39 @@ void MediaDecoderStateMachine::SendStreamAudio(AudioData* aAudio,
                                                DecodedStreamData* aStream,
                                                AudioSegment* aOutput)
 {
-  NS_ASSERTION(OnDecodeThread() ||
-               OnStateMachineThread(), "Should be on decode thread or state machine thread");
+  NS_ASSERTION(OnDecodeThread() || OnStateMachineThread(),
+               "Should be on decode thread or state machine thread");
   AssertCurrentThreadInMonitor();
-
-  if (aAudio->mTime <= aStream->mLastAudioPacketTime) {
-    // ignore packet that we've already processed
-    return;
-  }
-  aStream->mLastAudioPacketTime = aAudio->mTime;
-  aStream->mLastAudioPacketEndTime = aAudio->GetEndTime();
 
   // This logic has to mimic AudioSink closely to make sure we write
   // the exact same silences
-  CheckedInt64 audioWrittenOffset = UsecsToFrames(mInfo.mAudio.mRate,
-      aStream->mInitialTime + mStartTime) + aStream->mAudioFramesWritten;
+  CheckedInt64 audioWrittenOffset = aStream->mAudioFramesWritten +
+      UsecsToFrames(mInfo.mAudio.mRate, aStream->mInitialTime + mStartTime);
   CheckedInt64 frameOffset = UsecsToFrames(mInfo.mAudio.mRate, aAudio->mTime);
-  if (!audioWrittenOffset.isValid() || !frameOffset.isValid())
+
+  if (!audioWrittenOffset.isValid() ||
+      !frameOffset.isValid() ||
+      // ignore packet that we've already processed
+      frameOffset.value() + aAudio->mFrames <= audioWrittenOffset.value()) {
     return;
+  }
+
   if (audioWrittenOffset.value() < frameOffset.value()) {
+    int64_t silentFrames = frameOffset.value() - audioWrittenOffset.value();
     // Write silence to catch up
-    VERBOSE_LOG("writing %d frames of silence to MediaStream",
-                int32_t(frameOffset.value() - audioWrittenOffset.value()));
+    VERBOSE_LOG("writing %lld frames of silence to MediaStream", silentFrames);
     AudioSegment silence;
-    silence.InsertNullDataAtStart(frameOffset.value() - audioWrittenOffset.value());
-    aStream->mAudioFramesWritten += silence.GetDuration();
+    StreamTime duration = aStream->mStream->TicksToTimeRoundDown(
+        mInfo.mAudio.mRate, silentFrames);
+    silence.InsertNullDataAtStart(duration);
+    aStream->mAudioFramesWritten += silentFrames;
+    audioWrittenOffset += silentFrames;
     aOutput->AppendFrom(&silence);
   }
 
-  int64_t offset;
-  if (aStream->mAudioFramesWritten == 0) {
-    NS_ASSERTION(frameOffset.value() <= audioWrittenOffset.value(),
-                 "Otherwise we'd have taken the write-silence path");
-    // We're starting in the middle of a packet. Split the packet.
-    offset = audioWrittenOffset.value() - frameOffset.value();
-  } else {
-    // Write the entire packet.
-    offset = 0;
-  }
+  MOZ_ASSERT(audioWrittenOffset.value() >= frameOffset.value());
 
-  if (offset >= aAudio->mFrames)
-    return;
-
+  int64_t offset = audioWrittenOffset.value() - frameOffset.value();
   size_t framesToWrite = aAudio->mFrames - offset;
 
   aAudio->EnsureAudioBuffer();
@@ -369,6 +374,8 @@ void MediaDecoderStateMachine::SendStreamAudio(AudioData* aAudio,
               aAudio->mTime);
   aStream->mAudioFramesWritten += framesToWrite;
   aOutput->ApplyVolume(mVolume);
+
+  aStream->mNextAudioTime = aAudio->GetEndTime();
 }
 
 static void WriteVideoToMediaStream(MediaStream* aStream,
@@ -387,29 +394,12 @@ static void WriteVideoToMediaStream(MediaStream* aStream,
 
 void MediaDecoderStateMachine::SendStreamData()
 {
-  NS_ASSERTION(OnDecodeThread() || OnStateMachineThread(),
-               "Should be on decode thread or state machine thread");
+  MOZ_ASSERT(OnStateMachineThread(), "Should be on state machine thread");
   AssertCurrentThreadInMonitor();
-  MOZ_ASSERT(mState != DECODER_STATE_DECODING_NONE);
+  MOZ_ASSERT(!mAudioSink, "Should've been stopped in CallRunStateMachine()");
 
   DecodedStreamData* stream = mDecoder->GetDecodedStream();
-  if (!stream) {
-    return;
-  }
 
-  if (mState == DECODER_STATE_DECODING_METADATA ||
-      mState == DECODER_STATE_DECODING_FIRSTFRAME) {
-    return;
-  }
-
-  // If there's still an audio sink alive, then we can't send any stream
-  // data yet since both SendStreamData and the audio sink want to be in
-  // charge of popping the audio queue. We're waiting for the audio sink
-  if (mAudioSink) {
-    return;
-  }
-
-  int64_t minLastAudioPacketTime = INT64_MAX;
   bool finished =
       (!mInfo.HasAudio() || AudioQueue().IsFinished()) &&
       (!mInfo.HasVideo() || VideoQueue().IsFinished());
@@ -423,25 +413,36 @@ void MediaDecoderStateMachine::SendStreamData()
         mediaStream->AddAudioTrack(kAudioTrack, mInfo.mAudio.mRate, 0, audio);
         stream->mStream->DispatchWhenNotEnoughBuffered(kAudioTrack,
             GetStateMachineThread(), GetWakeDecoderRunnable());
+        stream->mNextAudioTime = mStartTime + stream->mInitialTime;
       }
       if (mInfo.HasVideo()) {
         VideoSegment* video = new VideoSegment();
         mediaStream->AddTrack(kVideoTrack, 0, video);
         stream->mStream->DispatchWhenNotEnoughBuffered(kVideoTrack,
             GetStateMachineThread(), GetWakeDecoderRunnable());
+
+        // TODO: We can't initialize |mNextVideoTime| until |mStartTime|
+        // is set. This is a good indication that DecodedStreamData is in
+        // deep coupling with the state machine and we should move the class
+        // into MediaDecoderStateMachine.
+        stream->mNextVideoTime = mStartTime + stream->mInitialTime;
       }
       stream->mStreamInitialized = true;
     }
 
     if (mInfo.HasAudio()) {
+      MOZ_ASSERT(stream->mNextAudioTime != -1, "Should've been initialized");
       nsAutoTArray<nsRefPtr<AudioData>,10> audio;
-      // It's OK to hold references to the AudioData because while audio
-      // is captured, only the decoder thread pops from the queue (see below).
-      AudioQueue().GetElementsAfter(stream->mLastAudioPacketTime, &audio);
+      // It's OK to hold references to the AudioData because AudioData
+      // is ref-counted.
+      AudioQueue().GetElementsAfter(stream->mNextAudioTime, &audio);
       AudioSegment output;
       for (uint32_t i = 0; i < audio.Length(); ++i) {
         SendStreamAudio(audio[i], stream, &output);
       }
+      // |mNextAudioTime| is updated as we process each audio sample in
+      // SendStreamAudio(). This is consistent with how |mNextVideoTime|
+      // is updated for video samples.
       if (output.GetDuration() > 0) {
         mediaStream->AppendToTrack(kAudioTrack, &output);
       }
@@ -449,16 +450,16 @@ void MediaDecoderStateMachine::SendStreamData()
         mediaStream->EndTrack(kAudioTrack);
         stream->mHaveSentFinishAudio = true;
       }
-      minLastAudioPacketTime = std::min(minLastAudioPacketTime, stream->mLastAudioPacketTime);
       endPosition = std::max(endPosition,
           mediaStream->TicksToTimeRoundDown(mInfo.mAudio.mRate,
                                             stream->mAudioFramesWritten));
     }
 
     if (mInfo.HasVideo()) {
+      MOZ_ASSERT(stream->mNextVideoTime != -1, "Should've been initialized");
       nsAutoTArray<nsRefPtr<VideoData>,10> video;
-      // It's OK to hold references to the VideoData only the decoder thread
-      // pops from the queue.
+      // It's OK to hold references to the VideoData because VideoData
+      // is ref-counted.
       VideoQueue().GetElementsAfter(stream->mNextVideoTime, &video);
       VideoSegment output;
       for (uint32_t i = 0; i < video.Length(); ++i) {
@@ -468,6 +469,13 @@ void MediaDecoderStateMachine::SendStreamData()
                       mediaStream, v->mTime - stream->mNextVideoTime);
           // Write last video frame to catch up. mLastVideoImage can be null here
           // which is fine, it just means there's no video.
+
+          // TODO: |mLastVideoImage| should come from the last image rendered
+          // by the state machine. This will avoid the black frame when capture
+          // happens in the middle of playback (especially in th middle of a
+          // video frame). E.g. if we have a video frame that is 30 sec long
+          // and capture happens at 15 sec, we'll have to append a black frame
+          // that is 15 sec long.
           WriteVideoToMediaStream(mediaStream, stream->mLastVideoImage,
             v->mTime, stream->mNextVideoTime, stream->mLastVideoImageDisplaySize,
               &output);
@@ -509,26 +517,26 @@ void MediaDecoderStateMachine::SendStreamData()
     }
   }
 
-  if (mAudioCaptured) {
-    // Discard audio packets that are no longer needed.
-    while (true) {
-      const AudioData* a = AudioQueue().PeekFront();
-      // Packet times are not 100% reliable so this may discard packets that
-      // actually contain data for mCurrentFrameTime. This means if someone might
-      // create a new output stream and we actually don't have the audio for the
-      // very start. That's OK, we'll play silence instead for a brief moment.
-      // That's OK. Seeking to this time would have a similar issue for such
-      // badly muxed resources.
-      if (!a || a->GetEndTime() >= minLastAudioPacketTime)
-        break;
+  const auto clockTime = GetClock();
+  while (true) {
+    const AudioData* a = AudioQueue().PeekFront();
+    // If we discard audio samples fed to the stream immediately, we will
+    // keep decoding audio samples till the end and consume a lot of memory.
+    // Therefore we only discard those behind the stream clock to throttle
+    // the decoding speed.
+    if (a && a->mTime <= clockTime) {
       OnAudioEndTimeUpdate(std::max(mAudioEndTime, a->GetEndTime()));
       nsRefPtr<AudioData> releaseMe = AudioQueue().PopFront();
+      continue;
     }
+    break;
+  }
 
-    if (finished) {
-      mAudioCompleted = true;
-      UpdateReadyState();
-    }
+  // To be consistent with AudioSink, |mAudioCompleted| is not set
+  // until all samples are drained.
+  if (finished && AudioQueue().GetSize() == 0) {
+    mAudioCompleted = true;
+    UpdateReadyState();
   }
 }
 
@@ -557,12 +565,6 @@ bool MediaDecoderStateMachine::HaveEnoughDecodedAudio(int64_t aAmpleAudioUSecs)
 
   DecodedStreamData* stream = mDecoder->GetDecodedStream();
 
-  // Since stream is initialized in SendStreamData() which is called when
-  // audio/video samples are received, we need to keep decoding to ensure
-  // the stream is initialized.
-  if (stream && !stream->mStreamInitialized) {
-    return false;
-  }
   if (stream && stream->mStreamInitialized && !stream->mHaveSentFinishAudio) {
     if (!stream->mStream->HaveEnoughBuffered(kAudioTrack)) {
       return false;
@@ -583,10 +585,6 @@ bool MediaDecoderStateMachine::HaveEnoughDecodedVideo()
   }
 
   DecodedStreamData* stream = mDecoder->GetDecodedStream();
-
-  if (stream && !stream->mStreamInitialized) {
-    return false;
-  }
 
   if (stream && stream->mStreamInitialized && !stream->mHaveSentFinishVideo) {
     if (!stream->mStream->HaveEnoughBuffered(kVideoTrack)) {
@@ -799,6 +797,10 @@ MediaDecoderStateMachine::OnAudioDecoded(AudioData* aAudioSample)
       if (mIsAudioPrerolling && DonePrerollingAudio()) {
         StopPrerollingAudio();
       }
+      // Schedule the state machine to send stream data as soon as possible.
+      if (mAudioCaptured) {
+        ScheduleStateMachine();
+      }
       return;
     }
 
@@ -855,7 +857,6 @@ MediaDecoderStateMachine::Push(AudioData* aSample)
   // to reach playing.
   AudioQueue().Push(aSample);
   if (mState > DECODER_STATE_DECODING_FIRSTFRAME) {
-    SendStreamData();
     // The ready state can change when we've decoded data, so update the
     // ready state, so that DOM events can fire.
     UpdateReadyState();
@@ -873,7 +874,6 @@ MediaDecoderStateMachine::Push(VideoData* aSample)
   // to reach playing.
   VideoQueue().Push(aSample);
   if (mState > DECODER_STATE_DECODING_FIRSTFRAME) {
-    SendStreamData();
     // The ready state can change when we've decoded data, so update the
     // ready state, so that DOM events can fire.
     UpdateReadyState();
@@ -945,11 +945,14 @@ MediaDecoderStateMachine::OnNotDecoded(MediaData::Type aType,
     case DECODER_STATE_BUFFERING:
     case DECODER_STATE_DECODING: {
       CheckIfDecodeComplete();
-      SendStreamData();
       // The ready state can change when we've decoded data, so update the
       // ready state, so that DOM events can fire.
       UpdateReadyState();
       mDecoder->GetReentrantMonitor().NotifyAll();
+      // Schedule the state machine to notify track ended as soon as possible.
+      if (mAudioCaptured) {
+        ScheduleStateMachine();
+      }
       return;
     }
     case DECODER_STATE_SEEKING: {
@@ -1046,6 +1049,11 @@ MediaDecoderStateMachine::OnVideoDecoded(VideoData* aVideoSample)
                                               mAmpleAudioThresholdUsecs);
         DECODER_LOG("Slow video decode, set mLowAudioThresholdUsecs=%lld mAmpleAudioThresholdUsecs=%lld",
                     mLowAudioThresholdUsecs, mAmpleAudioThresholdUsecs);
+      }
+
+      // Schedule the state machine to send stream data as soon as possible.
+      if (mAudioCaptured) {
+        ScheduleStateMachine();
       }
       return;
     }
@@ -1823,9 +1831,6 @@ void MediaDecoderStateMachine::StopAudioThread()
       mAudioSink->Shutdown();
     }
     mAudioSink = nullptr;
-    // Now that the audio sink is dead, try sending data to our MediaStream(s).
-    // That may have been waiting for the audio thread to stop.
-    SendStreamData();
   }
   // Wake up those waiting for audio sink to finish.
   mDecoder->GetReentrantMonitor().NotifyAll();
@@ -2215,16 +2220,27 @@ nsresult MediaDecoderStateMachine::DecodeMetadata()
     return NS_OK;
   }
 
+  if (NS_FAILED(res) || (!info.HasValidMedia())) {
+    DECODER_WARN("ReadMetadata failed, res=%x HasValidMedia=%d", res, info.HasValidMedia());
+    return NS_ERROR_FAILURE;
+  }
+
   if (NS_SUCCEEDED(res)) {
     mDecoder->SetMediaSeekable(mReader->IsMediaSeekable());
   }
 
   mInfo = info;
 
-  if (NS_FAILED(res) || (!info.HasValidMedia())) {
-    DECODER_WARN("ReadMetadata failed, res=%x HasValidMedia=%d", res, info.HasValidMedia());
-    return NS_ERROR_FAILURE;
+  if (HasVideo()) {
+    mAmpleVideoFrames = (mReader->IsAsync() && mInfo.mVideo.mIsHardwareAccelerated)
+      ? std::max<uint32_t>(sVideoQueueHWAccelSize, MIN_VIDEO_QUEUE_SIZE)
+      : std::max<uint32_t>(sVideoQueueDefaultSize, MIN_VIDEO_QUEUE_SIZE);
+    DECODER_LOG("Video decode isAsync=%d HWAccel=%d videoQueueSize=%d",
+                mReader->IsAsync(),
+                mInfo.mVideo.mIsHardwareAccelerated,
+                mAmpleVideoFrames);
   }
+
   mDecoder->StartProgressUpdates();
   mGotDurationFromMetaData = (GetDuration() != -1) || mDurationSet;
 
@@ -3065,11 +3081,7 @@ void MediaDecoderStateMachine::AdvanceFrame()
     return;
   }
 
-  DecodedStreamData* stream = mDecoder->GetDecodedStream();
-  if (stream && !stream->mStreamInitialized) {
-    // Output streams exist but are not initialized yet.
-    // Send the data we already have to allow stream clock to progress and
-    // avoid stalling playback.
+  if (mAudioCaptured) {
     SendStreamData();
   }
 

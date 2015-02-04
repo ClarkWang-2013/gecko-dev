@@ -674,8 +674,7 @@ bool
 MemoryTextureClient::Allocate(uint32_t aSize)
 {
   MOZ_ASSERT(!mBuffer);
-  static const fallible_t fallible = fallible_t();
-  mBuffer = new(fallible) uint8_t[aSize];
+  mBuffer = new (fallible) uint8_t[aSize];
   if (!mBuffer) {
     NS_WARNING("Failed to allocate buffer");
     return false;
@@ -909,6 +908,7 @@ SharedSurfaceTextureClient::SharedSurfaceTextureClient(ISurfaceAllocator* aAlloc
   , mSurf(surf)
   , mGL(mSurf->mGL)
 {
+  AddFlags(TextureFlags::DEALLOCATE_CLIENT);
 }
 
 SharedSurfaceTextureClient::~SharedSurfaceTextureClient()

@@ -12,6 +12,7 @@
 
 #include "mozilla/LinkedList.h"
 
+#include "jit/BaselineInspector.h"
 #include "jit/BytecodeAnalysis.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonOptimizationLevels.h"
@@ -25,7 +26,6 @@ namespace jit {
 
 class CodeGenerator;
 class CallInfo;
-class BaselineInspector;
 class BaselineFrameInspector;
 
 // Records information about a baseline frame for compilation that is stable
@@ -394,6 +394,8 @@ class IonBuilder
     MDefinition *addMaybeCopyElementsForWrite(MDefinition *object);
     MInstruction *addBoundsCheck(MDefinition *index, MDefinition *length);
     MInstruction *addShapeGuard(MDefinition *obj, Shape *const shape, BailoutKind bailoutKind);
+    MInstruction *addShapeGuardPolymorphic(MDefinition *obj,
+                                           const BaselineInspector::ShapeVector &shapes);
 
     MDefinition *convertShiftToMaskForStaticTypedArray(MDefinition *id,
                                                        Scalar::Type viewType);
@@ -423,6 +425,8 @@ class IonBuilder
                             types::TemporaryTypeSet *types);
     bool getPropTryDefiniteSlot(bool *emitted, MDefinition *obj, PropertyName *name,
                                 BarrierKind barrier, types::TemporaryTypeSet *types);
+    bool getPropTryUnboxed(bool *emitted, MDefinition *obj, PropertyName *name,
+                           BarrierKind barrier, types::TemporaryTypeSet *types);
     bool getPropTryCommonGetter(bool *emitted, MDefinition *obj, PropertyName *name,
                                 types::TemporaryTypeSet *types);
     bool getPropTryInlineAccess(bool *emitted, MDefinition *obj, PropertyName *name,
@@ -449,10 +453,13 @@ class IonBuilder
                                 PropertyName *name, MDefinition *value);
     bool setPropTryCommonDOMSetter(bool *emitted, MDefinition *obj,
                                    MDefinition *value, JSFunction *setter,
-                                   bool isDOM);
+                                   types::TemporaryTypeSet *objTypes);
     bool setPropTryDefiniteSlot(bool *emitted, MDefinition *obj,
                                 PropertyName *name, MDefinition *value,
                                 bool barrier, types::TemporaryTypeSet *objTypes);
+    bool setPropTryUnboxed(bool *emitted, MDefinition *obj,
+                           PropertyName *name, MDefinition *value,
+                           bool barrier, types::TemporaryTypeSet *objTypes);
     bool setPropTryInlineAccess(bool *emitted, MDefinition *obj,
                                 PropertyName *name, MDefinition *value,
                                 bool barrier, types::TemporaryTypeSet *objTypes);
@@ -836,9 +843,9 @@ class IonBuilder
     // Inlining helpers.
     bool inlineGenericFallback(JSFunction *target, CallInfo &callInfo, MBasicBlock *dispatchBlock,
                                bool clonedAtCallsite);
-    bool inlineTypeObjectFallback(CallInfo &callInfo, MBasicBlock *dispatchBlock,
-                                  MTypeObjectDispatch *dispatch, MGetPropertyCache *cache,
-                                  MBasicBlock **fallbackTarget);
+    bool inlineObjectGroupFallback(CallInfo &callInfo, MBasicBlock *dispatchBlock,
+                                   MObjectGroupDispatch *dispatch, MGetPropertyCache *cache,
+                                   MBasicBlock **fallbackTarget);
 
     bool atomicsMeetsPreconditions(CallInfo &callInfo, Scalar::Type *arrayElementType);
     void atomicsCheckBounds(CallInfo &callInfo, MInstruction **elements, MDefinition **index);
@@ -868,6 +875,10 @@ class IonBuilder
     bool testShouldDOMCall(types::TypeSet *inTypes,
                            JSFunction *func, JSJitInfo::OpType opType);
 
+    MDefinition *addShapeGuardsForGetterSetter(MDefinition *obj, JSObject *holder, Shape *holderShape,
+                                               const BaselineInspector::ShapeVector &receiverShapes,
+                                               bool isOwnProperty);
+
     bool annotateGetPropertyCache(MDefinition *obj, MGetPropertyCache *getPropCache,
                                   types::TemporaryTypeSet *objTypes,
                                   types::TemporaryTypeSet *pushedTypes);
@@ -878,8 +889,16 @@ class IonBuilder
     bool testSingletonPropertyTypes(MDefinition *obj, JSObject *singleton, PropertyName *name,
                                     bool *testObject, bool *testString);
     uint32_t getDefiniteSlot(types::TemporaryTypeSet *types, PropertyName *name);
+    uint32_t getUnboxedOffset(types::TemporaryTypeSet *types, PropertyName *name,
+                              JSValueType *punboxedType);
+    MInstruction *loadUnboxedProperty(MDefinition *obj, size_t offset, JSValueType unboxedType,
+                                      BarrierKind barrier, types::TemporaryTypeSet *types);
+    MInstruction *storeUnboxedProperty(MDefinition *obj, size_t offset, JSValueType unboxedType,
+                                       MDefinition *value);
     bool freezePropTypeSets(types::TemporaryTypeSet *types,
                             JSObject *foundProto, PropertyName *name);
+    bool canInlinePropertyOpShapes(const BaselineInspector::ShapeVector &nativeShapes,
+                                   const BaselineInspector::ObjectGroupVector &unboxedGroups);
 
     types::TemporaryTypeSet *bytecodeTypes(jsbytecode *pc);
 
@@ -1009,6 +1028,8 @@ class IonBuilder
     }
     IonBuilder *callerBuilder_;
 
+    IonBuilder *outermostBuilder();
+
     bool oom() {
         abortReason_ = AbortReason_Alloc;
         return false;
@@ -1063,7 +1084,7 @@ class IonBuilder
     // In such cases we do not have read the property, except when the type
     // object is unknown.
     //
-    // As an optimization, we can dispatch a call based on the type object,
+    // As an optimization, we can dispatch a call based on the object group,
     // without doing the MGetPropertyCache.  This is what is achieved by
     // |IonBuilder::inlineCalls|.  As we might not know all the functions, we
     // are adding a fallback path, where this MGetPropertyCache would be moved
