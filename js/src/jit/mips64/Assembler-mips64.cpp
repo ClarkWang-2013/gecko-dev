@@ -1530,7 +1530,7 @@ Assembler::bind(InstImm *inst, uint64_t branch, uint64_t target)
 
         // Skip the trailing nops in conditional branches.
         if (conditional) {
-            inst[2] = InstImm(op_regimm, zero, rt_bgez, BOffImm16(3 * sizeof(void *))).encode();
+            inst[2] = InstImm(op_regimm, zero, rt_bgez, BOffImm16(3 * sizeof(uint32_t))).encode();
             // There are 2 nops after this
         }
         return;
@@ -1544,9 +1544,9 @@ Assembler::bind(InstImm *inst, uint64_t branch, uint64_t target)
         // There is 1 nop after this.
     } else {
         // Handle long conditional jump.
-        inst[0] = invertBranch(inst[0], BOffImm16(5 * sizeof(void *)));
+        inst[0] = invertBranch(inst[0], BOffImm16(5 * sizeof(uint32_t)));
         // No need for a "nop" here because we can clobber scratch.
-        addLongJump(BufferOffset(branch + sizeof(void *)));
+        addLongJump(BufferOffset(branch + sizeof(uint32_t)));
         WriteLoad64Instructions(&inst[1], &inst[2], &inst[3], &inst[4], &inst[5], &inst[6], ScratchRegister, target);
         inst[7] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr).encode();
         // There is 1 nop after this.
