@@ -2369,8 +2369,8 @@ void
 MacroAssemblerMIPS64Compat::branchTestPrimitive(Condition cond, const ValueOperand &value,
                                               Label *label)
 {
-    splitTag(value, ScratchRegister);
-    branchTestPrimitive(cond, ScratchRegister, label);
+    splitTag(value, SecondScratchReg);
+    branchTestPrimitive(cond, SecondScratchReg, label);
 }
 void
 MacroAssemblerMIPS64Compat::branchTestPrimitive(Condition cond, Register tag, Label *label)
@@ -2384,8 +2384,8 @@ void
 MacroAssemblerMIPS64Compat::branchTestInt32(Condition cond, const ValueOperand &value, Label *label)
 {
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_b(ScratchRegister, ImmTag(JSVAL_TAG_INT32), label, cond);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_INT32), label, cond);
 }
 
 void
@@ -2416,8 +2416,8 @@ MacroAssemblerMIPS64Compat:: branchTestBoolean(Condition cond, const ValueOperan
                                              Label *label)
 {
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_b(ScratchRegister, ImmTag(JSVAL_TAG_BOOLEAN), label, cond);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_BOOLEAN), label, cond);
 }
 
 void
@@ -2440,8 +2440,8 @@ MacroAssemblerMIPS64Compat::branchTestDouble(Condition cond, const ValueOperand 
 {
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
     Assembler::Condition actual = (cond == Equal) ? Below : AboveOrEqual;
-    splitTag(value, ScratchRegister);
-    ma_b(ScratchRegister, ImmTag(JSVAL_TAG_MAX_DOUBLE), label, actual);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_MAX_DOUBLE), label, actual);
 }
 
 void
@@ -2473,8 +2473,8 @@ void
 MacroAssemblerMIPS64Compat::branchTestNull(Condition cond, const ValueOperand &value, Label *label)
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_b(ScratchRegister, ImmTag(JSVAL_TAG_NULL), label, cond);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_NULL), label, cond);
 }
 
 void
@@ -2503,8 +2503,8 @@ void
 MacroAssemblerMIPS64Compat::testNullSet(Condition cond, const ValueOperand &value, Register dest)
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_cmp_set(dest, ScratchRegister, ImmTag(JSVAL_TAG_NULL), cond);
+    splitTag(value, SecondScratchReg);
+    ma_cmp_set(dest, SecondScratchReg, ImmTag(JSVAL_TAG_NULL), cond);
 }
 
 void
@@ -2533,15 +2533,15 @@ void
 MacroAssemblerMIPS64Compat::testObjectSet(Condition cond, const ValueOperand &value, Register dest)
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_cmp_set(dest, ScratchRegister, ImmTag(JSVAL_TAG_OBJECT), cond);
+    splitTag(value, SecondScratchReg);
+    ma_cmp_set(dest, SecondScratchReg, ImmTag(JSVAL_TAG_OBJECT), cond);
 }
 
 void
 MacroAssemblerMIPS64Compat::branchTestString(Condition cond, const ValueOperand &value, Label *label)
 {
-    splitTag(value, ScratchRegister);
-    branchTestString(cond, ScratchRegister, label);
+    splitTag(value, SecondScratchReg);
+    branchTestString(cond, SecondScratchReg, label);
 }
 
 void
@@ -2562,8 +2562,8 @@ MacroAssemblerMIPS64Compat::branchTestString(Condition cond, const BaseIndex &sr
 void
 MacroAssemblerMIPS64Compat::branchTestSymbol(Condition cond, const ValueOperand &value, Label *label)
 {
-    splitTag(value, ScratchRegister);
-    branchTestSymbol(cond, ScratchRegister, label);
+    splitTag(value, SecondScratchReg);
+    branchTestSymbol(cond, SecondScratchReg, label);
 }
 
 void
@@ -2586,8 +2586,8 @@ MacroAssemblerMIPS64Compat::branchTestUndefined(Condition cond, const ValueOpera
                                               Label *label)
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_b(ScratchRegister, ImmTag(JSVAL_TAG_UNDEFINED), label, cond);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_UNDEFINED), label, cond);
 }
 
 void
@@ -2617,8 +2617,8 @@ void
 MacroAssemblerMIPS64Compat::testUndefinedSet(Condition cond, const ValueOperand &value, Register dest)
 {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
-    splitTag(value, ScratchRegister);
-    ma_cmp_set(dest, ScratchRegister, ImmTag(JSVAL_TAG_UNDEFINED), cond);
+    splitTag(value, SecondScratchReg);
+    ma_cmp_set(dest, SecondScratchReg, ImmTag(JSVAL_TAG_UNDEFINED), cond);
 }
 
 void
@@ -2639,8 +2639,8 @@ MacroAssemblerMIPS64Compat::branchTestNumber(Condition cond, Register tag, Label
 void
 MacroAssemblerMIPS64Compat::branchTestMagic(Condition cond, const ValueOperand &value, Label *label)
 {
-    splitTag(value, ScratchRegister);
-    branchTestMagic(cond, ScratchRegister, label);
+    splitTag(value, SecondScratchReg);
+    branchTestMagic(cond, SecondScratchReg, label);
 }
 
 void
