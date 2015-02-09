@@ -304,7 +304,7 @@ GetTopJitJSScript(JSContext *cx)
     return iter.script();
 }
 
-#ifdef JS_CODEGEN_MIPS
+#if defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
 uint8_t *alignDoubleSpillWithOffset(uint8_t *pointer, int32_t offset);
 #else
 inline uint8_t *

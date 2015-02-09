@@ -99,7 +99,7 @@ NativeRegExpMacroAssembler::NativeRegExpMacroAssembler(LifoAlloc *alloc, RegExpS
 #if defined(JS_CODEGEN_ARM)
     // ARM additionally requires that the link register be saved.
     savedNonVolatileRegisters.add(Register::FromCode(Registers::lr));
-#elif defined(JS_CODEGEN_MIPS)
+#elif defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
     savedNonVolatileRegisters.add(Register::FromCode(Registers::ra));
 #endif
 
@@ -397,7 +397,7 @@ NativeRegExpMacroAssembler::GenerateCode(JSContext *cx, bool match_only)
         GeneralRegisterSet volatileRegs = GeneralRegisterSet::Volatile();
 #if defined(JS_CODEGEN_ARM)
         volatileRegs.add(Register::FromCode(Registers::lr));
-#elif defined(JS_CODEGEN_MIPS)
+#elif defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
         volatileRegs.add(Register::FromCode(Registers::ra));
 #endif
         volatileRegs.takeUnchecked(temp0);
@@ -1322,7 +1322,7 @@ NativeRegExpMacroAssembler::CanReadUnaligned()
 {
 #if defined(JS_CODEGEN_ARM)
     return !jit::HasAlignmentFault();
-#elif defined(JS_CODEGEN_MIPS)
+#elif defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
     return false;
 #else
     return true;

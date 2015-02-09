@@ -1236,11 +1236,11 @@ JitActivationIterator::jitStackRange(uintptr_t *&min, uintptr_t *&end)
     end = reinterpret_cast<uintptr_t *>(frames.prevFp());
 }
 
-#ifdef JS_CODEGEN_MIPS
+#if defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
 uint8_t *
 alignDoubleSpillWithOffset(uint8_t *pointer, int32_t offset)
 {
-    uint32_t address = reinterpret_cast<uint32_t>(pointer);
+    uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
     address = (address - offset) & ~(ABIStackAlignment - 1);
     return reinterpret_cast<uint8_t *>(address);
 }
