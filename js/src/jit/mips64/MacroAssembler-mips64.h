@@ -564,8 +564,8 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
 
     // Returns the register containing the type tag.
     Register splitTagForTest(const ValueOperand &value) {
-        splitTag(value, ScratchRegister);
-        return ScratchRegister;
+        splitTag(value, SecondScratchReg);
+        return SecondScratchReg;
     }
 
     void branchTestGCThing(Condition cond, const Address &address, Label *label);
