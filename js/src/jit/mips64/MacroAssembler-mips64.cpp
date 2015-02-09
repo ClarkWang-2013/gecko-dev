@@ -945,6 +945,12 @@ MacroAssemblerMIPS64::ma_sd(Register data, Address address)
 }
 
 void
+MacroAssemblerMIPS64::ma_sd(Register data, BaseIndex &address)
+{
+    ma_store(data, address, SizeDouble);
+}
+
+void
 MacroAssemblerMIPS64::ma_pop(Register r)
 {
     as_ld(r, StackPointer, 0);
@@ -961,7 +967,7 @@ MacroAssemblerMIPS64::ma_push(Register r)
     }
 
     as_daddiu(StackPointer, StackPointer, (int32_t)-sizeof(intptr_t));
-    as_sw(r, StackPointer, 0);
+    as_sd(r, StackPointer, 0);
 }
 
 // Branches when done from within mips-specific code.
@@ -1030,21 +1036,21 @@ void
 MacroAssemblerMIPS64::ma_b(Register lhs, Address addr, Label *label, Condition c, JumpKind jumpKind)
 {
     MOZ_ASSERT(lhs != ScratchRegister);
-    ma_lw(ScratchRegister, addr);
+    ma_ld(ScratchRegister, addr);
     ma_b(lhs, ScratchRegister, label, c, jumpKind);
 }
 
 void
 MacroAssemblerMIPS64::ma_b(Address addr, Imm32 imm, Label *label, Condition c, JumpKind jumpKind)
 {
-    ma_lw(SecondScratchReg, addr);
+    ma_ld(SecondScratchReg, addr);
     ma_b(SecondScratchReg, imm, label, c, jumpKind);
 }
 
 void
 MacroAssemblerMIPS64::ma_b(Address addr, ImmGCPtr imm, Label *label, Condition c, JumpKind jumpKind)
 {
-    ma_lw(SecondScratchReg, addr);
+    ma_ld(SecondScratchReg, addr);
     ma_b(SecondScratchReg, imm, label, c, jumpKind);
 }
 
@@ -1434,14 +1440,14 @@ MacroAssemblerMIPS64::ma_cmp_set(Register rd, Register rs, ImmWord imm, Conditio
 void
 MacroAssemblerMIPS64::ma_cmp_set(Register rd, Register rs, Address addr, Condition c)
 {
-    ma_lw(ScratchRegister, addr);
+    ma_ld(ScratchRegister, addr);
     ma_cmp_set(rd, rs, ScratchRegister, c);
 }
 
 void
 MacroAssemblerMIPS64::ma_cmp_set(Register dst, Address lhs, Register rhs, Condition c)
 {
-    ma_lw(ScratchRegister, lhs);
+    ma_ld(ScratchRegister, lhs);
     ma_cmp_set(dst, ScratchRegister, rhs, c);
 }
 
@@ -2046,7 +2052,7 @@ MacroAssemblerMIPS64Compat::load32(AsmJSAbsoluteAddress address, Register dest)
 void
 MacroAssemblerMIPS64Compat::loadPtr(const Address &address, Register dest)
 {
-    ma_lw(dest, address);
+    ma_ld(dest, address);
 }
 
 void
@@ -2059,7 +2065,7 @@ void
 MacroAssemblerMIPS64Compat::loadPtr(AbsoluteAddress address, Register dest)
 {
     ma_li(ScratchRegister, ImmWord((uint64_t)address.addr));
-    as_lw(dest, ScratchRegister, 0);
+    as_ld(dest, ScratchRegister, 0);
 }
 
 void
@@ -2202,7 +2208,7 @@ void
 MacroAssemblerMIPS64Compat::storePtr(ImmWord imm, T address)
 {
     ma_li(SecondScratchReg, Imm32(imm.value));
-    ma_sw(SecondScratchReg, address);
+    ma_sd(SecondScratchReg, address);
 }
 
 template void MacroAssemblerMIPS64Compat::storePtr<Address>(ImmWord imm, Address address);
@@ -2223,7 +2229,7 @@ void
 MacroAssemblerMIPS64Compat::storePtr(ImmGCPtr imm, T address)
 {
     ma_li(SecondScratchReg, imm);
-    ma_sw(SecondScratchReg, address);
+    ma_sd(SecondScratchReg, address);
 }
 
 template void MacroAssemblerMIPS64Compat::storePtr<Address>(ImmGCPtr imm, Address address);
@@ -2232,7 +2238,7 @@ template void MacroAssemblerMIPS64Compat::storePtr<BaseIndex>(ImmGCPtr imm, Base
 void
 MacroAssemblerMIPS64Compat::storePtr(Register src, const Address &address)
 {
-    ma_sw(src, address);
+    ma_sd(src, address);
 }
 
 void
@@ -2245,7 +2251,7 @@ void
 MacroAssemblerMIPS64Compat::storePtr(Register src, AbsoluteAddress dest)
 {
     ma_li(ScratchRegister, ImmWord((uint64_t)dest.addr));
-    as_sw(src, ScratchRegister, 0);
+    as_sd(src, ScratchRegister, 0);
 }
 
 // Note: this function clobbers the input register.
@@ -3198,7 +3204,7 @@ MacroAssemblerMIPS64Compat::storeValue(JSValueType type, Register reg, BaseIndex
 {
     computeScaledAddress(dest, ScratchRegister);
 
-    // Make sure that ma_sw doesn't clobber ScratchRegister
+    // Make sure that ma_sd doesn't clobber ScratchRegister
     int32_t offset = dest.offset;
     if (!Imm16::IsInSignedRange(offset)) {
         ma_li(SecondScratchReg, Imm32(offset));
@@ -3244,7 +3250,7 @@ MacroAssemblerMIPS64Compat::storeValue(const Value &val, BaseIndex dest)
 {
     computeScaledAddress(dest, ScratchRegister);
 
-    // Make sure that ma_sw doesn't clobber ScratchRegister
+    // Make sure that ma_sd doesn't clobber ScratchRegister
     int32_t offset = dest.offset;
     if (!Imm16::IsInSignedRange(offset)) {
         ma_li(SecondScratchReg, Imm32(offset));
@@ -3311,7 +3317,7 @@ MacroAssemblerMIPS64::ma_callJitNoPush(const Register r)
 {
     // This is a MIPS hack to push return address during jalr delay slot.
     as_jalr(r);
-    as_sw(ra, StackPointer, 0);
+    as_sd(ra, StackPointer, 0);
 }
 
 // This macrosintruction calls the ion code and pushes the return address to
@@ -3322,7 +3328,7 @@ MacroAssemblerMIPS64::ma_callJit(const Register r)
     // This is a MIPS hack to push return address during jalr delay slot.
     as_daddiu(StackPointer, StackPointer, (int32_t)(-2 * sizeof(intptr_t)));
     as_jalr(r);
-    as_sw(ra, StackPointer, 0);
+    as_sd(ra, StackPointer, 0);
 }
 
 // This macrosintruction calls the ion code and pushes the return address to
@@ -3333,7 +3339,7 @@ MacroAssemblerMIPS64::ma_callJitHalfPush(const Register r)
     // This is a MIPS hack to push return address during jalr delay slot.
     as_daddiu(StackPointer, StackPointer, (int32_t)-sizeof(intptr_t));
     as_jalr(r);
-    as_sw(ra, StackPointer, 0);
+    as_sd(ra, StackPointer, 0);
 }
 
 // This macrosintruction calls the ion code and pushes the return address to
@@ -3344,7 +3350,7 @@ MacroAssemblerMIPS64::ma_callJitHalfPush(Label *label)
     // This is a MIPS hack to push return address during jalr delay slot.
     as_daddiu(StackPointer, StackPointer, (int32_t)-sizeof(intptr_t));
     ma_bal(label, DontFillDelaySlot);
-    as_sw(ra, StackPointer, 0);
+    as_sd(ra, StackPointer, 0);
 }
 
 void
@@ -3418,9 +3424,9 @@ MacroAssemblerMIPS64Compat::setupUnalignedABICall(uint32_t args, Register scratc
     ma_move(scratch, StackPointer);
 
     // Force sp to be aligned
-    ma_dsubu(StackPointer, StackPointer, Imm32(sizeof(uint32_t)));
+    ma_dsubu(StackPointer, StackPointer, Imm32(sizeof(uintptr_t)));
     ma_and(StackPointer, StackPointer, Imm32(~(ABIStackAlignment - 1)));
-    as_sw(scratch, StackPointer, 0);
+    as_sd(scratch, StackPointer, 0);
 }
 
 void
@@ -3553,7 +3559,7 @@ MacroAssemblerMIPS64Compat::callWithABIPre(uint32_t *stackAdjust, bool callFromA
     // Save $ra because call is going to clobber it. Restore it in
     // callWithABIPost. NOTE: This is needed for calls from BaselineIC.
     // Maybe we can do this differently.
-    ma_sw(ra, Address(StackPointer, *stackAdjust - sizeof(intptr_t)));
+    ma_sd(ra, Address(StackPointer, *stackAdjust - sizeof(intptr_t)));
 
     // Position all arguments.
     {
@@ -3573,11 +3579,11 @@ void
 MacroAssemblerMIPS64Compat::callWithABIPost(uint32_t stackAdjust, MoveOp::Type result)
 {
     // Restore ra value (as stored in callWithABIPre()).
-    ma_lw(ra, Address(StackPointer, stackAdjust - sizeof(intptr_t)));
+    ma_ld(ra, Address(StackPointer, stackAdjust - sizeof(intptr_t)));
 
     if (dynamicAlignment_) {
         // Restore sp value from stack (as stored in setupUnalignedABICall()).
-        ma_lw(StackPointer, Address(StackPointer, stackAdjust));
+        ma_ld(StackPointer, Address(StackPointer, stackAdjust));
         // Use adjustFrame instead of freeStack because we already restored sp.
         adjustFrame(-stackAdjust);
     } else {
@@ -3660,7 +3666,7 @@ MacroAssemblerMIPS64Compat::callWithABI(const Address &fun, MoveOp::Type result)
     // Load the callee in t9, no instruction between the lw and call
     // should clobber it. Note that we can't use fun.base because it may
     // be one of the IntArg registers clobbered before the call.
-    ma_lw(t9, Address(fun.base, fun.offset));
+    ma_ld(t9, Address(fun.base, fun.offset));
     uint32_t stackAdjust;
     callWithABIPre(&stackAdjust);
     call(t9);
@@ -3699,7 +3705,7 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     Label bailout;
 
     // Already clobbered a0, so use it...
-    ma_lw(a0, Address(StackPointer, offsetof(ResumeFromException, kind)));
+    ma_ld(a0, Address(StackPointer, offsetof(ResumeFromException, kind)));
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
@@ -3712,7 +3718,7 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     // and return from the entry frame.
     bind(&entryFrame);
     moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-    ma_lw(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
+    ma_ld(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
 
     // We're going to be returning by the ion calling convention
     ma_pop(ra);
@@ -3722,9 +3728,9 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     // If we found a catch handler, this must be a baseline frame. Restore
     // state and jump to the catch block.
     bind(&catch_);
-    ma_lw(a0, Address(StackPointer, offsetof(ResumeFromException, target)));
-    ma_lw(BaselineFrameReg, Address(StackPointer, offsetof(ResumeFromException, framePointer)));
-    ma_lw(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
+    ma_ld(a0, Address(StackPointer, offsetof(ResumeFromException, target)));
+    ma_ld(BaselineFrameReg, Address(StackPointer, offsetof(ResumeFromException, framePointer)));
+    ma_ld(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
     jump(a0);
 
     // If we found a finally block, this must be a baseline frame. Push
@@ -3734,9 +3740,9 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     ValueOperand exception = ValueOperand(a1);
     loadValue(Address(sp, offsetof(ResumeFromException, exception)), exception);
 
-    ma_lw(a0, Address(sp, offsetof(ResumeFromException, target)));
-    ma_lw(BaselineFrameReg, Address(sp, offsetof(ResumeFromException, framePointer)));
-    ma_lw(sp, Address(sp, offsetof(ResumeFromException, stackPointer)));
+    ma_ld(a0, Address(sp, offsetof(ResumeFromException, target)));
+    ma_ld(BaselineFrameReg, Address(sp, offsetof(ResumeFromException, framePointer)));
+    ma_ld(sp, Address(sp, offsetof(ResumeFromException, stackPointer)));
 
     pushValue(BooleanValue(true));
     pushValue(exception);
@@ -3745,8 +3751,8 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     // Only used in debug mode. Return BaselineFrame->returnValue() to the
     // caller.
     bind(&return_);
-    ma_lw(BaselineFrameReg, Address(StackPointer, offsetof(ResumeFromException, framePointer)));
-    ma_lw(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
+    ma_ld(BaselineFrameReg, Address(StackPointer, offsetof(ResumeFromException, framePointer)));
+    ma_ld(StackPointer, Address(StackPointer, offsetof(ResumeFromException, stackPointer)));
     loadValue(Address(BaselineFrameReg, BaselineFrame::reverseOffsetOfReturnValue()),
               JSReturnOperand);
     ma_move(StackPointer, BaselineFrameReg);
@@ -3768,9 +3774,9 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     // If we are bailing out to baseline to handle an exception, jump to
     // the bailout tail stub.
     bind(&bailout);
-    ma_lw(a2, Address(sp, offsetof(ResumeFromException, bailoutInfo)));
+    ma_ld(a2, Address(sp, offsetof(ResumeFromException, bailoutInfo)));
     ma_li(ReturnReg, Imm32(BAILOUT_RETURN_OK));
-    ma_lw(a1, Address(sp, offsetof(ResumeFromException, target)));
+    ma_ld(a1, Address(sp, offsetof(ResumeFromException, target)));
     jump(a1);
 }
 

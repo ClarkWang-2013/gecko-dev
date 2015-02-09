@@ -214,6 +214,7 @@ class MacroAssemblerMIPS64 : public Assembler
     void ma_sw(Imm32 imm, Address address);
     void ma_sw(Register data, BaseIndex &address);
     void ma_sd(Register data, Address address);
+    void ma_sd(Register data, BaseIndex &address);
 
     void ma_pop(Register r);
     void ma_push(Register r);
