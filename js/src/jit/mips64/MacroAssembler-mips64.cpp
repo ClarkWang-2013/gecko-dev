@@ -285,10 +285,10 @@ MacroAssemblerMIPS64::ma_li(Register dest, ImmWord imm)
         as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
     } else if (imm.value <= UINT32_MAX) {
         as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
-        as_ori(dest, zero, (uint16_t)(imm.value & 0xffff));
+        as_ori(dest, dest, (uint16_t)(imm.value & 0xffff));
     } else {
         as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
-        as_ori(dest, zero, (uint16_t)(imm.value & 0xffff));
+        as_ori(dest, dest, (uint16_t)(imm.value & 0xffff));
         as_dsll(dest, dest, 16);
         as_ori(dest, dest, (uint16_t)((imm.value >> 32) & 0xffff));
         as_dsll(dest, dest, 16);
