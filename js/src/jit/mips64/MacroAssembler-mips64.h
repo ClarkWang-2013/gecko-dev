@@ -793,7 +793,7 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
         branchTestPtr(cond, lhs, ScratchRegister, label);
     }
     void branchTestPtr(Condition cond, const Address &lhs, Imm32 imm, Label *label) {
-        ma_lw(SecondScratchReg, lhs);
+        ma_ld(SecondScratchReg, lhs);
         branchTestPtr(cond, SecondScratchReg, imm, label);
     }
     void branchPtr(Condition cond, Register lhs, Register rhs, Label *label) {
@@ -896,7 +896,7 @@ public:
         if (dest.isFloat())
             loadInt32OrDouble(address, dest.fpu());
         else
-            ma_lw(dest.gpr(), address);
+            ma_ld(dest.gpr(), address);
     }
 
     void loadUnboxedValue(BaseIndex address, MIRType type, AnyRegister dest) {
