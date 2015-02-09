@@ -2618,8 +2618,8 @@ MacroAssemblerMIPS64Compat::testUndefinedSet(Condition cond, const ValueOperand 
 void
 MacroAssemblerMIPS64Compat::branchTestNumber(Condition cond, const ValueOperand &value, Label *label)
 {
-    splitTag(value, ScratchRegister);
-    branchTestNumber(cond, ScratchRegister, label);
+    splitTag(value, SecondScratchReg);
+    branchTestNumber(cond, SecondScratchReg, label);
 }
 
 void
