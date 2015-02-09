@@ -356,7 +356,7 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         size_t offset = reader.readUnsigned();
         Instruction *inst = (Instruction*)(buffer + offset);
 
-        void *ptr = (void *)Assembler::ExtractLuiOriValue(inst, inst->next());
+        void *ptr = (void *)Assembler::ExtractLoad64Value(inst, &inst[1], &inst[3], &inst[5]);
         uintptr_t word = uintptr_t(ptr);
 
         if (!(word & 0x1))
@@ -365,7 +365,7 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         uint32_t index = word >> 1;
         JSObject *obj = nurseryObjects[index];
 
-        Assembler::UpdateLuiOriValue(inst, inst->next(), uint32_t(obj));
+        Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], uint64_t(obj));
         AutoFlushICache::flush(uintptr_t(inst), 8);
 
         // Either all objects are still in the nursery, or all objects are

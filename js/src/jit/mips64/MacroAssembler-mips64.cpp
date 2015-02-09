@@ -1042,7 +1042,7 @@ MacroAssemblerMIPS64::ma_b(Address addr, Imm32 imm, Label *label, Condition c, J
 }
 
 void
-MacroAssemblerMIPS::ma_b(Address addr, ImmGCPtr imm, Label *label, Condition c, JumpKind jumpKind)
+MacroAssemblerMIPS64::ma_b(Address addr, ImmGCPtr imm, Label *label, Condition c, JumpKind jumpKind)
 {
     ma_lw(SecondScratchReg, addr);
     ma_b(SecondScratchReg, imm, label, c, jumpKind);

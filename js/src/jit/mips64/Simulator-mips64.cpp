@@ -527,6 +527,8 @@ class AutoLockSimulatorCache
 #ifdef DEBUG
         sim_->cacheLockHolder_ = PR_GetCurrentThread();
 #endif
+    }
+
     ~AutoLockSimulatorCache() {
         MOZ_ASSERT(sim_->cacheLockHolder_);
 #ifdef DEBUG
@@ -1313,7 +1315,7 @@ Simulator::init()
     // The sp is initialized to point to the bottom (high address) of the
     // allocated stack area. To be safe in potential stack underflows we leave
     // some buffer below.
-    registers_[sp] = reinterpret_cast<int32_t>(stack_) + stackSize - 64;
+    registers_[sp] = reinterpret_cast<int64_t>(stack_) + stackSize - 64;
 
     return true;
 }

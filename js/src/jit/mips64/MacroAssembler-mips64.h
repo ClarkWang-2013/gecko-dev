@@ -909,6 +909,23 @@ public:
     void storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const T &dest,
                            MIRType slotType);
 
+    template <typename T>
+    void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes) {
+        switch (nbytes) {
+          case 8:
+            unboxNonDouble(value, ScratchRegister);
+            storePtr(ScratchRegister, address);
+            return;
+          case 4:
+            store32(value.valueReg(), address);
+            return;
+          case 1:
+            store8(value.valueReg(), address);
+            return;
+          default: MOZ_CRASH("Bad payload width");
+        }
+    }
+
     void moveValue(const Value &val, const ValueOperand &dest);
 
     void moveValue(const ValueOperand &src, const ValueOperand &dest) {
