@@ -2099,8 +2099,7 @@ Simulator::printWatchpoint(uint32_t code)
 {
     MipsDebugger dbg(this);
     ++break_count_;
-    printf("\n---- break %d marker: %20ld  (instr count: %20ld) ----------"
-           "----------------------------------",
+    printf("\n---- break %d marker: %20ld  (instr count: %20ld) ----\n",
            code, break_count_, icount_);
     dbg.printAllRegs();  // Print registers and continue running.
 }
