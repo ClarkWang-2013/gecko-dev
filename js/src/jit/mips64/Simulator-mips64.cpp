@@ -3736,7 +3736,7 @@ Simulator::call(uint8_t *entry, int argument_count, ...)
     else
         entry_stack = entry_stack - kCArgsSlotsSize;
 
-    entry_stack &= ~ABIStackAlignment;
+    entry_stack &= ~(uint64_t)ABIStackAlignment;
 
     intptr_t *stack_argument = reinterpret_cast<intptr_t*>(entry_stack);
 
