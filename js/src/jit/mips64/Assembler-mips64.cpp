@@ -1163,7 +1163,7 @@ Assembler::as_dextu(Register rt, Register rs, uint16_t pos, uint16_t size)
 {
     MOZ_ASSERT(pos >= 32 && pos < 64 && size != 0 && size <= 32 && pos + size > 32 && pos + size <= 64);
     Register rd;
-    rd = Register::FromCode(size - 1 - 32);
+    rd = Register::FromCode(size - 1);
     return writeInst(InstReg(op_special3, rs, rt, rd, pos - 32, ff_dextu).encode());
 }
 
