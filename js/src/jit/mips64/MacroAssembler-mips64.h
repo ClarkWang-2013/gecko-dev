@@ -617,7 +617,7 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
     Register extractObject(const Address &address, Register scratch);
     Register _extractPayload(const ValueOperand &value, Register scratch) {
         MOZ_ASSERT(scratch != ScratchRegister);
-        as_dext(ScratchRegister, value.valueReg(), 0, 32);
+        ma_dext(scratch, value.valueReg(), Imm32(0), Imm32(JSVAL_TAG_SHIFT));
         return scratch;
     }
     Register extractObject(const ValueOperand &value, Register scratch) {
