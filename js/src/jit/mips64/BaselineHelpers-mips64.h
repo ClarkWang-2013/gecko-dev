@@ -164,9 +164,6 @@ EmitEnterStubFrame(MacroAssembler &masm, Register scratch)
     masm.storePtr(BaselineFrameReg, Address(StackPointer,
                                             offsetof(BaselineStubFrame, savedFrame)));
     masm.movePtr(BaselineStackReg, BaselineFrameReg);
-
-    // We pushed 4 words, so the stack is still aligned to 8 bytes.
-    masm.checkStackAlignment();
 }
 
 inline void
