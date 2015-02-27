@@ -143,6 +143,11 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     Loop over argv vector, push arguments onto stack in reverse order
     ***************************************************************/
 
+    // Make stack algined
+    masm.ma_and(s0, reg_argc, Imm32(1));
+    masm.ma_dsubu(s1, StackPointer, Imm32(sizeof(Value)));
+    masm.as_movn(StackPointer, s1, s0);
+
     masm.as_dsll(s0, reg_argc, 3); // s0 = argc * 8
     masm.addPtr(reg_argv, s0); // s0 = argv + argc * 8
 
@@ -154,8 +159,8 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     {
         masm.bind(&header);
 
-        masm.subPtr(Imm32(sizeof(uintptr_t)), s0);
-        masm.subPtr(Imm32(sizeof(uintptr_t)), StackPointer);
+        masm.subPtr(Imm32(sizeof(Value)), s0);
+        masm.subPtr(Imm32(sizeof(Value)), StackPointer);
 
         ValueOperand value = ValueOperand(s6);
         masm.loadValue(Address(s0, 0), value);
@@ -290,7 +295,7 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     // Pop arguments off the stack.
     // s0 <- 8*argc (size of all arguments we pushed on the stack)
     masm.pop(s0);
-    masm.rshiftPtr(Imm32(4), s0);
+    masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), s0);
     masm.addPtr(s0, StackPointer);
 
     // Store the returned value into the vp
