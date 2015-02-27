@@ -2165,20 +2165,21 @@ MacroAssemblerMIPS64Compat::store16(Register src, const BaseIndex &address)
 void
 MacroAssemblerMIPS64Compat::store32(Register src, AbsoluteAddress address)
 {
-    storePtr(src, address);
+    ma_li(ScratchRegister, ImmWord((uint64_t)address.addr));
+    as_sw(src, ScratchRegister, 0);
 }
 
 void
 MacroAssemblerMIPS64Compat::store32(Register src, const Address &address)
 {
-    storePtr(src, address);
+    ma_store(src, address, SizeWord);
 }
 
 void
 MacroAssemblerMIPS64Compat::store32(Imm32 src, const Address &address)
 {
     move32(src, SecondScratchReg);
-    storePtr(SecondScratchReg, address);
+    ma_store(SecondScratchReg, address, SizeWord);
 }
 
 void
