@@ -3279,6 +3279,9 @@ MacroAssemblerMIPS64Compat::tagValue(JSValueType type, Register payload, ValueOp
       ma_move(dest.valueReg(), payload);
     ma_li(ScratchRegister, ImmTag(JSVAL_TYPE_TO_TAG(type)));
     ma_dsll(ScratchRegister, ScratchRegister, Imm32(JSVAL_TAG_SHIFT));
+    // Extract low 32-bit because int32 is sign-extened on mips64.
+    if (type == JSVAL_TYPE_INT32)
+      ma_dext(dest.valueReg(), dest.valueReg(), Imm32(0), Imm32(32));
     ma_or(dest.valueReg(), ScratchRegister);
 }
 
