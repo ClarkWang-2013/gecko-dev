@@ -2239,6 +2239,9 @@ Simulator::configureTypeRegister(SimInstruction *instr,
           case rs_mfc1:
             alu_out = getFpuRegisterLo(fs_reg);
             break;
+          case rs_dmfc1:
+            alu_out = getFpuRegister(fs_reg);
+            break;
           case rs_mfhc1:
             alu_out = getFpuRegisterHi(fs_reg);
             break;
