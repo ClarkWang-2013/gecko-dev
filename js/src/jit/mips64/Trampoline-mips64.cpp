@@ -154,8 +154,8 @@ JitRuntime::generateEnterJIT(JSContext *cx, EnterJitType type)
     {
         masm.bind(&header);
 
-        masm.subPtr(Imm32(2 * sizeof(uintptr_t)), s0);
-        masm.subPtr(Imm32(2 * sizeof(uintptr_t)), StackPointer);
+        masm.subPtr(Imm32(sizeof(uintptr_t)), s0);
+        masm.subPtr(Imm32(sizeof(uintptr_t)), StackPointer);
 
         ValueOperand value = ValueOperand(s6);
         masm.loadValue(Address(s0, 0), value);
