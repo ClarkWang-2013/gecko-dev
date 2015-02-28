@@ -303,33 +303,19 @@ MoveEmitterMIPS64::emitDoubleMove(const MoveOperand &from, const MoveOperand &to
         if (to.isFloatReg()) {
             masm.moveDouble(from.floatReg(), to.floatReg());
         } else if (to.isGeneralReg()) {
-            // Used for passing double parameter in a2,a3 register pair.
-            // Two moves are added for one double parameter by
-            // MacroAssemblerMIPSCompat::passABIArg
-            if(to.reg() == a2)
-                masm.moveFromDoubleLo(from.floatReg(), a2);
-            else if(to.reg() == a3)
-                masm.moveFromDoubleHi(from.floatReg(), a3);
-            else
-                MOZ_CRASH("Invalid emitDoubleMove arguments.");
+            masm.moveFromDouble(from.floatReg(), to.reg());
         } else {
             MOZ_ASSERT(to.isMemory());
             masm.storeDouble(from.floatReg(), getAdjustedAddress(to));
         }
     } else if (to.isFloatReg()) {
-        MOZ_ASSERT(from.isMemory());
-        masm.loadDouble(getAdjustedAddress(from), to.floatReg());
+        if (from.isMemory())
+          masm.loadDouble(getAdjustedAddress(from), to.floatReg());
+        else
+          masm.moveToDouble(from.reg(), to.floatReg());
     } else if (to.isGeneralReg()) {
-        // Used for passing double parameter in a2,a3 register pair.
-        // Two moves are added for one double parameter by
-        // MacroAssemblerMIPSCompat::passABIArg
         if (from.isMemory()) {
-            if(to.reg() == a2)
-                masm.loadPtr(getAdjustedAddress(from), a2);
-            else if(to.reg() == a3)
-                masm.loadPtr(Address(from.base(), getAdjustedOffset(from) + sizeof(uint32_t)), a3);
-            else
-                MOZ_CRASH("Invalid emitDoubleMove arguments.");
+            masm.loadPtr(getAdjustedAddress(from), to.reg());
         } else {
             // Used for moving a double parameter from the same source. See Bug 1123874.
             if(to.reg() == a2 || to.reg() == a3)

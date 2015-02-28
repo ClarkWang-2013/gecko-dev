@@ -279,6 +279,13 @@ class MacroAssemblerMIPS64 : public Assembler
         as_mfhc1(dest, src);
     }
 
+    void moveToDouble(Register src, FloatRegister dest) {
+        as_dmtc1(src, dest);
+    }
+    void moveFromDouble(FloatRegister src, Register dest) {
+        as_dmfc1(dest, src);
+    }
+
     void moveToDoubleLo(Register src, FloatRegister dest) {
         as_mtc1(src, dest);
     }
