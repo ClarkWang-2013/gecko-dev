@@ -280,19 +280,19 @@ MacroAssemblerMIPS64::ma_li(Register dest, ImmWord imm)
     if ((int64_t)imm.value >= INT16_MIN  && (int64_t)imm.value <= INT16_MAX) {
         as_addiu(dest, zero, (int16_t)(imm.value & 0xffff));
     } else if (imm.value <= UINT16_MAX) {
-        as_ori(dest, zero, (uint16_t)(imm.value & 0xffff));
+        as_ori(dest, zero, imm.value & 0xffff);
     } else if (0 == (imm.value & 0xffff) && 0 == (imm.value >> 32)) {
-        as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
+        as_lui(dest, (imm.value >> 16) & 0xffff);
     } else if (imm.value <= UINT32_MAX) {
-        as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
-        as_ori(dest, dest, (uint16_t)(imm.value & 0xffff));
+        as_lui(dest, (imm.value >> 16) & 0xffff);
+        as_ori(dest, dest, imm.value & 0xffff);
     } else {
-        as_lui(dest, (int16_t)((imm.value >> 16) & 0xffff));
-        as_ori(dest, dest, (uint16_t)(imm.value & 0xffff));
+        as_lui(dest, imm.value >> 48);
+        as_ori(dest, dest, (imm.value >> 32) & 0xffff);
         as_dsll(dest, dest, 16);
-        as_ori(dest, dest, (uint16_t)((imm.value >> 32) & 0xffff));
+        as_ori(dest, dest, (imm.value >> 16) & 0xffff);
         as_dsll(dest, dest, 16);
-        as_ori(dest, dest, (uint16_t)((imm.value >> 48) & 0xffff));
+        as_ori(dest, dest, imm.value & 0xffff);
     }
 }
 
