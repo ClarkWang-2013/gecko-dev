@@ -15,7 +15,7 @@
 #include "jit/mips64/Simulator-mips64.h"
 #endif
 
-#if defined(JS_MIPS_SIMULATOR) || defined(JS_MIPS64_SIMULATOR)
+#if defined(JS_MIPS_SIMULATOR)
 #include "jit/Linker.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveResolver.h"
