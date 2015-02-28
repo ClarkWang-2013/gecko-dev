@@ -1679,11 +1679,11 @@ MacroAssemblerMIPS64Compat::callWithExitFrame(JitCode *target, Register dynStack
 void
 MacroAssemblerMIPS64Compat::callJit(Register callee)
 {
-    MOZ_ASSERT((framePushed() & 3) == 0);
-    if ((framePushed() & 7) == 4) {
+    MOZ_ASSERT((framePushed() & 7) == 0);
+    if ((framePushed() & 0xf) == 8) {
         ma_callJitHalfPush(callee);
     } else {
-        adjustFrame(sizeof(uint32_t));
+        adjustFrame(sizeof(uint64_t));
         ma_callJit(callee);
     }
 }
