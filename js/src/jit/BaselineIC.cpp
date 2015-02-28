@@ -10550,7 +10550,9 @@ ICCall_Native::Compiler::generateStubCode(MacroAssembler &masm)
         masm.storeValue(MagicValue(JS_IS_CONSTRUCTING), Address(BaselineStackReg, sizeof(Value)));
     }
 
+#ifndef JS_CODEGEN_MIPS64
     masm.checkStackAlignment();
+#endif
 
     // Native functions have the signature:
     //
@@ -10646,7 +10648,9 @@ ICCall_ClassHook::Compiler::generateStubCode(MacroAssembler &masm)
         masm.storeValue(MagicValue(JS_IS_CONSTRUCTING), Address(BaselineStackReg, sizeof(Value)));
     }
 
+#ifndef JS_CODEGEN_MIPS64
     masm.checkStackAlignment();
+#endif
 
     // Native functions have the signature:
     //
