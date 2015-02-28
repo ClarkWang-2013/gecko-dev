@@ -945,18 +945,9 @@ public:
         MOZ_ASSERT(src != dest);
 
         JSValueTag tag = (JSValueTag)JSVAL_TYPE_TO_TAG(type);
-#ifdef DEBUG
-        if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
-            Label upper32BitsZeroed;
-            movePtr(ImmWord(UINT32_MAX), dest);
-            branchPtr(Assembler::BelowOrEqual, src, dest, &upper32BitsZeroed);
-            breakpoint();
-            bind(&upper32BitsZeroed);
-        }
-#endif
         ma_li(dest, Imm32(tag));
         ma_dsll(dest, dest, Imm32(JSVAL_TAG_SHIFT));
-        ma_or(dest, src);
+        ma_dins(dest, src, Imm32(0), Imm32(JSVAL_TAG_SHIFT));
     }
 
     Address ToPayload(Address value) {
