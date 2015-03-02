@@ -371,6 +371,9 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         void *ptr = (void *)Assembler::ExtractLoad64Value(inst, &inst[1], &inst[3], &inst[5]);
         uintptr_t word = uintptr_t(ptr);
 
+        if (word >> JSVAL_TAG_SHIFT)
+            continue; // This is a Value.
+
         if (!(word & 0x1))
             continue;
 
