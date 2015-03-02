@@ -2056,7 +2056,7 @@ MacroAssemblerMIPS64Compat::loadPtr(const Address &address, Register dest)
 void
 MacroAssemblerMIPS64Compat::loadPtr(const BaseIndex &src, Register dest)
 {
-    load32(src, dest);
+    ma_load(dest, src, SizeDouble);
 }
 
 void
