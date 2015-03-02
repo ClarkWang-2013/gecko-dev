@@ -517,7 +517,7 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
 
     static size_t ToggledCallSize(uint8_t *code) {
         // Four instructions used in: MacroAssemblerMIPS64Compat::toggledCall
-        return 4 * sizeof(uint32_t);
+        return 8 * sizeof(uint32_t);
     }
 
     CodeOffsetLabel pushWithPatch(ImmWord imm) {
