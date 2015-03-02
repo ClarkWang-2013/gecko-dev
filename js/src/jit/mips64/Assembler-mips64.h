@@ -829,7 +829,7 @@ class Assembler : public AssemblerShared
     // before to recover the pointer, and not after.
     void writeDataRelocation(ImmGCPtr ptr) {
         if (ptr.value)
-            dataRelocations_.writeUnsigned(nextOffset().getOffset());
+            dataRelocations_.writeUnsigned(currentOffset());
     }
     void writePrebarrierOffset(CodeOffsetLabel label) {
         preBarriers_.writeUnsigned(label.offset());
