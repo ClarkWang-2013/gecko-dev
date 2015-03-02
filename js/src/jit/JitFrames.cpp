@@ -1241,7 +1241,7 @@ uint8_t *
 alignDoubleSpillWithOffset(uint8_t *pointer, int32_t offset)
 {
     uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-    address = (address - offset) & ~(ABIStackAlignment - 1);
+    address = (address - offset) & ~((uintptr_t)ABIStackAlignment - 1);
     return reinterpret_cast<uint8_t *>(address);
 }
 
