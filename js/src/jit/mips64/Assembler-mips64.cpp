@@ -303,14 +303,26 @@ TraceOneDataRelocation(JSTracer *trc, Instruction *inst0)
     void *ptr = (void *)Assembler::ExtractLoad64Value(inst0, inst1, inst3, inst5);
     void *prior = ptr;
 
-    // The low bit shouldn't be set. If it is, we probably got a dummy
-    // pointer inserted by CodeGenerator::visitNurseryObject, but we
-    // shouldn't be able to trigger GC before those are patched to their
-    // real values.
-    MOZ_ASSERT(!(uintptr_t(ptr) & 0x1));
+    // All pointers on MIPS64 will have the top bits cleared. If those bits
+    // are not cleared, this must be a Value.
+    uintptr_t word = reinterpret_cast<uintptr_t>(ptr);
+    if (word >> JSVAL_TAG_SHIFT) {
+        jsval_layout layout;
+        layout.asBits = word;
+        Value v = IMPL_TO_JSVAL(layout);
+        gc::MarkValueUnbarriered(trc, &v, "ion-masm-value");
+        ptr = (void *)JSVAL_TO_IMPL(v).asBits;
+    } else {
+        // The low bit shouldn't be set. If it is, we probably got a dummy
+        // pointer inserted by CodeGenerator::visitNurseryObject, but we
+        // shouldn't be able to trigger GC before those are patched to their
+        // real values.
+        MOZ_ASSERT(!(uintptr_t(ptr) & 0x1));
 
-    // No barrier needed since these are constants.
-    gc::MarkGCThingUnbarriered(trc, reinterpret_cast<void **>(&ptr), "ion-masm-ptr");
+        // No barrier needed since these are constants.
+        gc::MarkGCThingUnbarriered(trc, reinterpret_cast<void **>(&ptr), "ion-masm-ptr");
+    }
+
     if (ptr != prior) {
         Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, uint64_t(ptr));
         AutoFlushICache::flush(uintptr_t(inst1), 48);
