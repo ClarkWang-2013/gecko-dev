@@ -466,6 +466,8 @@ SimInstruction::instructionType() const
       case op_swl:
       case op_swr:
       case op_sd:
+      case op_sdl:
+      case op_sdr:
       case op_lwc1:
       case op_ldc1:
       case op_swc1:
