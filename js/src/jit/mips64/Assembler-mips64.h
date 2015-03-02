@@ -197,7 +197,7 @@ static const uint32_t SimdMemoryAlignment = 16;
 
 static const uint32_t AsmJSStackAlignment = SimdMemoryAlignment;
 
-static const Scale ScalePointer = TimesFour;
+static const Scale ScalePointer = TimesEight;
 
 // MIPS instruction types
 //                +---------------------------------------------------------------+
