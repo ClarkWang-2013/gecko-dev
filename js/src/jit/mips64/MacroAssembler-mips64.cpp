@@ -3098,8 +3098,8 @@ void
 MacroAssemblerMIPS64Compat::moveValue(const Value &val, Register dest)
 {
     jsval_layout jv = JSVAL_TO_IMPL(val);
-    movWithPatch(ImmWord(jv.asBits), dest);
     writeDataRelocation(val);
+    movWithPatch(ImmWord(jv.asBits), dest);
 }
 
 void
@@ -3244,8 +3244,8 @@ MacroAssemblerMIPS64Compat::storeValue(const Value &val, Address dest)
 {
     jsval_layout jv = JSVAL_TO_IMPL(val);
     if (val.isMarkable()) {
-        movWithPatch(ImmWord(jv.asBits), ScratchRegister);
         writeDataRelocation(val);
+        movWithPatch(ImmWord(jv.asBits), ScratchRegister);
     } else {
         ma_li(ScratchRegister, ImmWord(jv.asBits));
     }

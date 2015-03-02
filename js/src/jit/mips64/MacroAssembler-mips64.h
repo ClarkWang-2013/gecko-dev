@@ -974,8 +974,8 @@ public:
     void pushValue(const Value &val) {
         jsval_layout jv = JSVAL_TO_IMPL(val);
         if (val.isMarkable()) {
-            movWithPatch(ImmWord(jv.asBits), ScratchRegister);
             writeDataRelocation(val);
+            movWithPatch(ImmWord(jv.asBits), ScratchRegister);
             push(ScratchRegister);
         } else {
             push(ImmWord(jv.asBits));
