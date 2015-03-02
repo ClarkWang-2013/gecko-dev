@@ -158,7 +158,7 @@ jit::PatchJump(CodeLocationJump &jump_, CodeLocationLabel label)
 
     Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, (uint64_t)label.raw());
 
-    AutoFlushICache::flush(uintptr_t(inst1), 48);
+    AutoFlushICache::flush(uintptr_t(inst0), 24);
 }
 
 // For more infromation about backedges look at comment in
@@ -325,7 +325,7 @@ TraceOneDataRelocation(JSTracer *trc, Instruction *inst0)
 
     if (ptr != prior) {
         Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, uint64_t(ptr));
-        AutoFlushICache::flush(uintptr_t(inst1), 48);
+        AutoFlushICache::flush(uintptr_t(inst0), 24);
     }
 }
 
@@ -381,7 +381,7 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         JSObject *obj = nurseryObjects[index];
 
         Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], uint64_t(obj));
-        AutoFlushICache::flush(uintptr_t(inst), 8);
+        AutoFlushICache::flush(uintptr_t(inst), 24);
 
         // Either all objects are still in the nursery, or all objects are
         // tenured.
@@ -1726,7 +1726,7 @@ Assembler::PatchDataWithValueCheck(CodeLocationLabel label, PatchedImmPtr newVal
     // Replace with new value
     Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], uint64_t(newValue.value));
 
-    AutoFlushICache::flush(uintptr_t(inst), 48);
+    AutoFlushICache::flush(uintptr_t(inst), 24);
 }
 
 void
