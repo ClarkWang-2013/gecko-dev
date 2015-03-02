@@ -1840,20 +1840,25 @@ Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled)
     Instruction *inst = (Instruction *)inst_.raw();
     InstImm *i0 = (InstImm *) inst;
     InstImm *i1 = (InstImm *) i0->next();
-    Instruction *i2 = (Instruction *) i1->next();
+    InstImm *i3 = (InstImm *) i1->next()->next();
+    InstImm *i5 = (InstImm *) i3->next()->next();
+    Instruction *i6 = (Instruction *) i5->next();
 
     MOZ_ASSERT(i0->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
     MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
+    MOZ_ASSERT(i3->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
+    MOZ_ASSERT(i5->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
 
     if (enabled) {
+        MOZ_ASSERT(i6->extractOpcode() != ((uint32_t)op_lui >> OpcodeShift));
         InstReg jalr = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
-        *i2 = jalr;
+        *i6 = jalr;
     } else {
         InstNOP nop;
-        *i2 = nop;
+        *i6 = nop;
     }
 
-    AutoFlushICache::flush(uintptr_t(i2), 4);
+    AutoFlushICache::flush(uintptr_t(i6), 4);
 }
 
 void Assembler::UpdateBoundsCheck(uint64_t heapSize, Instruction *inst)
