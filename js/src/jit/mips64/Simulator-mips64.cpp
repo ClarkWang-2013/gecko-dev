@@ -2477,8 +2477,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             // No action taken on decode.
             break;
           case ff_div:
+          case ff_ddiv:
           case ff_divu:
-            // div and divu never raise exceptions.
+          case ff_ddivu:
+            // div, ddiv, divu and ddivu never raise exceptions.
             break;
           default:
             MOZ_CRASH();
