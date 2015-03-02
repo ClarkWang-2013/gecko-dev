@@ -1078,12 +1078,16 @@ MacroAssemblerMIPS64::ma_bal(Label *label, DelaySlotFill delaySlotFill)
     uint32_t nextInChain = label->used() ? label->offset() : LabelBase::INVALID_OFFSET;
 
     // Make the whole branch continous in the buffer.
-    m_buffer.ensureSpace(4 * sizeof(uint32_t));
+    m_buffer.ensureSpace(8 * sizeof(uint32_t));
 
     BufferOffset bo = writeInst(getBranchCode(BranchIsCall).encode());
     writeInst(nextInChain);
     label->use(bo.getOffset());
     // Leave space for long jump.
+    as_nop();
+    as_nop();
+    as_nop();
+    as_nop();
     as_nop();
     if (delaySlotFill == FillDelaySlot)
         as_nop();
@@ -1148,12 +1152,16 @@ MacroAssemblerMIPS64::branchWithCode(InstImm code, Label *label, JumpKind jumpKi
     bool conditional = code.encode() != inst_beq.encode();
 
     // Make the whole branch continous in the buffer.
-    m_buffer.ensureSpace((conditional ? 5 : 4) * sizeof(uint32_t));
+    m_buffer.ensureSpace((conditional ? 9 : 8) * sizeof(uint32_t));
 
     BufferOffset bo = writeInst(code.encode());
     writeInst(nextInChain);
     label->use(bo.getOffset());
     // Leave space for potential long jump.
+    as_nop();
+    as_nop();
+    as_nop();
+    as_nop();
     as_nop();
     as_nop();
     if (conditional)
