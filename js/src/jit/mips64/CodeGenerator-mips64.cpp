@@ -2110,7 +2110,7 @@ CodeGeneratorMIPS64::visitAsmJSLoadFuncPtr(LAsmJSLoadFuncPtr *ins)
     unsigned addr = mir->globalDataOffset() - AsmJSGlobalRegBias;
 
     BaseIndex source(GlobalReg, index, TimesFour, addr);
-    masm.load32(source, out);
+    masm.loadPtr(source, out);
 }
 
 void
