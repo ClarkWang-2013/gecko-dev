@@ -3318,7 +3318,7 @@ Simulator::decodeTypeImmediate(SimInstruction *instr)
         alu_out = rs ^ oe_imm16;
         break;
       case op_lui:
-        alu_out = (oe_imm16 << 16);
+        alu_out = (se_imm16 << 16);
         break;
         // ------------- Memory instructions.
       case op_lbu:
