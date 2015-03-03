@@ -159,19 +159,19 @@ ICBinaryArith_Int32::Compiler::generateStubCode(MacroAssembler &masm)
         masm.unboxInt32(R0, ExtractTemp0);
         masm.unboxInt32(R1, ExtractTemp1);
         // MIPS will only use 5 lowest bits in R1 as shift offset.
-        masm.ma_dsll(scratchReg, ExtractTemp0, ExtractTemp1);
+        masm.ma_sll(scratchReg, ExtractTemp0, ExtractTemp1);
         masm.tagValue(JSVAL_TYPE_INT32, scratchReg, R0);
         break;
       case JSOP_RSH:
         masm.unboxInt32(R0, ExtractTemp0);
         masm.unboxInt32(R1, ExtractTemp1);
-        masm.ma_dsra(scratchReg, ExtractTemp0, ExtractTemp1);
+        masm.ma_sra(scratchReg, ExtractTemp0, ExtractTemp1);
         masm.tagValue(JSVAL_TYPE_INT32, scratchReg, R0);
         break;
       case JSOP_URSH:
         masm.unboxInt32(R0, ExtractTemp0);
         masm.unboxInt32(R1, ExtractTemp1);
-        masm.ma_dsrl(scratchReg, ExtractTemp0, ExtractTemp1);
+        masm.ma_srl(scratchReg, ExtractTemp0, ExtractTemp1);
         if (allowDouble_) {
             Label toUint;
             masm.ma_b(scratchReg, Imm32(0), &toUint, Assembler::LessThan, ShortJump);
