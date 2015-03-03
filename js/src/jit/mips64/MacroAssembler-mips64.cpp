@@ -636,10 +636,10 @@ void
 MacroAssemblerMIPS64::ma_subu(Register rd, Register rs, Imm32 imm)
 {
     if (Imm16::IsInSignedRange(-imm.value)) {
-        as_daddiu(rd, rs, -imm.value);
+        as_addiu(rd, rs, -imm.value);
     } else {
         ma_li(ScratchRegister, imm);
-        as_dsubu(rd, rs, ScratchRegister);
+        as_subu(rd, rs, ScratchRegister);
     }
 }
 
