@@ -2286,12 +2286,12 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             if (rs_reg == 0) {
                 // Regular logical right shift of a word by a fixed number of
                 // bits instruction. RS field is always equal to 0.
-                alu_out = static_cast<uint32_t>(rt_u) >> sa;
+                alu_out = static_cast<int32_t>(static_cast<uint32_t>(rt_u) >> sa);
             } else {
                 // Logical right-rotate of a word by a fixed number of bits. This
                 // is special case of SRL instruction, added in MIPS32 Release 2.
                 // RS field is equal to 00001.
-                alu_out = (static_cast<uint32_t>(rt_u) >> sa) | (static_cast<uint32_t>(rt_u) << (32 - sa));
+                alu_out = static_cast<int32_t>((static_cast<uint32_t>(rt_u) >> sa) | (static_cast<uint32_t>(rt_u) << (32 - sa)));
             }
             break;
           case ff_dsrl:
@@ -2337,12 +2337,12 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             if (sa == 0) {
                 // Regular logical right-shift of a word by a variable number of
                 // bits instruction. SA field is always equal to 0.
-                alu_out = static_cast<uint32_t>(rt_u) >> rs;
+                alu_out = static_cast<int32_t>(static_cast<uint32_t>(rt_u) >> rs);
             } else {
                 // Logical right-rotate of a word by a variable number of bits.
                 // This is special case od SRLV instruction, added in MIPS32
                 // Release 2. SA field is equal to 00001.
-                alu_out = (static_cast<uint32_t>(rt_u) >> rs) | (static_cast<uint32_t>(rt_u) << (32 - rs));
+                alu_out = static_cast<int32_t>((static_cast<uint32_t>(rt_u) >> rs) | (static_cast<uint32_t>(rt_u) << (32 - rs)));
             }
             break;
           case ff_dsrlv:
