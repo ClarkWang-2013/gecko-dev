@@ -3711,7 +3711,7 @@ MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(void *handler)
     Label bailout;
 
     // Already clobbered a0, so use it...
-    ma_ld(a0, Address(StackPointer, offsetof(ResumeFromException, kind)));
+    ma_lw(a0, Address(StackPointer, offsetof(ResumeFromException, kind)));
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
     branch32(Assembler::Equal, a0, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
