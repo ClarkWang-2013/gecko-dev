@@ -367,6 +367,7 @@ MoveEmitterMIPS64::emit(const MoveOp &move)
         break;
       case MoveOp::INT32:
         emitInt32Move(from, to);
+        break;
       case MoveOp::GENERAL:
         emitMove(from, to);
         break;
