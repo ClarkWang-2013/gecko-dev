@@ -325,6 +325,12 @@ MacroAssemblerMIPS64::ma_liPatchable(Register dest, ImmWord imm)
 
 // Shifts
 void
+MacroAssemblerMIPS64::ma_sll(Register rd, Register rt, Imm32 shift)
+{
+    as_sll(rd, rt, shift.value % 32);
+}
+
+void
 MacroAssemblerMIPS64::ma_dsll(Register rd, Register rt, Imm32 shift)
 {
     if (31 < shift.value)
@@ -334,12 +340,24 @@ MacroAssemblerMIPS64::ma_dsll(Register rd, Register rt, Imm32 shift)
 }
 
 void
+MacroAssemblerMIPS64::ma_srl(Register rd, Register rt, Imm32 shift)
+{
+    as_srl(rd, rt, shift.value % 32);
+}
+
+void
 MacroAssemblerMIPS64::ma_dsrl(Register rd, Register rt, Imm32 shift)
 {
     if (31 < shift.value)
       as_dsrl32(rd, rt, shift.value % 64);
     else
       as_dsrl(rd, rt, shift.value % 32);
+}
+
+void
+MacroAssemblerMIPS64::ma_sra(Register rd, Register rt, Imm32 shift)
+{
+    as_sra(rd, rt, shift.value % 32);
 }
 
 void
@@ -372,15 +390,33 @@ MacroAssemblerMIPS64::ma_drol(Register rd, Register rt, Imm32 shift)
 }
 
 void
+MacroAssemblerMIPS64::ma_sll(Register rd, Register rt, Register shift)
+{
+    as_sllv(rd, rt, shift);
+}
+
+void
 MacroAssemblerMIPS64::ma_dsll(Register rd, Register rt, Register shift)
 {
     as_dsllv(rd, rt, shift);
 }
 
 void
+MacroAssemblerMIPS64::ma_srl(Register rd, Register rt, Register shift)
+{
+    as_srlv(rd, rt, shift);
+}
+
+void
 MacroAssemblerMIPS64::ma_dsrl(Register rd, Register rt, Register shift)
 {
     as_dsrlv(rd, rt, shift);
+}
+
+void
+MacroAssemblerMIPS64::ma_sra(Register rd, Register rt, Register shift)
+{
+    as_srav(rd, rt, shift);
 }
 
 void

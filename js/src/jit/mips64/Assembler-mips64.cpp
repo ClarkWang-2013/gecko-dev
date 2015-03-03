@@ -831,6 +831,13 @@ Assembler::as_lui(Register rd, int32_t j)
 
 // Shift instructions
 BufferOffset
+Assembler::as_sll(Register rd, Register rt, uint16_t sa)
+{
+    MOZ_ASSERT(sa < 32);
+    return writeInst(InstReg(op_special, rs_zero, rt, rd, sa, ff_sll).encode());
+}
+
+BufferOffset
 Assembler::as_dsll(Register rd, Register rt, uint16_t sa)
 {
     MOZ_ASSERT(sa < 32);
@@ -845,9 +852,22 @@ Assembler::as_dsll32(Register rd, Register rt, uint16_t sa)
 }
 
 BufferOffset
+Assembler::as_sllv(Register rd, Register rt, Register rs)
+{
+    return writeInst(InstReg(op_special, rs, rt, rd, ff_sllv).encode());
+}
+
+BufferOffset
 Assembler::as_dsllv(Register rd, Register rt, Register rs)
 {
     return writeInst(InstReg(op_special, rs, rt, rd, ff_dsllv).encode());
+}
+
+BufferOffset
+Assembler::as_srl(Register rd, Register rt, uint16_t sa)
+{
+    MOZ_ASSERT(sa < 32);
+    return writeInst(InstReg(op_special, rs_zero, rt, rd, sa, ff_srl).encode());
 }
 
 BufferOffset
@@ -865,9 +885,22 @@ Assembler::as_dsrl32(Register rd, Register rt, uint16_t sa)
 }
 
 BufferOffset
+Assembler::as_srlv(Register rd, Register rt, Register rs)
+{
+    return writeInst(InstReg(op_special, rs, rt, rd, ff_srlv).encode());
+}
+
+BufferOffset
 Assembler::as_dsrlv(Register rd, Register rt, Register rs)
 {
     return writeInst(InstReg(op_special, rs, rt, rd, ff_dsrlv).encode());
+}
+
+BufferOffset
+Assembler::as_sra(Register rd, Register rt, uint16_t sa)
+{
+    MOZ_ASSERT(sa < 32);
+    return writeInst(InstReg(op_special, rs_zero, rt, rd, sa, ff_sra).encode());
 }
 
 BufferOffset
@@ -882,6 +915,12 @@ Assembler::as_dsra32(Register rd, Register rt, uint16_t sa)
 {
     MOZ_ASSERT(31 < sa && sa < 64);
     return writeInst(InstReg(op_special, rs_zero, rt, rd, sa - 32, ff_dsra32).encode());
+}
+
+BufferOffset
+Assembler::as_srav(Register rd, Register rt, Register rs)
+{
+    return writeInst(InstReg(op_special, rs, rt, rd, ff_srav).encode());
 }
 
 BufferOffset

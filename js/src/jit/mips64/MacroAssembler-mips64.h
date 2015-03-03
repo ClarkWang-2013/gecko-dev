@@ -111,14 +111,20 @@ class MacroAssemblerMIPS64 : public Assembler
     void ma_liPatchable(Register dest, ImmWord imm);
 
     // Shift operations
+    void ma_sll(Register rd, Register rt, Imm32 shift);
     void ma_dsll(Register rd, Register rt, Imm32 shift);
+    void ma_srl(Register rd, Register rt, Imm32 shift);
     void ma_dsrl(Register rd, Register rt, Imm32 shift);
+    void ma_sra(Register rd, Register rt, Imm32 shift);
     void ma_dsra(Register rd, Register rt, Imm32 shift);
     void ma_dror(Register rd, Register rt, Imm32 shift);
     void ma_drol(Register rd, Register rt, Imm32 shift);
 
+    void ma_sll(Register rd, Register rt, Register shift);
     void ma_dsll(Register rd, Register rt, Register shift);
+    void ma_srl(Register rd, Register rt, Register shift);
     void ma_dsrl(Register rd, Register rt, Register shift);
+    void ma_sra(Register rd, Register rt, Register shift);
     void ma_dsra(Register rd, Register rt, Register shift);
     void ma_dror(Register rd, Register rt, Register shift);
     void ma_drol(Register rd, Register rt, Register shift);

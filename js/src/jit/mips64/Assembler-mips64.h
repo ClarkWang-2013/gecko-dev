@@ -924,14 +924,20 @@ class Assembler : public AssemblerShared
 
     // Shift instructions
     // as_sll(zero, zero, x) instructions are reserved as nop
+    BufferOffset as_sll(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsll(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsll32(Register rd, Register rt, uint16_t sa);
+    BufferOffset as_sllv(Register rd, Register rt, Register rs);
     BufferOffset as_dsllv(Register rd, Register rt, Register rs);
+    BufferOffset as_srl(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsrl(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsrl32(Register rd, Register rt, uint16_t sa);
+    BufferOffset as_srlv(Register rd, Register rt, Register rs);
     BufferOffset as_dsrlv(Register rd, Register rt, Register rs);
+    BufferOffset as_sra(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsra(Register rd, Register rt, uint16_t sa);
     BufferOffset as_dsra32(Register rd, Register rt, uint16_t sa);
+    BufferOffset as_srav(Register rd, Register rt, Register rs);
     BufferOffset as_dsrav(Register rd, Register rt, Register rs);
     BufferOffset as_drotr(Register rd, Register rt, uint16_t sa);
     BufferOffset as_drotr32(Register rd, Register rt, uint16_t sa);
