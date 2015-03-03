@@ -1130,14 +1130,9 @@ class Assembler : public AssemblerShared
     static uint32_t PatchWrite_NearCallSize();
     static uint32_t NopSize() { return 4; }
 
-    static uint64_t ExtractLoad64Value(Instruction *inst0, Instruction *inst1,
-                                       Instruction *inst3, Instruction *inst5);
-    static void UpdateLoad64Value(Instruction *inst0, Instruction *inst1,
-                                  Instruction *inst3, Instruction *inst5, uint64_t value);
-    static void WriteLoad64Instructions(Instruction *inst0, Instruction *inst1,
-                                        Instruction *inst2, Instruction *inst3,
-                                        Instruction *inst4, Instruction *inst5,
-                                        Register reg, uint64_t value);
+    static uint64_t ExtractLoad64Value(Instruction *inst0);
+    static void UpdateLoad64Value(Instruction *inst0, uint64_t value);
+    static void WriteLoad64Instructions(Instruction *inst0, Register reg, uint64_t value);
 
     static void PatchWrite_NearCall(CodeLocationLabel start, CodeLocationLabel toCall);
     static void PatchDataWithValueCheck(CodeLocationLabel label, PatchedImmPtr newValue,

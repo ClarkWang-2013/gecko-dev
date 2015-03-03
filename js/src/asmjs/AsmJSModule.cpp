@@ -416,7 +416,7 @@ AsmJSModule::finish(ExclusiveContext *cx, TokenStream &tokenStream, MacroAssembl
         RelativeLink link(RelativeLink::InstructionImmediate);
         link.patchAtOffset = masm.longJump(i);
         InstImm *inst = (InstImm *)(code_ + masm.longJump(i));
-        link.targetOffset = Assembler::ExtractLoad64Value(inst, &inst[1], &inst[3], &inst[5]) - (uint64_t)code_;
+        link.targetOffset = Assembler::ExtractLoad64Value(inst) - (uint64_t)code_;
         if (!staticLinkData_.relativeLinks.append(link))
             return false;
     }
@@ -1736,7 +1736,7 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
         void *callee = (void *)Assembler::ExtractLuiOriValue(instr, instr->next());
 #elif defined(JS_CODEGEN_MIPS64)
         Instruction *instr = (Instruction *)(callerRetAddr - 4 * sizeof(uint32_t));
-        void *callee = (void *)Assembler::ExtractLoad64Value(instr, &instr[1], &instr[3], &instr[5]);
+        void *callee = (void *)Assembler::ExtractLoad64Value(instr);
 #elif defined(JS_CODEGEN_NONE)
         MOZ_CRASH();
         void *callee = nullptr;
@@ -1763,10 +1763,8 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
                                            ScratchRegister, (uint32_t)newCallee);
         instr[2] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
 #elif defined(JS_CODEGEN_MIPS64)
-        Assembler::WriteLoad64Instructions(instr, &instr[1], &instr[2],
-                                           &instr[3], &instr[4], &instr[5],
-                                           ScratchRegister, (uint64_t)newCallee);
-        instr[2] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
+        Assembler::WriteLoad64Instructions(instr, ScratchRegister, (uint64_t)newCallee);
+        instr[6] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
 #elif defined(JS_CODEGEN_NONE)
         MOZ_CRASH();
 #else
@@ -1840,9 +1838,7 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
 #elif defined(JS_CODEGEN_MIPS64)
         Instruction *instr = (Instruction *)jump;
         if (enabled) {
-            Assembler::WriteLoad64Instructions(instr, &instr[1], &instr[2],
-                                               &instr[3], &instr[4], &instr[5],
-                                               ScratchRegister, (uint64_t)profilingEpilogue);
+            Assembler::WriteLoad64Instructions(instr, ScratchRegister, (uint64_t)profilingEpilogue);
             instr[6] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr);
         } else {
             instr[0].makeNop();

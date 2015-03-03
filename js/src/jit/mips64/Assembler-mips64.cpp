@@ -151,14 +151,11 @@ InstImm::extractImm16(BOffImm16 *dest)
 void
 jit::PatchJump(CodeLocationJump &jump_, CodeLocationLabel label)
 {
-    Instruction *inst0 = (Instruction *)jump_.raw();
-    Instruction *inst1 = inst0->next();
-    Instruction *inst3 = inst1->next()->next();
-    Instruction *inst5 = inst3->next()->next();
+    Instruction *inst = (Instruction *)jump_.raw();
 
-    Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, (uint64_t)label.raw());
+    Assembler::UpdateLoad64Value(inst, (uint64_t)label.raw());
 
-    AutoFlushICache::flush(uintptr_t(inst0), 24);
+    AutoFlushICache::flush(uintptr_t(inst), 24);
 }
 
 // For more infromation about backedges look at comment in
@@ -177,19 +174,13 @@ jit::PatchBackedge(CodeLocationJump &jump, CodeLocationLabel label,
         branch->setBOffImm16(BOffImm16(targetAddr - sourceAddr));
     } else {
         if (target == JitRuntime::BackedgeLoopHeader) {
-            Instruction *inst0 = &branch[1];
-            Instruction *inst1 = inst0->next();
-            Instruction *inst3 = inst1->next()->next();
-            Instruction *inst5 = inst3->next()->next();
-            Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, targetAddr);
+            Instruction *inst = &branch[1];
+            Assembler::UpdateLoad64Value(inst, targetAddr);
             // Jump to first ori. The lui will be executed in delay slot.
             branch->setBOffImm16(BOffImm16(2 * sizeof(uint32_t)));
         } else {
-            Instruction *inst0 = &branch[4];
-            Instruction *inst1 = inst0->next();
-            Instruction *inst3 = inst1->next()->next();
-            Instruction *inst5 = inst3->next()->next();
-            Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, targetAddr);
+            Instruction *inst = &branch[4];
+            Assembler::UpdateLoad64Value(inst, targetAddr);
             // Jump to first ori of interrupt loop.
             branch->setBOffImm16(BOffImm16(8 * sizeof(uint32_t)));
         }
@@ -211,13 +202,10 @@ Assembler::executableCopy(uint8_t *buffer)
 
     // Patch all long jumps during code copy.
     for (size_t i = 0; i < longJumps_.length(); i++) {
-        Instruction *inst0 = (Instruction *) ((uintptr_t)buffer + longJumps_[i]);
-        Instruction *inst1 = inst0->next();
-        Instruction *inst3 = inst1->next()->next();
-        Instruction *inst5 = inst3->next()->next();
+        Instruction *inst = (Instruction *) ((uintptr_t)buffer + longJumps_[i]);
 
-        uint64_t value = ExtractLoad64Value(inst0, inst1, inst3, inst5);
-        UpdateLoad64Value(inst0, inst1, inst3, inst5, (uint64_t)buffer + value);
+        uint64_t value = ExtractLoad64Value(inst);
+        UpdateLoad64Value(inst, (uint64_t)buffer + value);
     }
 
     AutoFlushICache::setRange(uintptr_t(buffer), m_buffer.size());
@@ -267,20 +255,14 @@ class RelocationIterator
 uintptr_t
 Assembler::GetPointer(uint8_t *instPtr)
 {
-    Instruction *inst0 = (Instruction*)instPtr;
-    Instruction *inst1 = inst0->next();
-    Instruction *inst3 = inst1->next()->next();
-    Instruction *inst5 = inst3->next()->next();
-    return Assembler::ExtractLoad64Value(inst0, inst1, inst3, inst5);
+    Instruction *inst = (Instruction*)instPtr;
+    return Assembler::ExtractLoad64Value(inst);
 }
 
 static JitCode *
 CodeFromJump(Instruction *jump)
 {
-    Instruction *inst1 = jump->next();
-    Instruction *inst3 = inst1->next()->next();
-    Instruction *inst5 = inst3->next()->next();
-    uint8_t *target = (uint8_t *)Assembler::ExtractLoad64Value(jump, inst1, inst3, inst5);
+    uint8_t *target = (uint8_t *)Assembler::ExtractLoad64Value(jump);
     return JitCode::FromExecutable(target);
 }
 
@@ -295,12 +277,9 @@ Assembler::TraceJumpRelocations(JSTracer *trc, JitCode *code, CompactBufferReade
 }
 
 static void
-TraceOneDataRelocation(JSTracer *trc, Instruction *inst0)
+TraceOneDataRelocation(JSTracer *trc, Instruction *inst)
 {
-    Instruction *inst1 = inst0->next();
-    Instruction *inst3 = inst1->next()->next();
-    Instruction *inst5 = inst3->next()->next();
-    void *ptr = (void *)Assembler::ExtractLoad64Value(inst0, inst1, inst3, inst5);
+    void *ptr = (void *)Assembler::ExtractLoad64Value(inst);
     void *prior = ptr;
 
     // All pointers on MIPS64 will have the top bits cleared. If those bits
@@ -324,8 +303,8 @@ TraceOneDataRelocation(JSTracer *trc, Instruction *inst0)
     }
 
     if (ptr != prior) {
-        Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, uint64_t(ptr));
-        AutoFlushICache::flush(uintptr_t(inst0), 24);
+        Assembler::UpdateLoad64Value(inst, uint64_t(ptr));
+        AutoFlushICache::flush(uintptr_t(inst), 24);
     }
 }
 
@@ -368,7 +347,7 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         size_t offset = reader.readUnsigned();
         Instruction *inst = (Instruction*)(buffer + offset);
 
-        void *ptr = (void *)Assembler::ExtractLoad64Value(inst, &inst[1], &inst[3], &inst[5]);
+        void *ptr = (void *)Assembler::ExtractLoad64Value(inst);
         uintptr_t word = uintptr_t(ptr);
 
         if (word >> JSVAL_TAG_SHIFT)
@@ -380,7 +359,7 @@ Assembler::FixupNurseryObjects(JSContext *cx, JitCode *code, CompactBufferReader
         uint32_t index = word >> 1;
         JSObject *obj = nurseryObjects[index];
 
-        Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], uint64_t(obj));
+        Assembler::UpdateLoad64Value(inst, uint64_t(obj));
         AutoFlushICache::flush(uintptr_t(inst), 24);
 
         // Either all objects are still in the nursery, or all objects are
@@ -444,11 +423,8 @@ Assembler::processCodeLabels(uint8_t *rawCode)
 
 int64_t
 Assembler::ExtractCodeLabelOffset(uint8_t *code) {
-    Instruction *inst0 = (Instruction *)code;
-    Instruction *inst1 = inst0->next();
-    Instruction *inst3 = inst1->next()->next();
-    Instruction *inst5 = inst3->next()->next();
-    return Assembler::ExtractLoad64Value(inst0, inst1, inst3, inst5);
+    Instruction *inst = (Instruction *)code;
+    return Assembler::ExtractLoad64Value(inst);
 }
 
 void
@@ -457,12 +433,9 @@ Assembler::Bind(uint8_t *rawCode, AbsoluteLabel *label, const void *address)
     if (label->used()) {
         int64_t src = label->offset();
         do {
-            Instruction *inst0 = (Instruction *) (rawCode + src);
-            Instruction *inst1 = inst0->next();
-            Instruction *inst3 = inst1->next()->next();
-            Instruction *inst5 = inst3->next()->next();
-            uint64_t next = Assembler::ExtractLoad64Value(inst0, inst1, inst3, inst5);
-            Assembler::UpdateLoad64Value(inst0, inst1, inst3, inst5, (uint64_t)address);
+            Instruction *inst = (Instruction *) (rawCode + src);
+            uint64_t next = Assembler::ExtractLoad64Value(inst);
+            Assembler::UpdateLoad64Value(inst, (uint64_t)address);
             src = next;
         } while (src != AbsoluteLabel::INVALID_OFFSET);
     }
@@ -1530,7 +1503,7 @@ Assembler::bind(InstImm *inst, uint64_t branch, uint64_t target)
     // address after the reserved block.
     if (inst[0].encode() == inst_bgezal.encode()) {
         addLongJump(BufferOffset(branch));
-        WriteLoad64Instructions(inst, &inst[1], &inst[2], &inst[3], &inst[4], &inst[5], ScratchRegister, target);
+        WriteLoad64Instructions(inst, ScratchRegister, target);
         inst[6] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr).encode();
         // There is 1 nop after this.
         return;
@@ -1554,7 +1527,7 @@ Assembler::bind(InstImm *inst, uint64_t branch, uint64_t target)
     if (inst[0].encode() == inst_beq.encode()) {
         // Handle long unconditional jump.
         addLongJump(BufferOffset(branch));
-        WriteLoad64Instructions(inst, &inst[1], &inst[2], &inst[3], &inst[4], &inst[5], ScratchRegister, target);
+        WriteLoad64Instructions(inst, ScratchRegister, target);
         inst[6] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr).encode();
         // There is 1 nop after this.
     } else {
@@ -1562,7 +1535,7 @@ Assembler::bind(InstImm *inst, uint64_t branch, uint64_t target)
         inst[0] = invertBranch(inst[0], BOffImm16(5 * sizeof(uint32_t)));
         // No need for a "nop" here because we can clobber scratch.
         addLongJump(BufferOffset(branch + sizeof(uint32_t)));
-        WriteLoad64Instructions(&inst[1], &inst[2], &inst[3], &inst[4], &inst[5], &inst[6], ScratchRegister, target);
+        WriteLoad64Instructions(&inst[1], ScratchRegister, target);
         inst[7] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr).encode();
         // There is 1 nop after this.
     }
@@ -1586,7 +1559,7 @@ Assembler::bind(RepatchLabel *label)
             MOZ_ASSERT(BOffImm16::IsInRange(offset));
             inst1->setBOffImm16(BOffImm16(offset));
         } else {
-            UpdateLoad64Value(inst1, &inst1[1], &inst1[3], &inst1[5], dest.getOffset());
+            UpdateLoad64Value(inst1, dest.getOffset());
         }
 
     }
@@ -1655,7 +1628,7 @@ Assembler::PatchWrite_NearCall(CodeLocationLabel start, CodeLocationLabel toCall
     // - Jump has to be the same size because of PatchWrite_NearCallSize.
     // - Return address has to be at the end of replaced block.
     // Short jump wouldn't be more efficient.
-    WriteLoad64Instructions(inst, &inst[1], &inst[2], &inst[3], &inst[4], &inst[5], ScratchRegister, (uint64_t)dest);
+    WriteLoad64Instructions(inst, ScratchRegister, (uint64_t)dest);
     inst[6] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
     inst[7] = InstNOP();
 
@@ -1664,13 +1637,12 @@ Assembler::PatchWrite_NearCall(CodeLocationLabel start, CodeLocationLabel toCall
 }
 
 uint64_t
-Assembler::ExtractLoad64Value(Instruction *inst0, Instruction *inst1,
-                              Instruction *inst3, Instruction *inst5)
+Assembler::ExtractLoad64Value(Instruction *inst0)
 {
     InstImm *i0 = (InstImm *) inst0;
-    InstImm *i1 = (InstImm *) inst1;
-    InstImm *i3 = (InstImm *) inst3;
-    InstImm *i5 = (InstImm *) inst5;
+    InstImm *i1 = (InstImm *) &inst0[1];
+    InstImm *i3 = (InstImm *) &inst0[3];
+    InstImm *i5 = (InstImm *) &inst0[5];
 
     MOZ_ASSERT(i0->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
     MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
@@ -1685,9 +1657,12 @@ Assembler::ExtractLoad64Value(Instruction *inst0, Instruction *inst1,
 }
 
 void
-Assembler::UpdateLoad64Value(Instruction *inst0, Instruction *inst1,
-                             Instruction *inst3, Instruction *inst5, uint64_t value)
+Assembler::UpdateLoad64Value(Instruction *inst0, uint64_t value)
 {
+    Instruction *inst1 = &inst0[1];
+    Instruction *inst3 = &inst0[3];
+    Instruction *inst5 = &inst0[5];
+
     MOZ_ASSERT(inst0->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
     MOZ_ASSERT(inst1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
     MOZ_ASSERT(inst3->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
@@ -1700,11 +1675,14 @@ Assembler::UpdateLoad64Value(Instruction *inst0, Instruction *inst1,
 }
 
 void
-Assembler::WriteLoad64Instructions(Instruction *inst0, Instruction *inst1,
-                                   Instruction *inst2, Instruction *inst3,
-                                   Instruction *inst4, Instruction *inst5,
-                                   Register reg, uint64_t value)
+Assembler::WriteLoad64Instructions(Instruction *inst0, Register reg, uint64_t value)
 {
+    Instruction *inst1 = &inst0[1];
+    Instruction *inst2 = &inst0[2];
+    Instruction *inst3 = &inst0[3];
+    Instruction *inst4 = &inst0[4];
+    Instruction *inst5 = &inst0[5];
+
     *inst0 = InstImm(op_lui, zero, reg, Imm16::Upper(Imm32(value >> 32)));
     *inst1 = InstImm(op_ori, reg, reg, Imm16::Lower(Imm32(value >> 32)));
     *inst2 = InstReg(op_special, rs_zero, reg, reg, 16, ff_dsll);
@@ -1720,11 +1698,11 @@ Assembler::PatchDataWithValueCheck(CodeLocationLabel label, PatchedImmPtr newVal
     Instruction *inst = (Instruction *) label.raw();
 
     // Extract old Value
-    DebugOnly<uint64_t> value = Assembler::ExtractLoad64Value(&inst[0], &inst[1], &inst[3], &inst[5]);
+    DebugOnly<uint64_t> value = Assembler::ExtractLoad64Value(inst);
     MOZ_ASSERT(value == uint64_t(expectedValue.value));
 
     // Replace with new value
-    Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], uint64_t(newValue.value));
+    Assembler::UpdateLoad64Value(inst, uint64_t(newValue.value));
 
     AutoFlushICache::flush(uintptr_t(inst), 24);
 }
@@ -1755,7 +1733,7 @@ void
 Assembler::PatchInstructionImmediate(uint8_t *code, PatchedImmPtr imm)
 {
     InstImm *inst = (InstImm *)code;
-    Assembler::UpdateLoad64Value(inst, &inst[1], &inst[3], &inst[5], (uint64_t)imm.value);
+    Assembler::UpdateLoad64Value(inst, (uint64_t)imm.value);
 }
 
 uint8_t *
@@ -1878,11 +1856,6 @@ Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled)
 
 void Assembler::UpdateBoundsCheck(uint64_t heapSize, Instruction *inst)
 {
-    InstImm *i0 = (InstImm *) inst;
-    InstImm *i1 = (InstImm *) i0->next();
-    InstImm *i3 = (InstImm *) i1->next()->next();
-    InstImm *i5 = (InstImm *) i3->next()->next();
-
     // Replace with new value
-    Assembler::UpdateLoad64Value(i0, i1, i3, i5, heapSize);
+    Assembler::UpdateLoad64Value(inst, heapSize);
 }
