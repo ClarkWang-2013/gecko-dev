@@ -2927,7 +2927,7 @@ AutoFlushICache::flush(uintptr_t start, size_t len)
     if (!afc) {
         JitSpewCont(JitSpew_CacheFlush, "#");
         ExecutableAllocator::cacheFlush((void*)start, len);
-        MOZ_ASSERT(len <= 16);
+        MOZ_ASSERT(len <= 32);
         return;
     }
 
