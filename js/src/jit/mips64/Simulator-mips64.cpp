@@ -753,14 +753,13 @@ MipsDebugger::printAllRegsIncludingFPU()
 
     printf("\n\n");
     // f0, f1, f2, ... f31.
-    for (uint32_t i = 0; i < FloatRegisters::TotalSingle; i++) {
+    for (uint32_t i = 0; i < FloatRegisters::TotalPhys; i++) {
         printf("%3s: 0x%016lx\tflt: %-8.4g\tdbl: %-16.4g\n",
                FloatRegisters::GetName(i),
                getFPURegisterValueLong(i),
                getFPURegisterValueFloat(i),
                getFPURegisterValueDouble(i));
     }
-
 }
 
 static char *

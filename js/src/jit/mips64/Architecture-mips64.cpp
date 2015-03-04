@@ -76,22 +76,53 @@ FloatRegisters::FromName(const char *name)
     return Invalid;
 }
 
+FloatRegister
+FloatRegister::singleOverlay() const
+{
+    MOZ_ASSERT(!isInvalid());
+    if (kind_ == Codes::Double)
+        return FloatRegister(Code(code_), Codes::Single);
+    return *this;
+}
+
+FloatRegister
+FloatRegister::doubleOverlay() const
+{
+    MOZ_ASSERT(!isInvalid());
+    if (kind_ != Codes::Double)
+        return FloatRegister(Code(code_), Codes::Double);
+    return *this;
+}
+
 FloatRegisterSet
 FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
 {
-    return s;
+    FloatRegisterSet mod;
+    for (TypedRegisterIterator<FloatRegister> iter(s); iter.more(); iter++) {
+        if ((*iter).isSingle()) {
+            // Even for single size registers save complete double register.
+            mod.addUnchecked((*iter).doubleOverlay());
+        } else {
+            mod.addUnchecked(*iter);
+        }
+    }
+    return mod;
 }
 
 uint32_t
 FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
 {
     FloatRegisterSet ss = s.reduceSetForPush();
-    return ss.size() * sizeof(double);
+    uint64_t bits = ss.bits();
+    // We are only pushing double registers.
+    MOZ_ASSERT((bits & 0xffffffff) == 0);
+    uint32_t ret =  mozilla::CountPopulation32(bits >> 32) * sizeof(double);
+    return ret;
 }
 uint32_t
 FloatRegister::getRegisterDumpOffsetInBytes()
 {
-    return code() * sizeof(double);
+    return id() * sizeof(double);
 }
 
 } // namespace ion

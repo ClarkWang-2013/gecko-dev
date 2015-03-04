@@ -262,7 +262,21 @@ class FloatRegisters
         f31,
         invalid_freg
     };
+
+    enum ContentType {
+        Single,
+        Double,
+        NumTypes
+    };
+
     typedef FPRegisterID Code;
+    typedef FPRegisterID Encoding;
+
+    // Content spilled during bailouts.
+    union RegisterContent {
+        float s;
+        double d;
+    };
 
     static const char *GetName(Code code) {
         static const char * const Names[] = { "f0", "f1", "f2", "f3",  "f4", "f5",  "f6", "f7",
@@ -281,38 +295,52 @@ class FloatRegisters
 
     static const Code Invalid = invalid_freg;
 
-    static const uint32_t Total = 32;
-    static const uint32_t TotalDouble = Total;
-    static const uint32_t TotalSingle = Total;
+    static const uint32_t Total = 32 * NumTypes;
     static const uint32_t Allocatable = 30;
     // When saving all registers we only need to do is save double registers.
     static const uint32_t TotalPhys = 32;
-    static const uint32_t AllMask = (1ULL << Total) - 1;
-    static const uint32_t AllDoubleMask = AllMask;
 
-    static const uint32_t NonVolatileMask =
-        (1 << FloatRegisters::f20) |
+    typedef uint64_t SetType;
+    static_assert(sizeof(SetType) * 8 >= Total,
+                  "SetType should be large enough to enumerate all registers.");
+
+    // Magic values which are used to duplicate a mask of physical register for
+    // a specific type of register. A multiplication is used to copy and shift
+    // the bits of the physical register mask.
+    static const SetType SpreadSingle = SetType(1) << (uint32_t(Single) * TotalPhys);
+    static const SetType SpreadDouble = SetType(1) << (uint32_t(Double) * TotalPhys);
+    static const SetType SpreadScalar = SpreadSingle | SpreadDouble;
+    static const SetType SpreadVector = 0;
+    static const SetType Spread = SpreadScalar | SpreadVector;
+
+    static const SetType AllPhysMask = ((SetType(1) << TotalPhys) - 1);
+    static const SetType AllMask = AllPhysMask * Spread;
+    static const SetType AllDoubleMask = AllPhysMask * SpreadDouble;
+
+    static const SetType NonVolatileMask =
+      ( (1 << FloatRegisters::f20) |
         (1 << FloatRegisters::f22) |
         (1 << FloatRegisters::f24) |
         (1 << FloatRegisters::f26) |
         (1 << FloatRegisters::f28) |
-        (1 << FloatRegisters::f30);
+        (1 << FloatRegisters::f30)
+      ) * SpreadScalar
+      | AllPhysMask * SpreadVector;
 
-    static const uint32_t VolatileMask = AllMask & ~NonVolatileMask;
+    static const SetType VolatileMask = AllMask & ~NonVolatileMask;
 
-    static const uint32_t WrapperMask = VolatileMask;
+    static const SetType WrapperMask = VolatileMask;
 
-    static const uint32_t NonAllocatableMask =
-        // f21 and f23 are MIPS scratch float registers.
+    static const SetType NonAllocatableMask =
+      ( // f21 and f23 are MIPS scratch float registers.
         (1 << FloatRegisters::f21) |
-        (1 << FloatRegisters::f23);
+        (1 << FloatRegisters::f23)
+      ) * Spread;
 
     // Registers that can be allocated without being saved, generally.
-    static const uint32_t TempMask = VolatileMask & ~NonAllocatableMask;
+    static const SetType TempMask = VolatileMask & ~NonAllocatableMask;
 
-    static const uint32_t AllocatableMask = AllMask & ~NonAllocatableMask;
-
-    typedef uint32_t SetType;
+    static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 };
 
 template <typename T>
@@ -323,38 +351,60 @@ class FloatRegister
   public:
     typedef FloatRegisters Codes;
     typedef Codes::Code Code;
+    typedef Codes::Encoding Encoding;
+    typedef Codes::ContentType ContentType;
 
-    Code code_;
+    Code code_ : 6;
+  private:
+    ContentType kind_ : 3;
 
-    MOZ_CONSTEXPR FloatRegister(uint32_t code)
-      : code_ (Code(code))
+  public:
+    MOZ_CONSTEXPR FloatRegister(uint32_t code, ContentType kind = Codes::Double)
+      : code_ (Code(code)), kind_(kind)
     { }
     MOZ_CONSTEXPR FloatRegister()
-      : code_(Code(FloatRegisters::invalid_freg))
+      : code_(Code(FloatRegisters::invalid_freg)), kind_(Codes::Double)
     { }
 
     bool operator==(const FloatRegister &other) const {
         MOZ_ASSERT(!isInvalid());
         MOZ_ASSERT(!other.isInvalid());
-        return code_ == other.code_;
+        return kind_ == other.kind_ && code_ == other.code_;
     }
-    bool equiv(const FloatRegister &other) const { return true; }
-    size_t size() const { return sizeof(double); }
+    bool equiv(const FloatRegister &other) const { return other.kind_ == kind_; }
+    size_t size() const { return (kind_ == Codes::Double) ? sizeof(double) : sizeof (float); }
     bool isInvalid() const {
         return code_ == FloatRegisters::invalid_freg;
     }
 
+    bool isSingle() const { return kind_ == Codes::Single; }
+    bool isDouble() const { return kind_ == Codes::Double; }
+    bool isInt32x4() const { return false; }
+    bool isFloat32x4() const { return false; }
+
+    FloatRegister singleOverlay() const;
+    FloatRegister doubleOverlay() const;
+
+    FloatRegister asSingle() const { return singleOverlay(); }
+    FloatRegister asDouble() const { return doubleOverlay(); }
+    FloatRegister asInt32x4() const { MOZ_CRASH("NYI"); }
+    FloatRegister asFloat32x4() const { MOZ_CRASH("NYI"); }
+
     Code code() const {
         MOZ_ASSERT(!isInvalid());
-        return Code(code_);
+        return Code(code_ | (kind_ << 5));
+    }
+    Encoding encoding() const {
+        MOZ_ASSERT(!isInvalid());
+        return Code(code_  | (kind_ << 5));
     }
     uint32_t id() const {
         return code_;
     }
     static FloatRegister FromCode(uint32_t i) {
-        MOZ_ASSERT(i < FloatRegisters::Total);
-        FloatRegister r = { (FloatRegisters::Code)i };
-        return r;
+        uint32_t code = i & 0x1f;
+        uint32_t kind = i >> 5;
+        return FloatRegister(Code(code), ContentType(kind));
     }
 
     bool volatile_() const {
@@ -364,7 +414,7 @@ class FloatRegister
         return FloatRegisters::GetName(code_);
     }
     bool operator != (const FloatRegister &other) const {
-        return code_ != other.code_;
+        return kind_ != other.kind_ || code_ != other.code_;
     }
     bool aliases(const FloatRegister &other) {
         return code_ == other.code_;
@@ -385,7 +435,7 @@ class FloatRegister
     }
     typedef FloatRegisters::SetType SetType;
     static uint32_t SetSize(SetType x) {
-        static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
+        static_assert(sizeof(SetType) == 8, "SetType must be 64 bits");
         return mozilla::CountPopulation32(x);
     }
     static Code FromName(const char *name) {
@@ -395,10 +445,10 @@ class FloatRegister
     static uint32_t GetPushSizeInBytes(const TypedRegisterSet<FloatRegister> &s);
     uint32_t getRegisterDumpOffsetInBytes();
     static uint32_t FirstBit(SetType x) {
-        return mozilla::CountTrailingZeroes32(x);
+        return mozilla::CountTrailingZeroes64(x);
     }
     static uint32_t LastBit(SetType x) {
-        return 31 - mozilla::CountLeadingZeroes32(x);
+        return 63 - mozilla::CountLeadingZeroes64(x);
     }
 };
 

@@ -339,7 +339,7 @@ JitRuntime::generateInvalidator(JSContext *cx)
 
     // Save floating point registers
     // We can use as_sd because stack is alligned.
-    for (uint32_t i = 0; i < FloatRegisters::TotalDouble; i ++)
+    for (uint32_t i = 0; i < FloatRegisters::TotalPhys; i ++)
         masm.as_sd(FloatRegister::FromCode(i), StackPointer,
                    InvalidationBailoutStack::offsetOfFpRegs() + i * sizeof(double));
 
@@ -560,7 +560,7 @@ PushBailoutFrame(MacroAssembler &masm, uint32_t frameClass, Register spArg)
 
     // Save floating point registers
     // We can use as_sd because stack is alligned.
-    for (uint32_t i = 0; i < FloatRegisters::TotalDouble; i++)
+    for (uint32_t i = 0; i < FloatRegisters::TotalPhys; i++)
         masm.as_sd(FloatRegister::FromCode(i), StackPointer,
                    BailoutStack::offsetOfFpRegs() + i * sizeof(double));
 
