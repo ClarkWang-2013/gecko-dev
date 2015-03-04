@@ -2369,13 +2369,21 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             alu_out = getRegister(LO);
             break;
           case ff_mult:
-            i128hilo = static_cast<int32_t>(rs) * static_cast<int32_t>(rt);
+            if (!IsWordValue(rs) || !IsWordValue(rt)) {
+                i128hilo = (((int64_t)Unpredictable) << 32) | Unpredictable;
+            } else {
+                i128hilo = rs * rt;
+            }
             break;
           case ff_dmult:
             i128hilo = static_cast<__int128>(rs) * static_cast<__int128>(rt);
             break;
           case ff_multu:
-            u128hilo = static_cast<uint32_t>(rs_u) * static_cast<uint32_t>(rt_u);
+            if (!IsWordValue(rs_u) || !IsWordValue(rt_u)) {
+                i128hilo = (((int64_t)Unpredictable) << 32) | Unpredictable;
+            } else {
+                u128hilo = rs_u * rt_u;
+            }
             break;
           case ff_dmultu:
             u128hilo = static_cast<unsigned __int128>(rs_u) * static_cast<unsigned __int128>(rt_u);
@@ -2397,10 +2405,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             alu_out = static_cast<int64_t>(temp);
             break;
           case ff_addu:
-            if (!IsWordValue(rs) || !IsWordValue(rt)) {
+            if (!IsWordValue(rs_u) || !IsWordValue(rt_u)) {
                 alu_out = Unpredictable;
             } else {
-                alu_out = static_cast<int32_t>(rs + rt);
+                alu_out = static_cast<int32_t>(rs_u + rt_u);
             }
             break;
           case ff_daddu:
@@ -2423,10 +2431,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             alu_out = static_cast<int64_t>(temp);
             break;
           case ff_subu:
-            if (!IsWordValue(rs) || !IsWordValue(rt)) {
+            if (!IsWordValue(rs_u) || !IsWordValue(rt_u)) {
                 alu_out = Unpredictable;
             } else {
-                alu_out = static_cast<int32_t>(rs - rt);
+                alu_out = static_cast<int32_t>(rs_u - rt_u);
             }
             break;
           case ff_dsubu:
@@ -2478,10 +2486,48 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             // No action taken on decode.
             break;
           case ff_div:
+            if (!IsWordValue(rs) || !IsWordValue(rt) || 0 == rt) {
+                i128hilo = (((int64_t)Unpredictable) << 32) | Unpredictable;
+            } else if (rs == INT_MIN && rt == -1) {
+                i128hilo = (uint32_t)INT_MIN;
+            } else {
+                uint32_t div = static_cast<int32_t>(rs) / static_cast<int32_t>(rt);
+                uint32_t mod = static_cast<int32_t>(rs) % static_cast<int32_t>(rt);
+                i128hilo = (((uint64_t)mod) << 32) | div;
+            }
+            break;
           case ff_ddiv:
+            if (0 == rt) {
+                i128hilo = (((__int128)Unpredictable) << 64) | (int64_t)Unpredictable;
+            } else if (rs == INT_MIN && rt == -1) {
+                i128hilo = (uint64_t)INT64_MIN;
+            } else {
+                uint64_t div = rs / rt;
+                uint64_t mod = rs % rt;
+                i128hilo = (((__int128)mod) << 64) | div;
+            }
+            break;
           case ff_divu:
+            if (!IsWordValue(rs) || !IsWordValue(rt) || 0 == rt) {
+                i128hilo = (((int64_t)Unpredictable) << 32) | Unpredictable;
+            } else if (rs == INT_MIN && rt == -1) {
+                i128hilo = (uint32_t)INT_MIN;
+            } else {
+                uint32_t div = static_cast<uint32_t>(rs_u) / static_cast<uint32_t>(rt_u);
+                uint32_t mod = static_cast<uint32_t>(rs_u) % static_cast<uint32_t>(rt_u);
+                i128hilo = (((uint64_t)mod) << 32) | div;
+            }
+            break;
           case ff_ddivu:
-            // div, ddiv, divu and ddivu never raise exceptions.
+            if (0 == rt) {
+                i128hilo = (((__int128)Unpredictable) << 64) | (int64_t)Unpredictable;
+            } else if (rs == INT_MIN && rt == -1) {
+                i128hilo = (uint64_t)INT64_MIN;
+            } else {
+                uint64_t div = rs_u / rt_u;
+                uint64_t mod = rs_u % rt_u;
+                i128hilo = (((__int128)mod) << 64) | div;
+            }
             break;
           default:
             MOZ_CRASH();
@@ -2490,10 +2536,18 @@ Simulator::configureTypeRegister(SimInstruction *instr,
       case op_special2:
         switch (instr->functionFieldRaw()) {
           case ff_mul:
-            alu_out = static_cast<int32_t>(static_cast<uint32_t>(rs_u * static_cast<uint32_t>(rt_u)));  // Only the lower 32 bits are kept.
+            if (!IsWordValue(rs) || !IsWordValue(rt)) {
+                alu_out = Unpredictable;
+            } else {
+                alu_out = static_cast<int32_t>(rs * rt);  // Only the lower 32 bits are kept.
+            }
             break;
           case ff_clz:
-            alu_out = rs_u ? __builtin_clz(static_cast<uint32_t>(rs_u)) : 32;
+            if (!IsWordValue(rs_u)) {
+                alu_out = Unpredictable;
+            } else {
+                alu_out = rs_u ? __builtin_clz(static_cast<uint32_t>(rs_u)) : 32;
+            }
             break;
           case ff_dclz:
             alu_out = rs_u ? __builtin_clzl(rs_u) : 64;
@@ -2514,7 +2568,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
                 uint16_t lsb = sa;
                 uint16_t size = msb - lsb + 1;
                 uint32_t mask = (1 << size) - 1;
-                alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
+                if (lsb > msb)
+                  alu_out = Unpredictable;
+                else
+                  alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
             }
             break;
           }
@@ -2525,7 +2582,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             uint16_t lsb = sa;
             uint16_t size = msb - lsb + 1;
             uint64_t mask = (1ul << size) - 1;
-            alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
+            if (lsb > msb)
+              alu_out = Unpredictable;
+            else
+              alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
             break;
           }
           case ff_dinsm: {   // Mips64r2 instruction.
@@ -2545,11 +2605,14 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             uint16_t lsb = sa + 32;
             uint16_t size = msb - lsb + 33;
             uint64_t mask = (1ul << size) - 1;
-            alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
+            if (sa > msb)
+              alu_out = Unpredictable;
+            else
+              alu_out = (rt_u & ~(mask << lsb)) | ((rs_u & mask) << lsb);
             break;
           }
           case ff_ext: {   // Mips64r2 instruction.
-            if (!IsWordValue(rs) || !IsWordValue(rt)) {
+            if (!IsWordValue(rs)) {
                 alu_out = Unpredictable;
             } else {
                 // Interpret rd field as 5-bit msb of extract.
@@ -2558,7 +2621,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
                 uint16_t lsb = sa;
                 uint16_t size = msb + 1;
                 uint32_t mask = (1 << size) - 1;
-                alu_out = (rs_u & (mask << lsb)) >> lsb;
+                if ((lsb + msb) > 31)
+                  alu_out = Unpredictable;
+                else
+                  alu_out = (rs_u & (mask << lsb)) >> lsb;
             }
             break;
           }
@@ -2579,7 +2645,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             uint16_t lsb = sa;
             uint16_t size = msb + 33;
             uint64_t mask = (1ul << size) - 1;
-            alu_out = (rs_u & (mask << lsb)) >> lsb;
+            if ((lsb + msb + 32 + 1) > 64)
+              alu_out = Unpredictable;
+            else
+              alu_out = (rs_u & (mask << lsb)) >> lsb;
             break;
           }
           case ff_dextu: {   // Mips64r2 instruction.
@@ -2589,7 +2658,10 @@ Simulator::configureTypeRegister(SimInstruction *instr,
             uint16_t lsb = sa + 32;
             uint16_t size = msb + 1;
             uint64_t mask = (1ul << size) - 1;
-            alu_out = (rs_u & (mask << lsb)) >> lsb;
+            if ((lsb + msb + 1) > 64)
+              alu_out = Unpredictable;
+            else
+              alu_out = (rs_u & (mask << lsb)) >> lsb;
             break;
           }
           default:
@@ -2609,10 +2681,8 @@ Simulator::decodeTypeRegister(SimInstruction *instr)
     const Opcode   op     = instr->opcodeFieldRaw();
     const int32_t  rs_reg = instr->rsValue();
     const int64_t  rs     = getRegister(rs_reg);
-    const uint64_t rs_u   = static_cast<uint64_t>(rs);
     const int32_t  rt_reg = instr->rtValue();
     const int64_t  rt     = getRegister(rt_reg);
-    const uint64_t rt_u   = static_cast<uint64_t>(rt);
     const int32_t  rd_reg = instr->rdValue();
 
     const int32_t  fr_reg = instr->frValue();
@@ -3049,42 +3119,22 @@ Simulator::decodeTypeRegister(SimInstruction *instr)
             setRegister(HI, static_cast<int64_t>(u128hilo >> 64));
             break;
           case ff_div:
+          case ff_divu:
             // Divide by zero and overflow was not checked in the configuration
             // step - div and divu do not raise exceptions. On division by 0
             // the result will be UNPREDICTABLE. On overflow (INT_MIN/-1),
             // return INT_MIN which is what the hardware does.
-            if (rs == INT_MIN && rt == -1) {
-                setRegister(LO, INT_MIN);
-                setRegister(HI, 0);
-            } else if (rt != 0) {
-                setRegister(LO, static_cast<int32_t>(rs) / static_cast<int32_t>(rt));
-                setRegister(HI, static_cast<int32_t>(rs) % static_cast<int32_t>(rt));
-            }
+            setRegister(LO, static_cast<int32_t>(i128hilo & 0xffffffff));
+            setRegister(HI, static_cast<int32_t>(i128hilo >> 32));
             break;
           case ff_ddiv:
+          case ff_ddivu:
             // Divide by zero and overflow was not checked in the configuration
             // step - div and divu do not raise exceptions. On division by 0
             // the result will be UNPREDICTABLE. On overflow (INT_MIN/-1),
             // return INT_MIN which is what the hardware does.
-            if (rs == INT_MIN && rt == -1) {
-                setRegister(LO, INT_MIN);
-                setRegister(HI, 0);
-            } else if (rt != 0) {
-                setRegister(LO, rs / rt);
-                setRegister(HI, rs % rt);
-            }
-            break;
-          case ff_divu:
-            if (rt_u != 0) {
-                setRegister(LO, rs_u / rt_u);
-                setRegister(HI, rs_u % rt_u);
-            }
-            break;
-          case ff_ddivu:
-            if (rt_u != 0) {
-                setRegister(LO, rs / rt);
-                setRegister(HI, rs % rt);
-            }
+            setRegister(LO, static_cast<int64_t>(i128hilo & 0xfffffffffffffffful));
+            setRegister(HI, static_cast<int64_t>(i128hilo >> 64));
             break;
             // Break and trap instructions.
           case ff_break:
