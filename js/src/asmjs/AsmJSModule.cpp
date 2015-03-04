@@ -1735,7 +1735,7 @@ AsmJSModule::setProfilingEnabled(bool enabled, JSContext *cx)
         Instruction *instr = (Instruction *)(callerRetAddr - 4 * sizeof(uint32_t));
         void *callee = (void *)Assembler::ExtractLuiOriValue(instr, instr->next());
 #elif defined(JS_CODEGEN_MIPS64)
-        Instruction *instr = (Instruction *)(callerRetAddr - 4 * sizeof(uint32_t));
+        Instruction *instr = (Instruction *)(callerRetAddr - 8 * sizeof(uint32_t));
         void *callee = (void *)Assembler::ExtractLoad64Value(instr);
 #elif defined(JS_CODEGEN_NONE)
         MOZ_CRASH();

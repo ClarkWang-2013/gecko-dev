@@ -242,7 +242,7 @@ GenerateProfilingEpilogue(MacroAssembler &masm, unsigned framePushed, AsmJSExit:
         masm.loadPtr(Address(StackPointer, 0), scratch2);
         masm.storePtr(scratch2, Address(scratch, AsmJSActivation::offsetOfFP()));
         DebugOnly<uint32_t> prePop = masm.currentOffset();
-        masm.add32(Imm32(4), StackPointer);
+        masm.addPtr(Imm32(4), StackPointer);
         MOZ_ASSERT(PostStorePrePopFP == masm.currentOffset() - prePop);
 #else
         masm.pop(Address(scratch, AsmJSActivation::offsetOfFP()));
@@ -332,7 +332,16 @@ js::GenerateAsmJSFunctionEpilogue(MacroAssembler &masm, unsigned framePushed,
         masm.twoByteNop();
 #elif defined(JS_CODEGEN_ARM)
         masm.nop();
-#elif defined(JS_CODEGEN_MIPS) || defined(JS_CODEGEN_MIPS64)
+#elif defined(JS_CODEGEN_MIPS)
+        masm.nop();
+        masm.nop();
+        masm.nop();
+        masm.nop();
+#elif defined(JS_CODEGEN_MIPS64)
+        masm.nop();
+        masm.nop();
+        masm.nop();
+        masm.nop();
         masm.nop();
         masm.nop();
         masm.nop();
