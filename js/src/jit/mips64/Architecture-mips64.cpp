@@ -83,11 +83,6 @@ FloatRegister::ReduceSetForPush(const FloatRegisterSet &s)
 }
 
 uint32_t
-FloatRegister::GetSizeInBytes(const FloatRegisterSet &s)
-{
-    return s.size() * sizeof(double);
-}
-uint32_t
 FloatRegister::GetPushSizeInBytes(const FloatRegisterSet &s)
 {
     FloatRegisterSet ss = s.reduceSetForPush();

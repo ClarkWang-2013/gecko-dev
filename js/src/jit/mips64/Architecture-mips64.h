@@ -112,6 +112,12 @@ class Registers
         invalid_reg
     };
     typedef RegisterID Code;
+    typedef RegisterID Encoding;
+
+    // Content spilled during bailouts.
+    union RegisterContent {
+        uintptr_t r;
+    };
 
     static const char *GetName(Code code) {
         static const char * const Names[] = { "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
@@ -133,12 +139,13 @@ class Registers
     static const uint32_t Total = 32;
     static const uint32_t Allocatable = 14;
 
-    static const uint32_t AllMask = 0xffffffff;
-    static const uint32_t ArgRegMask =
+    typedef uint32_t SetType;
+    static const SetType AllMask = 0xffffffff;
+    static const SetType ArgRegMask =
         (1 << a0) | (1 << a1) | (1 << a2) | (1 << a3) |
         (1 << a4) | (1 << a5) | (1 << a6) | (1 << a7);
 
-    static const uint32_t VolatileMask =
+    static const SetType VolatileMask =
         (1 << Registers::v0) |
         (1 << Registers::v1) |
         (1 << Registers::a0) |
@@ -156,7 +163,7 @@ class Registers
 
     // We use this constant to save registers when entering functions. This
     // is why $ra is added here even though it is not "Non Volatile".
-    static const uint32_t NonVolatileMask =
+    static const SetType NonVolatileMask =
         (1 << Registers::s0) |
         (1 << Registers::s1) |
         (1 << Registers::s2) |
@@ -167,12 +174,12 @@ class Registers
         (1 << Registers::s7) |
         (1 << Registers::ra);
 
-    static const uint32_t WrapperMask =
+    static const SetType WrapperMask =
         VolatileMask |         // = arguments
         (1 << Registers::t0) | // = outReg
         (1 << Registers::t1);  // = argBase
 
-    static const uint32_t NonAllocatableMask =
+    static const SetType NonAllocatableMask =
         (1 << Registers::zero) |
         (1 << Registers::at) | // at = scratch
         (1 << Registers::t8) | // t8 = scratch
@@ -185,21 +192,20 @@ class Registers
         (1 << Registers::ra);
 
     // Registers that can be allocated without being saved, generally.
-    static const uint32_t TempMask = VolatileMask & ~NonAllocatableMask;
+    static const SetType TempMask = VolatileMask & ~NonAllocatableMask;
 
     // Registers returned from a JS -> JS call.
-    static const uint32_t JSCallMask =
+    static const SetType JSCallMask =
         (1 << Registers::a2) |
         (1 << Registers::a3);
 
     // Registers returned from a JS -> C call.
-    static const uint32_t CallMask =
+    static const SetType CallMask =
         (1 << Registers::v0) |
         (1 << Registers::v1);  // used for double-size returns
 
-    static const uint32_t AllocatableMask = AllMask & ~NonAllocatableMask;
+    static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 
-    typedef uint32_t SetType;
     static uint32_t SetSize(SetType x) {
         static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
         return mozilla::CountPopulation32(x);
@@ -386,7 +392,6 @@ class FloatRegister
         return FloatRegisters::FromName(name);
     }
     static TypedRegisterSet<FloatRegister> ReduceSetForPush(const TypedRegisterSet<FloatRegister> &s);
-    static uint32_t GetSizeInBytes(const TypedRegisterSet<FloatRegister> &s);
     static uint32_t GetPushSizeInBytes(const TypedRegisterSet<FloatRegister> &s);
     uint32_t getRegisterDumpOffsetInBytes();
     static uint32_t FirstBit(SetType x) {

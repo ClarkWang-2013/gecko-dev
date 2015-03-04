@@ -117,7 +117,8 @@ static MOZ_CONSTEXPR_VAR Register JSReturnReg_Data = JSReturnReg;
 static MOZ_CONSTEXPR_VAR Register StackPointer = sp;
 static MOZ_CONSTEXPR_VAR Register FramePointer = InvalidReg;
 static MOZ_CONSTEXPR_VAR Register ReturnReg = v0;
-static MOZ_CONSTEXPR_VAR FloatRegister ReturnSimdReg = InvalidFloatReg;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnInt32x4Reg = InvalidFloatReg;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32x4Reg = InvalidFloatReg;
 static MOZ_CONSTEXPR_VAR FloatRegister ScratchSimdReg = InvalidFloatReg;
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloat32Reg = { FloatRegisters::f0 };
 static MOZ_CONSTEXPR_VAR FloatRegister ReturnDoubleReg = { FloatRegisters::f0 };
@@ -881,7 +882,8 @@ class Assembler : public AssemblerShared
     static void WriteInstStatic(uint32_t x, uint32_t *dest);
 
   public:
-    BufferOffset align(int alignment);
+    BufferOffset haltingAlign(int alignment);
+    BufferOffset nopAlign(int alignment);
     BufferOffset as_nop();
 
     // Branch and jump instructions
