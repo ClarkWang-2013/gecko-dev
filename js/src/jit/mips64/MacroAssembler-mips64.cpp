@@ -1694,7 +1694,7 @@ MacroAssemblerMIPS64Compat::callWithExitFrame(Label *target)
     uint32_t descriptor = MakeFrameDescriptor(framePushed(), JitFrame_IonJS);
     Push(Imm32(descriptor)); // descriptor
 
-    ma_callJitHalfPush(target);
+    ma_callJit(target);
 }
 
 void
@@ -1705,7 +1705,7 @@ MacroAssemblerMIPS64Compat::callWithExitFrame(JitCode *target)
 
     addPendingJump(m_buffer.nextOffset(), ImmPtr(target->raw()), Relocation::JITCODE);
     ma_liPatchable(ScratchRegister, ImmPtr(target->raw()));
-    ma_callJitHalfPush(ScratchRegister);
+    ma_callJit(ScratchRegister);
 }
 
 void
@@ -1717,19 +1717,14 @@ MacroAssemblerMIPS64Compat::callWithExitFrame(JitCode *target, Register dynStack
 
     addPendingJump(m_buffer.nextOffset(), ImmPtr(target->raw()), Relocation::JITCODE);
     ma_liPatchable(ScratchRegister, ImmPtr(target->raw()));
-    ma_callJitHalfPush(ScratchRegister);
+    ma_callJit(ScratchRegister);
 }
 
 void
 MacroAssemblerMIPS64Compat::callJit(Register callee)
 {
     MOZ_ASSERT((framePushed() & 7) == 0);
-    if ((framePushed() & 0xf) == 8) {
-        ma_callJitHalfPush(callee);
-    } else {
-        adjustFrame(sizeof(uint64_t));
-        ma_callJit(callee);
-    }
+    ma_callJit(callee);
 }
 
 void
@@ -3355,28 +3350,7 @@ MacroAssemblerMIPS64Compat::popValue(ValueOperand val)
 }
 
 void
-MacroAssemblerMIPS64::ma_callJitNoPush(const Register r)
-{
-    // This is a MIPS hack to push return address during jalr delay slot.
-    as_jalr(r);
-    as_sd(ra, StackPointer, 0);
-}
-
-// This macrosintruction calls the ion code and pushes the return address to
-// the stack in the case when stack is alligned.
-void
 MacroAssemblerMIPS64::ma_callJit(const Register r)
-{
-    // This is a MIPS hack to push return address during jalr delay slot.
-    as_daddiu(StackPointer, StackPointer, (int32_t)(-2 * sizeof(intptr_t)));
-    as_jalr(r);
-    as_sd(ra, StackPointer, 0);
-}
-
-// This macrosintruction calls the ion code and pushes the return address to
-// the stack in the case when stack is not alligned.
-void
-MacroAssemblerMIPS64::ma_callJitHalfPush(const Register r)
 {
     // This is a MIPS hack to push return address during jalr delay slot.
     as_daddiu(StackPointer, StackPointer, (int32_t)-sizeof(intptr_t));
@@ -3384,10 +3358,8 @@ MacroAssemblerMIPS64::ma_callJitHalfPush(const Register r)
     as_sd(ra, StackPointer, 0);
 }
 
-// This macrosintruction calls the ion code and pushes the return address to
-// the stack in the case when stack is not alligned.
 void
-MacroAssemblerMIPS64::ma_callJitHalfPush(Label *label)
+MacroAssemblerMIPS64::ma_callJit(Label *label)
 {
     // This is a MIPS hack to push return address during jalr delay slot.
     as_daddiu(StackPointer, StackPointer, (int32_t)-sizeof(intptr_t));
