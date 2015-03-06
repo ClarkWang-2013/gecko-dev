@@ -369,9 +369,9 @@ CodeGeneratorMIPS64::visitAddI(LAddI *ins)
     // If there is no snapshot, we don't need to check for overflow
     if (!ins->snapshot()) {
         if (rhs->isConstant())
-            masm.ma_daddu(ToRegister(dest), ToRegister(lhs), Imm32(ToInt32(rhs)));
+            masm.ma_addu(ToRegister(dest), ToRegister(lhs), Imm32(ToInt32(rhs)));
         else
-            masm.as_daddu(ToRegister(dest), ToRegister(lhs), ToRegister(rhs));
+            masm.as_addu(ToRegister(dest), ToRegister(lhs), ToRegister(rhs));
         return;
     }
 
@@ -396,9 +396,9 @@ CodeGeneratorMIPS64::visitSubI(LSubI *ins)
     // If there is no snapshot, we don't need to check for overflow
     if (!ins->snapshot()) {
         if (rhs->isConstant())
-            masm.ma_dsubu(ToRegister(dest), ToRegister(lhs), Imm32(ToInt32(rhs)));
+            masm.ma_subu(ToRegister(dest), ToRegister(lhs), Imm32(ToInt32(rhs)));
         else
-            masm.as_dsubu(ToRegister(dest), ToRegister(lhs), ToRegister(rhs));
+            masm.as_subu(ToRegister(dest), ToRegister(lhs), ToRegister(rhs));
         return;
     }
 
@@ -451,7 +451,7 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
 
                 bailoutFrom(&mulTwoOverflow, ins->snapshot());
             } else {
-                masm.as_daddu(dest, src, src);
+                masm.as_addu(dest, src, src);
             }
             break;
           default:
@@ -464,7 +464,7 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
                 // See if the constant has one bit set, meaning it can be
                 // encoded as a bitshift.
                 if ((1 << shift) == constant) {
-                    masm.ma_dsll(dest, src, Imm32(shift));
+                    masm.ma_sll(dest, src, Imm32(shift));
                     return;
                 }
 
@@ -473,10 +473,10 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
                 // using an add and a shift.
                 uint32_t shift_rest = FloorLog2(rest);
                 if (src != dest && (1u << shift_rest) == rest) {
-                    masm.ma_dsll(dest, src, Imm32(shift - shift_rest));
+                    masm.ma_sll(dest, src, Imm32(shift - shift_rest));
                     masm.add32(src, dest);
                     if (shift_rest != 0)
-                        masm.ma_dsll(dest, dest, Imm32(shift_rest));
+                        masm.ma_sll(dest, dest, Imm32(shift_rest));
                     return;
                 }
             }
@@ -487,11 +487,11 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
 
                 if ((1 << shift) == constant) {
                     // dest = lhs * pow(2, shift)
-                    masm.ma_dsll(dest, src, Imm32(shift));
+                    masm.ma_sll(dest, src, Imm32(shift));
                     // At runtime, check (lhs == dest >> shift), if this does
                     // not hold, some bits were lost due to overflow, and the
                     // computation should be resumed as a double.
-                    masm.ma_dsra(ScratchRegister, dest, Imm32(shift));
+                    masm.ma_sra(ScratchRegister, dest, Imm32(shift));
                     bailoutCmp32(Assembler::NotEqual, src, ScratchRegister, ins->snapshot());
                     return;
                 }
@@ -504,7 +504,7 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
 
                 bailoutFrom(&mulConstOverflow, ins->snapshot());
             } else {
-                masm.ma_dmult(src, Imm32(ToInt32(rhs)));
+                masm.ma_mult(src, Imm32(ToInt32(rhs)));
                 masm.as_mflo(dest);
             }
             break;
@@ -516,7 +516,7 @@ CodeGeneratorMIPS64::visitMulI(LMulI *ins)
             masm.ma_mul_branch_overflow(dest, ToRegister(lhs), ToRegister(rhs), &multRegOverflow);
             bailoutFrom(&multRegOverflow, ins->snapshot());
         } else {
-            masm.as_dmult(ToRegister(lhs), ToRegister(rhs));
+            masm.as_mult(ToRegister(lhs), ToRegister(rhs));
             masm.as_mflo(dest);
         }
 
@@ -595,7 +595,7 @@ CodeGeneratorMIPS64::visitDivI(LDivI *ins)
 
     // All regular. Lets call div.
     if (mir->canTruncateRemainder()) {
-        masm.as_ddiv(lhs, rhs);
+        masm.as_div(lhs, rhs);
         masm.as_mflo(dest);
     } else {
         MOZ_ASSERT(mir->fallible());
@@ -621,13 +621,13 @@ CodeGeneratorMIPS64::visitDivPowTwoI(LDivPowTwoI *ins)
         if (!mir->isTruncated()) {
             // If the remainder is going to be != 0, bailout since this must
             // be a double.
-            masm.ma_dsll(tmp, lhs, Imm32(32 - shift));
+            masm.ma_sll(tmp, lhs, Imm32(32 - shift));
             bailoutCmp32(Assembler::NonZero, tmp, tmp, ins->snapshot());
         }
 
         if (!mir->canBeNegativeDividend()) {
             // Numerator is unsigned, so needs no adjusting. Do the shift.
-            masm.ma_dsra(dest, lhs, Imm32(shift));
+            masm.ma_sra(dest, lhs, Imm32(shift));
             return;
         }
 
@@ -635,16 +635,16 @@ CodeGeneratorMIPS64::visitDivPowTwoI(LDivPowTwoI *ins)
         // when the numerator is negative. See 10-1 "Signed Division by a Known
         // Power of 2" in Henry S. Warren, Jr.'s Hacker's Delight.
         if (shift > 1) {
-            masm.ma_dsra(tmp, lhs, Imm32(31));
-            masm.ma_dsrl(tmp, tmp, Imm32(32 - shift));
+            masm.ma_sra(tmp, lhs, Imm32(31));
+            masm.ma_srl(tmp, tmp, Imm32(32 - shift));
             masm.add32(lhs, tmp);
         } else {
-            masm.ma_dsrl(tmp, lhs, Imm32(32 - shift));
+            masm.ma_srl(tmp, lhs, Imm32(32 - shift));
             masm.add32(lhs, tmp);
         }
 
         // Do the shift.
-        masm.ma_dsra(dest, tmp, Imm32(shift));
+        masm.ma_sra(dest, tmp, Imm32(shift));
     } else {
         masm.move32(lhs, dest);
     }
@@ -723,7 +723,7 @@ CodeGeneratorMIPS64::visitModI(LModI *ins)
         masm.bind(&notNegative);
     }
 
-    masm.as_ddiv(lhs, rhs);
+    masm.as_div(lhs, rhs);
     masm.as_mfhi(dest);
 
     // If X%Y == 0 and X < 0, then we *actually* wanted to return -0.0
@@ -849,19 +849,19 @@ CodeGeneratorMIPS64::visitShiftI(LShiftI *ins)
         switch (ins->bitop()) {
           case JSOP_LSH:
             if (shift)
-                masm.ma_dsll(dest, lhs, Imm32(shift));
+                masm.ma_sll(dest, lhs, Imm32(shift));
             else
                 masm.move32(lhs, dest);
             break;
           case JSOP_RSH:
             if (shift)
-                masm.ma_dsra(dest, lhs, Imm32(shift));
+                masm.ma_sra(dest, lhs, Imm32(shift));
             else
                 masm.move32(lhs, dest);
             break;
           case JSOP_URSH:
             if (shift) {
-                masm.ma_dsrl(dest, lhs, Imm32(shift));
+                masm.ma_srl(dest, lhs, Imm32(shift));
             } else {
                 // x >>> 0 can overflow.
                 masm.move32(lhs, dest);
@@ -878,13 +878,13 @@ CodeGeneratorMIPS64::visitShiftI(LShiftI *ins)
 
         switch (ins->bitop()) {
           case JSOP_LSH:
-            masm.ma_dsll(dest, lhs, dest);
+            masm.ma_sll(dest, lhs, dest);
             break;
           case JSOP_RSH:
-            masm.ma_dsra(dest, lhs, dest);
+            masm.ma_sra(dest, lhs, dest);
             break;
           case JSOP_URSH:
-            masm.ma_dsrl(dest, lhs, dest);
+            masm.ma_srl(dest, lhs, dest);
             if (ins->mir()->toUrsh()->fallible()) {
                 // x >>> 0 can overflow.
                 bailoutCmp32(Assembler::LessThan, dest, Imm32(0), ins->snapshot());
@@ -906,9 +906,9 @@ CodeGeneratorMIPS64::visitUrshD(LUrshD *ins)
     FloatRegister out = ToFloatRegister(ins->output());
 
     if (rhs->isConstant()) {
-        masm.ma_dsrl(temp, lhs, Imm32(ToInt32(rhs)));
+        masm.ma_srl(temp, lhs, Imm32(ToInt32(rhs)));
     } else {
-        masm.ma_dsrl(temp, lhs, ToRegister(rhs));
+        masm.ma_srl(temp, lhs, ToRegister(rhs));
     }
 
     masm.convertUInt32ToDouble(temp, out);
@@ -920,7 +920,7 @@ CodeGeneratorMIPS64::visitClzI(LClzI *ins)
     Register input = ToRegister(ins->input());
     Register output = ToRegister(ins->output());
 
-    masm.as_dclz(output, input);
+    masm.as_clz(output, input);
 }
 
 void
@@ -2020,7 +2020,7 @@ CodeGeneratorMIPS64::visitUDiv(LUDiv *ins)
         }
     }
 
-    masm.as_ddivu(lhs, rhs);
+    masm.as_divu(lhs, rhs);
     masm.as_mflo(output);
 
     if (!ins->mir()->isTruncated())
@@ -2051,7 +2051,7 @@ CodeGeneratorMIPS64::visitUMod(LUMod *ins)
         }
     }
 
-    masm.as_ddivu(lhs, rhs);
+    masm.as_divu(lhs, rhs);
     masm.as_mfhi(output);
 
     if (!ins->mir()->isTruncated())

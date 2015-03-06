@@ -624,19 +624,17 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
     // that register. Otherwise, provides a move to the given scratch register,
     // and returns that.
     Register extractObject(const Address &address, Register scratch);
-    Register _extractPayload(const ValueOperand &value, Register scratch) {
-        MOZ_ASSERT(scratch != ScratchRegister);
-        ma_dext(scratch, value.valueReg(), Imm32(0), Imm32(JSVAL_TAG_SHIFT));
+    Register extractObject(const ValueOperand &value, Register scratch) {
+        unboxObject(value, scratch);
         return scratch;
     }
-    Register extractObject(const ValueOperand &value, Register scratch) {
-        return _extractPayload(value, scratch);
-    }
     Register extractInt32(const ValueOperand &value, Register scratch) {
-        return _extractPayload(value, scratch);
+        unboxInt32(value, scratch);
+        return scratch;
     }
     Register extractBoolean(const ValueOperand &value, Register scratch) {
-        return _extractPayload(value, scratch);
+        unboxBoolean(value, scratch);
+        return scratch;
     }
     Register extractTag(const Address &address, Register scratch);
     Register extractTag(const BaseIndex &address, Register scratch);
