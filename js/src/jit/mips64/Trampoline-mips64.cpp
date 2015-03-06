@@ -711,7 +711,8 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
       case Type_Bool:
       case Type_Int32:
         outReg = regs.takeAny();
-        masm.reserveStack(sizeof(int32_t));
+        // Reserve 4-byte space to make stack aligned to 8-byte.
+        masm.reserveStack(2 * sizeof(int32_t));
         masm.movePtr(StackPointer, outReg);
         break;
 
@@ -792,7 +793,7 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 
       case Type_Int32:
         masm.load32(Address(StackPointer, 0), ReturnReg);
-        masm.freeStack(sizeof(int32_t));
+        masm.freeStack(2 * sizeof(int32_t));
         break;
 
       case Type_Pointer:
@@ -802,7 +803,7 @@ JitRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
 
       case Type_Bool:
         masm.load8ZeroExtend(Address(StackPointer, 0), ReturnReg);
-        masm.freeStack(sizeof(int32_t));
+        masm.freeStack(2 * sizeof(int32_t));
         break;
 
       case Type_Double:
