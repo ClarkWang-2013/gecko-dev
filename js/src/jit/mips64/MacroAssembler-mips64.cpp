@@ -712,9 +712,9 @@ MacroAssemblerMIPS64::ma_dmult(Register rs, Imm32 imm)
 void
 MacroAssemblerMIPS64::ma_mul_branch_overflow(Register rd, Register rs, Register rt, Label *overflow)
 {
-    as_dmult(rs, rt);
+    as_mult(rs, rt);
     as_mflo(rd);
-    as_dsra(ScratchRegister, rd, 31);
+    as_sra(ScratchRegister, rd, 31);
     as_mfhi(SecondScratchReg);
     ma_b(ScratchRegister, SecondScratchReg, overflow, Assembler::NotEqual);
 }
@@ -729,7 +729,7 @@ MacroAssemblerMIPS64::ma_mul_branch_overflow(Register rd, Register rs, Imm32 imm
 void
 MacroAssemblerMIPS64::ma_div_branch_overflow(Register rd, Register rs, Register rt, Label *overflow)
 {
-    as_ddiv(rs, rt);
+    as_div(rs, rt);
     as_mflo(rd);
     as_mfhi(ScratchRegister);
     ma_b(ScratchRegister, ScratchRegister, overflow, Assembler::NonZero);
@@ -788,16 +788,16 @@ MacroAssemblerMIPS64::ma_mod_mask(Register src, Register dest, Register hold, Re
     // Extract the bottom bits into SecondScratchReg.
     ma_and(SecondScratchReg, remain, Imm32(mask));
     // Add those bits to the accumulator.
-    as_daddu(dest, dest, SecondScratchReg);
+    as_addu(dest, dest, SecondScratchReg);
     // Do a trial subtraction
-    ma_dsubu(SecondScratchReg, dest, Imm32(mask));
+    ma_subu(SecondScratchReg, dest, Imm32(mask));
     // If (sum - C) > 0, store sum - C back into sum, thus performing a
     // modulus.
     ma_b(SecondScratchReg, SecondScratchReg, &sumSigned, Signed, ShortJump);
     ma_move(dest, SecondScratchReg);
     bind(&sumSigned);
     // Get rid of the bits that we extracted before.
-    as_dsrl(remain, remain, shift);
+    as_srl(remain, remain, shift);
     // If the shift produced zero, finish, otherwise, continue in the loop.
     ma_b(remain, remain, &head, NonZero, ShortJump);
     // Check the hold to see if we need to negate the result.
