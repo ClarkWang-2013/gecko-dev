@@ -696,6 +696,13 @@ MacroAssemblerMIPS64::ma_subTestOverflow(Register rd, Register rs, Imm32 imm, La
 }
 
 void
+MacroAssemblerMIPS64::ma_mult(Register rs, Imm32 imm)
+{
+    ma_li(ScratchRegister, imm);
+    as_mult(rs, ScratchRegister);
+}
+
+void
 MacroAssemblerMIPS64::ma_dmult(Register rs, Imm32 imm)
 {
     ma_li(ScratchRegister, imm);

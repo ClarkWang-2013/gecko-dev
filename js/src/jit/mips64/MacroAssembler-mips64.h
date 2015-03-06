@@ -198,6 +198,7 @@ class MacroAssemblerMIPS64 : public Assembler
     void ma_subTestOverflow(Register rd, Register rs, Imm32 imm, Label *overflow);
 
     // multiplies.  For now, there are only few that we care about.
+    void ma_mult(Register rs, Imm32 imm);
     void ma_dmult(Register rs, Imm32 imm);
     void ma_mul_branch_overflow(Register rd, Register rs, Register rt, Label *overflow);
     void ma_mul_branch_overflow(Register rd, Register rs, Imm32 imm, Label *overflow);

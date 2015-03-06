@@ -908,8 +908,13 @@ class Assembler : public AssemblerShared
     BufferOffset as_daddiu(Register rd, Register rs, int32_t j);
     BufferOffset as_subu(Register rd, Register rs, Register rt);
     BufferOffset as_dsubu(Register rd, Register rs, Register rt);
+    BufferOffset as_mul(Register rd, Register rs, Register rt);
+    BufferOffset as_mult(Register rs, Register rt);
+    BufferOffset as_multu(Register rs, Register rt);
     BufferOffset as_dmult(Register rs, Register rt);
     BufferOffset as_dmultu(Register rs, Register rt);
+    BufferOffset as_div(Register rs, Register rt);
+    BufferOffset as_divu(Register rs, Register rt);
     BufferOffset as_ddiv(Register rs, Register rt);
     BufferOffset as_ddivu(Register rs, Register rt);
 
@@ -983,10 +988,13 @@ class Assembler : public AssemblerShared
     BufferOffset as_movf(Register rd, Register rs, uint16_t cc = 0);
 
     // Bit twiddling.
+    BufferOffset as_clz(Register rd, Register rs);
     BufferOffset as_dclz(Register rd, Register rs);
+    BufferOffset as_ins(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dins(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dinsm(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dinsu(Register rt, Register rs, uint16_t pos, uint16_t size);
+    BufferOffset as_ext(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dext(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dextm(Register rt, Register rs, uint16_t pos, uint16_t size);
     BufferOffset as_dextu(Register rt, Register rs, uint16_t pos, uint16_t size);

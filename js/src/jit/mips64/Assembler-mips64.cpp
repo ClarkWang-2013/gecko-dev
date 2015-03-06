@@ -806,6 +806,24 @@ Assembler::as_dsubu(Register rd, Register rs, Register rt)
 }
 
 BufferOffset
+Assembler::as_mul(Register rd, Register rs, Register rt)
+{
+    return writeInst(InstReg(op_special2, rs, rt, rd, ff_mul).encode());
+}
+
+BufferOffset
+Assembler::as_mult(Register rs, Register rt)
+{
+    return writeInst(InstReg(op_special, rs, rt, ff_mult).encode());
+}
+
+BufferOffset
+Assembler::as_multu(Register rs, Register rt)
+{
+    return writeInst(InstReg(op_special, rs, rt, ff_multu).encode());
+}
+
+BufferOffset
 Assembler::as_dmult(Register rs, Register rt)
 {
     return writeInst(InstReg(op_special, rs, rt, ff_dmult).encode());
@@ -815,6 +833,18 @@ BufferOffset
 Assembler::as_dmultu(Register rs, Register rt)
 {
     return writeInst(InstReg(op_special, rs, rt, ff_dmultu).encode());
+}
+
+BufferOffset
+Assembler::as_div(Register rs, Register rt)
+{
+    return writeInst(InstReg(op_special, rs, rt, ff_div).encode());
+}
+
+BufferOffset
+Assembler::as_divu(Register rs, Register rt)
+{
+    return writeInst(InstReg(op_special, rs, rt, ff_divu).encode());
 }
 
 BufferOffset
@@ -1142,9 +1172,24 @@ Assembler::as_movf(Register rd, Register rs, uint16_t cc)
 
 // Bit twiddling.
 BufferOffset
+Assembler::as_clz(Register rd, Register rs)
+{
+    return writeInst(InstReg(op_special2, rs, rd, rd, ff_clz).encode());
+}
+
+BufferOffset
 Assembler::as_dclz(Register rd, Register rs)
 {
     return writeInst(InstReg(op_special2, rs, rd, rd, ff_dclz).encode());
+}
+
+BufferOffset
+Assembler::as_ins(Register rt, Register rs, uint16_t pos, uint16_t size)
+{
+    MOZ_ASSERT(pos < 32 && size != 0 && size <= 32 && pos + size != 0 && pos + size <= 32);
+    Register rd;
+    rd = Register::FromCode(pos + size - 1);
+    return writeInst(InstReg(op_special3, rs, rt, rd, pos, ff_ins).encode());
 }
 
 BufferOffset
@@ -1172,6 +1217,15 @@ Assembler::as_dinsu(Register rt, Register rs, uint16_t pos, uint16_t size)
     Register rd;
     rd = Register::FromCode(pos + size - 1 - 32);
     return writeInst(InstReg(op_special3, rs, rt, rd, pos - 32, ff_dinsu).encode());
+}
+
+BufferOffset
+Assembler::as_ext(Register rt, Register rs, uint16_t pos, uint16_t size)
+{
+    MOZ_ASSERT(pos < 32 && size != 0 && size <= 32 && pos + size != 0 && pos + size <= 32);
+    Register rd;
+    rd = Register::FromCode(size - 1);
+    return writeInst(InstReg(op_special3, rs, rt, rd, pos, ff_ext).encode());
 }
 
 BufferOffset
