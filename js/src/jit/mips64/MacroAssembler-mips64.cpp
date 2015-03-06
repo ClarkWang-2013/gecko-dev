@@ -2783,9 +2783,16 @@ MacroAssemblerMIPS64Compat::unboxInt32(const Address &src, Register dest)
 }
 
 void
+MacroAssemblerMIPS64Compat::unboxInt32(const BaseIndex &src, Register dest)
+{
+    computeScaledAddress(src, SecondScratchReg);
+    ma_lw(dest, Address(SecondScratchReg, src.offset));
+}
+
+void
 MacroAssemblerMIPS64Compat::unboxBoolean(const ValueOperand &operand, Register dest)
 {
-    ma_dext(dest, operand.valueReg(), Imm32(0), Imm32(JSVAL_TAG_SHIFT));
+    ma_dext(dest, operand.valueReg(), Imm32(0), Imm32(32));
 }
 
 void
@@ -2793,7 +2800,7 @@ MacroAssemblerMIPS64Compat::unboxBoolean(const Operand &operand, Register dest)
 {
     switch(operand.getTag()) {
     case Operand::REG:
-        ma_dext(dest, operand.toReg(), Imm32(0), Imm32(JSVAL_TAG_SHIFT));
+        ma_dext(dest, operand.toReg(), Imm32(0), Imm32(32));
         break;
     case Operand::MEM:
         unboxBoolean(operand.toAddress(), dest);
@@ -2808,8 +2815,14 @@ MacroAssemblerMIPS64Compat::unboxBoolean(const Operand &operand, Register dest)
 void
 MacroAssemblerMIPS64Compat::unboxBoolean(const Address &src, Register dest)
 {
-    ma_ld(dest, Address(src.base, src.offset));
-    ma_dext(dest, dest, Imm32(0), Imm32(JSVAL_TAG_SHIFT));
+    ma_load(dest, Address(src.base, src.offset), SizeWord, ZeroExtend);
+}
+
+void
+MacroAssemblerMIPS64Compat::unboxBoolean(const BaseIndex &src, Register dest)
+{
+    computeScaledAddress(src, SecondScratchReg);
+    ma_load(dest, Address(SecondScratchReg, src.offset), SizeWord, ZeroExtend);
 }
 
 void
@@ -2995,19 +3008,18 @@ MacroAssemblerMIPS64Compat::loadInt32OrDouble(const Address &src, FloatRegister 
 }
 
 void
-MacroAssemblerMIPS64Compat::loadInt32OrDouble(Register base, Register index,
-                                            FloatRegister dest, int32_t shift)
+MacroAssemblerMIPS64Compat::loadInt32OrDouble(const BaseIndex &addr, FloatRegister dest)
 {
     Label notInt32, end;
 
     // If it's an int, convert it to double.
-    computeScaledAddress(BaseIndex(base, index, ShiftToScale(shift)), SecondScratchReg);
+    computeScaledAddress(addr, SecondScratchReg);
     // Since we only have one scratch, we need to stomp over it with the tag.
     ma_ld(SecondScratchReg, Address(SecondScratchReg, 0));
     ma_dsrl(ScratchRegister, SecondScratchReg, Imm32(JSVAL_TAG_SHIFT));
     branchTestInt32(Assembler::NotEqual, ScratchRegister, &notInt32);
 
-    computeScaledAddress(BaseIndex(base, index, ShiftToScale(shift)), SecondScratchReg);
+    computeScaledAddress(addr, SecondScratchReg);
     ma_ld(SecondScratchReg, Address(SecondScratchReg, 0));
     convertInt32ToDouble(SecondScratchReg, dest);
     ma_b(&end, ShortJump);
@@ -3016,7 +3028,7 @@ MacroAssemblerMIPS64Compat::loadInt32OrDouble(Register base, Register index,
     bind(&notInt32);
     // First, recompute the offset that had been stored in the scratch register
     // since the scratch register was overwritten loading in the type.
-    computeScaledAddress(BaseIndex(base, index, ShiftToScale(shift)), SecondScratchReg);
+    computeScaledAddress(addr, SecondScratchReg);
     loadDouble(Address(SecondScratchReg, 0), dest);
     bind(&end);
 }

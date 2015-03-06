@@ -594,9 +594,11 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
     void unboxInt32(const ValueOperand &operand, Register dest);
     void unboxInt32(const Operand &operand, Register dest);
     void unboxInt32(const Address &src, Register dest);
+    void unboxInt32(const BaseIndex &src, Register dest);
     void unboxBoolean(const ValueOperand &operand, Register dest);
     void unboxBoolean(const Operand &operand, Register dest);
     void unboxBoolean(const Address &src, Register dest);
+    void unboxBoolean(const BaseIndex &src, Register dest);
     void unboxDouble(const ValueOperand &operand, FloatRegister dest);
     void unboxDouble(const Address &src, FloatRegister dest);
     void unboxString(const ValueOperand &operand, Register dest);
@@ -646,9 +648,8 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
 
     void boolValueToDouble(const ValueOperand &operand, FloatRegister dest);
     void int32ValueToDouble(const ValueOperand &operand, FloatRegister dest);
-    void loadInt32OrDouble(const Address &address, FloatRegister dest);
-    void loadInt32OrDouble(Register base, Register index,
-                           FloatRegister dest, int32_t shift = defaultShift);
+    void loadInt32OrDouble(const Address &src, FloatRegister dest);
+    void loadInt32OrDouble(const BaseIndex &addr, FloatRegister dest);
     void loadConstantDouble(double dp, FloatRegister dest);
 
     void boolValueToFloat32(const ValueOperand &operand, FloatRegister dest);
@@ -900,18 +901,16 @@ public:
         ma_b(ScratchRegister, imm, label, cond);
     }
 
-    void loadUnboxedValue(Address address, MIRType type, AnyRegister dest) {
+    template <typename T>
+    void loadUnboxedValue(const T &address, MIRType type, AnyRegister dest) {
         if (dest.isFloat())
             loadInt32OrDouble(address, dest.fpu());
+        else if (type == MIRType_Int32)
+            unboxInt32(address, dest.gpr());
+        else if (type == MIRType_Boolean)
+            unboxBoolean(address, dest.gpr());
         else
-            ma_ld(dest.gpr(), address);
-    }
-
-    void loadUnboxedValue(BaseIndex address, MIRType type, AnyRegister dest) {
-        if (dest.isFloat())
-            loadInt32OrDouble(address.base, address.index, dest.fpu(), address.scale);
-        else
-            load32(address, dest.gpr());
+            unboxNonDouble(address, dest.gpr());
     }
 
     template <typename T>
