@@ -32,8 +32,10 @@ ICCompare_Int32::Compiler::generateStubCode(MacroAssembler &masm)
     masm.branchTestInt32(Assembler::NotEqual, R1, &failure);
 
     // Compare payload regs of R0 and R1.
+    masm.unboxInt32(R0, ExtractTemp0);
+    masm.unboxInt32(R1, ExtractTemp1);
     Assembler::Condition cond = JSOpToCondition(op, /* signed = */true);
-    masm.ma_cmp_set(R0.valueReg(), R0.valueReg(), R1.valueReg(), cond);
+    masm.ma_cmp_set(R0.valueReg(), ExtractTemp0, ExtractTemp1, cond);
 
     masm.tagValue(JSVAL_TYPE_BOOLEAN, R0.valueReg(), R0);
     EmitReturnFromIC(masm);
@@ -126,7 +128,7 @@ ICBinaryArith_Int32::Compiler::generateStubCode(MacroAssembler &masm)
         masm.ma_b(ExtractTemp1, Imm32(0), &failure, Assembler::LessThan, ShortJump);
         masm.bind(&divTest2);
 
-        masm.as_ddiv(ExtractTemp0, ExtractTemp1);
+        masm.as_div(ExtractTemp0, ExtractTemp1);
 
         if (op_ == JSOP_DIV) {
             // Result is a double if the remainder != 0.
