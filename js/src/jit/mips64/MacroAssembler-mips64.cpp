@@ -3042,8 +3042,7 @@ MacroAssemblerMIPS64Compat::loadConstantDouble(double dp, FloatRegister dest)
 void
 MacroAssemblerMIPS64Compat::branchTestInt32Truthy(bool b, const ValueOperand &value, Label *label)
 {
-    ma_and(ScratchRegister, value.valueReg());
-    ma_dext(ScratchRegister, ScratchRegister, Imm32(0), Imm32(32));
+    ma_dext(ScratchRegister, value.valueReg(), Imm32(0), Imm32(32));
     ma_b(ScratchRegister, ScratchRegister, label, b ? NonZero : Zero);
 }
 
