@@ -3470,25 +3470,26 @@ MacroAssemblerMIPS64Compat::passABIArg(const MoveOperand &from, MoveOp::Type typ
         return;
     switch (type) {
       case MoveOp::FLOAT32:
-      case MoveOp::DOUBLE:
-        {
-            FloatRegister destFReg;
-            if (!usedArgSlots_)
-              firstArgType = type;
-            if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
-                if (from.isFloatReg() && from.floatReg() == destFReg) {
-                    // Nothing to do; the value is in the right register already
-                } else {
-                    enoughMemory_ = moveResolver_.addMove(from, MoveOperand(destFReg), type);
-                }
+      case MoveOp::DOUBLE: {
+        FloatRegister destFReg;
+        if (!usedArgSlots_)
+          firstArgType = type;
+        if (GetFloatArgReg(usedArgSlots_, &destFReg)) {
+            if (from.isFloatReg() && from.floatReg() == destFReg) {
+                // Nothing to do; the value is in the right register already
             } else {
-                uint32_t disp = GetArgStackDisp(usedArgSlots_);
-                enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
+                enoughMemory_ = moveResolver_.addMove(from, MoveOperand(destFReg), type);
             }
-            usedArgSlots_++;
+        } else {
+            uint32_t disp = GetArgStackDisp(usedArgSlots_);
+            enoughMemory_ = moveResolver_.addMove(from, MoveOperand(sp, disp), type);
         }
+        usedArgSlots_++;
+        passedArgTypes_ = (passedArgTypes_ << ArgType_Shift) |
+                                ((MoveOp::FLOAT32 == type) ? ArgType_Float32 : ArgType_Double);
         break;
-      case MoveOp::GENERAL:
+      }
+      case MoveOp::GENERAL: {
         Register destReg;
         if (GetIntArgReg(usedArgSlots_, &destReg)) {
             if (from.isGeneralReg() && from.reg() == destReg) {
@@ -3503,6 +3504,7 @@ MacroAssemblerMIPS64Compat::passABIArg(const MoveOperand &from, MoveOp::Type typ
         usedArgSlots_++;
         passedArgTypes_ = (passedArgTypes_ << ArgType_Shift) | ArgType_General;
         break;
+      }
       default:
         MOZ_CRASH("Unexpected argument type");
     }
