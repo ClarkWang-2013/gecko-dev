@@ -87,14 +87,14 @@ ICBinaryArith_Int32::Compiler::generateStubCode(MacroAssembler &masm)
       case JSOP_ADD:
         masm.unboxInt32(R0, ExtractTemp0);
         masm.unboxInt32(R1, ExtractTemp1);
-        masm.ma_addTestOverflow(ExtractTemp0, ExtractTemp0, ExtractTemp1, &failure);
-        masm.boxValue(JSVAL_TYPE_INT32, ExtractTemp0, R0.valueReg());
+        masm.ma_addTestOverflow(scratchReg, ExtractTemp0, ExtractTemp1, &failure);
+        masm.boxValue(JSVAL_TYPE_INT32, scratchReg, R0.valueReg());
         break;
       case JSOP_SUB:
         masm.unboxInt32(R0, ExtractTemp0);
         masm.unboxInt32(R1, ExtractTemp1);
-        masm.ma_subTestOverflow(ExtractTemp0, ExtractTemp0, ExtractTemp1, &failure);
-        masm.boxValue(JSVAL_TYPE_INT32, ExtractTemp0, R0.valueReg());
+        masm.ma_subTestOverflow(scratchReg, ExtractTemp0, ExtractTemp1, &failure);
+        masm.boxValue(JSVAL_TYPE_INT32, scratchReg, R0.valueReg());
         break;
       case JSOP_MUL: {
         masm.unboxInt32(R0, ExtractTemp0);
