@@ -388,77 +388,109 @@ JitRuntime::generateInvalidator(JSContext *cx)
 JitCode *
 JitRuntime::generateArgumentsRectifier(JSContext *cx, void **returnAddrOut)
 {
+    // Do not erase the frame pointer in this function.
+
     MacroAssembler masm(cx);
+    // Caller:
+    // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] <- sp
+    // '--- s3 ---'
 
     // ArgumentsRectifierReg contains the |nargs| pushed onto the current
     // frame. Including |this|, there are (|nargs| + 1) arguments to copy.
     MOZ_ASSERT(ArgumentsRectifierReg == s3);
 
+    // Add |this|, in the counter of known arguments.
+    masm.addPtr(Imm32(1), ArgumentsRectifierReg);
+
     Register numActArgsReg = a6;
     Register calleeTokenReg = a7;
     Register numArgsReg = a5;
 
-    // Copy number of actual arguments into numActArgsReg
-    masm.loadPtr(Address(StackPointer, RectifierFrameLayout::offsetOfNumActualArgs()),
-                 numActArgsReg);
-
-    // Load the number of |undefined|s to push into t1.
+    // Load |nformals| into numArgsReg.
     masm.loadPtr(Address(StackPointer, RectifierFrameLayout::offsetOfCalleeToken()),
                  calleeTokenReg);
     masm.mov(calleeTokenReg, numArgsReg);
     masm.andPtr(ImmWord(CalleeTokenMask), numArgsReg);
     masm.load16ZeroExtend(Address(numArgsReg, JSFunction::offsetOfNargs()), numArgsReg);
 
+    // Including |this|, there are (|nformals| + 1) arguments to push to the
+    // stack.  Then we push a JitFrameLayout.  We compute the padding expressed
+    // in the number of extra |undefined| values to push on the stack.
+    static_assert(sizeof(JitFrameLayout) % JitStackAlignment == 0,
+      "No need to consider the JitFrameLayout for aligning the stack");
+    static_assert(JitStackAlignment % sizeof(Value) == 0,
+      "Ensure that we can pad the stack by pushing extra UndefinedValue");
+
+    const uint64_t alignment = JitStackAlignment / sizeof(Value);
+    MOZ_ASSERT(IsPowerOfTwo(alignment));
+    masm.addPtr(Imm32(alignment - 1 /* for padding */ + 1 /* for |this| */), numArgsReg);
+    masm.andPtr(ImmWord(~(alignment - 1)), numArgsReg);
+
+    // Load the number of |undefined|s to push into t1.
     masm.as_dsubu(t1, numArgsReg, s3);
+
+    // Caller:
+    // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] <- sp <- t2
+    // '------ s3 -------'
+    //
+    // Rectifier frame:
+    // [undef] [undef] [undef] [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]]
+    // '-------- t1 ---------' '------- s3 -------'
+
+    // Copy number of actual arguments into numActArgsReg
+    masm.loadPtr(Address(StackPointer, RectifierFrameLayout::offsetOfNumActualArgs()),
+                 numActArgsReg);
+
 
     masm.moveValue(UndefinedValue(), ValueOperand(t3));
 
     masm.movePtr(StackPointer, t2); // Save %sp.
 
-    // Push undefined.
+    // Push undefined. (including the padding)
     {
         Label undefLoopTop;
-        masm.bind(&undefLoopTop);
 
+        masm.bind(&undefLoopTop);
+        masm.sub32(Imm32(1), t1);
         masm.subPtr(Imm32(sizeof(Value)), StackPointer);
         masm.storeValue(ValueOperand(t3), Address(StackPointer, 0));
-        masm.sub32(Imm32(1), t1);
 
         masm.ma_b(t1, t1, &undefLoopTop, Assembler::NonZero, ShortJump);
     }
 
     // Get the topmost argument.
+    static_assert(sizeof(Value) == 8, "TimesEight is used to skip arguments");
+
+    // | - sizeof(Value)| is used to put rcx such that we can read the last
+    // argument, and not the value which is after.
     masm.ma_dsll(t0, s3, Imm32(3)); // t0 <- nargs * 8
-    masm.addPtr(t0, t2); // t2 <- t2(saved sp) + nargs * 8
-    masm.addPtr(Imm32(sizeof(RectifierFrameLayout)), t2);
+    masm.as_daddu(t1, t2, t0); // t1 <- t2(saved sp) + nargs * 8
+    masm.addPtr(Imm32(sizeof(RectifierFrameLayout) - sizeof(Value)), t1);
 
-    // Push arguments, |nargs| + 1 times (to include |this|).
+    // Copy & Push arguments, |nargs| + 1 times (to include |this|).
     {
-        Label copyLoopTop, initialSkip;
-
-        masm.ma_b(&initialSkip, ShortJump);
+        Label copyLoopTop;
 
         masm.bind(&copyLoopTop);
-        masm.subPtr(Imm32(sizeof(Value)), t2);
         masm.sub32(Imm32(1), s3);
-
-        masm.bind(&initialSkip);
-
-        MOZ_ASSERT(sizeof(Value) == sizeof(uint64_t));
-        // Read argument and push to stack.
         masm.subPtr(Imm32(sizeof(Value)), StackPointer);
-        masm.loadValue(Address(t2, 0), ValueOperand(t0));
+        masm.loadValue(Address(t1, 0), ValueOperand(t0));
         masm.storeValue(ValueOperand(t0), Address(StackPointer, 0));
+        masm.subPtr(Imm32(sizeof(Value)), t1);
 
         masm.ma_b(s3, s3, &copyLoopTop, Assembler::NonZero, ShortJump);
     }
 
-    // translate the framesize from values into bytes
-    masm.ma_daddu(t0, numArgsReg, Imm32(1));
-    masm.lshiftPtr(Imm32(3), t0);
+    // Caller:
+    // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] <- t2
+    //
+    //
+    // Rectifier frame:
+    // [undef] [undef] [undef] [arg2] [arg1] [this] <- sp [[argc] [callee] [descr] [raddr]]
 
     // Construct sizeDescriptor.
-    masm.makeFrameDescriptor(t0, JitFrame_Rectifier);
+    masm.subPtr(StackPointer, t2);
+    masm.makeFrameDescriptor(t2, JitFrame_Rectifier);
 
     // Construct JitFrameLayout.
     masm.subPtr(Imm32(3 * sizeof(uintptr_t)), StackPointer);
@@ -467,7 +499,7 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, void **returnAddrOut)
     // Push callee token.
     masm.storePtr(calleeTokenReg, Address(StackPointer, sizeof(uintptr_t)));
     // Push frame descriptor.
-    masm.storePtr(t0, Address(StackPointer, 0));
+    masm.storePtr(t2, Address(StackPointer, 0));
 
     // Call the target function.
     // Note that this code assumes the function is JITted.
@@ -478,32 +510,16 @@ JitRuntime::generateArgumentsRectifier(JSContext *cx, void **returnAddrOut)
 
     uint32_t returnOffset = masm.currentOffset();
 
-    // arg1
-    //  ...
-    // argN
-    // num actual args
-    // callee token
-    // sizeDescriptor     <- sp now
-    // return address
-
     // Remove the rectifier frame.
-    // t0 <- descriptor with FrameType.
-    masm.loadPtr(Address(StackPointer, 0), t0);
-    masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), t0); // t0 <- descriptor.
+    // t2 <- descriptor with FrameType.
+    masm.loadPtr(Address(StackPointer, 0), t2);
+    masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), t2); // t2 <- descriptor.
 
     // Discard descriptor, calleeToken and number of actual arguments.
     masm.addPtr(Imm32(3 * sizeof(uintptr_t)), StackPointer);
 
-    // arg1
-    //  ...
-    // argN               <- sp now; t0 <- frame descriptor
-    // num actual args
-    // callee token
-    // sizeDescriptor
-    // return address
-
     // Discard pushed arguments.
-    masm.addPtr(t0, StackPointer);
+    masm.addPtr(t2, StackPointer);
 
     masm.ret();
     Linker linker(masm);
