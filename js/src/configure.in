@@ -2127,7 +2127,7 @@ mips*-*)
 esac
 
 case "$target" in
-mips*-*)
+mips-* | mipsel-*)
      AC_DEFINE(JS_NUNBOX32)
      ;;
 *)
