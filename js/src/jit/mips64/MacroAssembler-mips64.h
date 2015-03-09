@@ -830,8 +830,6 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64
         branchPtr(cond, lhs, Imm32(0), label);
     }
 
-protected:
-    void moveData(const Value &val, Register data);
 public:
     void moveValue(const Value &val, Register dest);
 

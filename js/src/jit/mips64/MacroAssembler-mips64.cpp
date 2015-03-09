@@ -3133,17 +3133,6 @@ MacroAssemblerMIPS64Compat::storeUnboxedValue(ConstantOrRegister value, MIRType 
                                             MIRType slotType);
 
 void
-MacroAssemblerMIPS64Compat::moveData(const Value &val, Register data)
-{
-    jsval_layout jv = JSVAL_TO_IMPL(val);
-    if (val.isMarkable()) {
-        ma_li(data, ImmGCPtr(reinterpret_cast<gc::Cell *>(val.toGCThing())));
-    } else {
-        ma_li(ScratchRegister, ImmWord(jv.asBits));
-    }
-}
-
-void
 MacroAssemblerMIPS64Compat::moveValue(const Value &val, Register dest)
 {
     jsval_layout jv = JSVAL_TO_IMPL(val);
